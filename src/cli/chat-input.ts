@@ -14,6 +14,8 @@ export interface ChatInputOptions {
   onBottom: () => void;
   onQuit: () => void;
   onClear: () => void;
+  onEmptyEscape?: () => void;
+  now?: () => number;
   complete: (draft: ChatDraft, index: number) => ChatDraft | null;
   completionCount?: (draft: ChatDraft) => number;
 }
@@ -48,6 +50,7 @@ export class ChatInputController {
   private selectedCompletion = 0;
   private completionDismissed = false;
   private verticalColumn: number | undefined;
+  private lastEmptyEscape = Number.NEGATIVE_INFINITY;
 
   constructor(private readonly options: ChatInputOptions) {
     this.sink = Object.assign(
@@ -144,6 +147,17 @@ export class ChatInputController {
     this.sink.destroy();
   }
 
+  private requestEmptyEscape(): void {
+    const now = this.options.now?.() ?? Date.now();
+    if (now - this.lastEmptyEscape < 1000) {
+      this.lastEmptyEscape = now;
+      return;
+    }
+    this.lastEmptyEscape = now;
+    this.options.onEmptyEscape?.();
+    this.options.onChange();
+  }
+
   private readonly onEnd = () => this.options.onQuit();
 
   private readonly onData = (data: Buffer | string) => {
@@ -157,10 +171,12 @@ export class ChatInputController {
         this.escapeTimer = null;
         // Never leak an incomplete mouse/control report into the draft.
         if (this.pending === "\u001b") {
-          if (this.completionVisible) {
+          // A typed draft wins over the suggestion list: one Esc clears `@c`.
+          if (this.draft.line.length > 0) this.clear();
+          else if (this.completionVisible) {
             this.completionDismissed = true;
             this.options.onChange();
-          } else this.clear();
+          } else this.requestEmptyEscape();
         }
         this.pending = "";
       }, 50);

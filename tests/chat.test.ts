@@ -366,6 +366,20 @@ describe("chat status line", () => {
     ).toBe("codex idle 3h · gemini away · grok standby");
   });
 
+  test("transient interrupt indicators replace member state without changing the transcript", () => {
+    const members = [
+      member({ agent_id: "codex:aa" }),
+      member({ agent_id: "claude:bb", standby_transport: "manual" })
+    ];
+    const base = { members, owner: "codex:aa", owner_since: minutesAgo(2),
+      reserved_for: null, now, columns: 100 };
+    const names = context(members.map((row: { agent_id: string }) => row.agent_id));
+    expect(formatChatStatus({ ...base, interrupt_statuses: new Map([
+      ["codex:aa", "interrupted"], ["claude:bb", "stopping"]
+    ]) }, names)).toBe("codex interrupted · claude stopping");
+    expect(formatChatStatus(base, names)).toBe("codex holding 2m · claude standby");
+  });
+
   test("fits the terminal width and counts what it had to drop", () => {
     const members = ["codex:aa", "claude:bb", "gemini:cc"].map((agent_id) =>
       member({ agent_id })
@@ -1340,6 +1354,33 @@ test("inline chat keeps a pasted multiline draft and erases wrapped rows", async
     input.write("\u007f".repeat(70) + "\r");
     await until(() => bodies().length === 1);
     expect(bodies()).toEqual(["first line\nsecond line"]);
+  } finally {
+    input.write("/quit\r");
+    await session;
+  }
+});
+
+test("a quiet room removes the transient empty-Escape hint after three seconds", async () => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "grok:aa", context_path: root });
+  const input = new PassThrough();
+  const output = Object.assign(new PassThrough(), { columns: 80, rows: 12 });
+  let out = "";
+  output.on("data", (chunk) => { out += chunk.toString(); });
+  const session = runChatSession({
+    runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output,
+    terminal: true, inline: true, color: false, history: 0, show_turn_events: false, poll_ms: 10
+  });
+  try {
+    await until(() => out.includes("> "));
+    input.write("\u001b");
+    await until(() => out.includes("nothing to interrupt"));
+    out = "";
+    await until(() => out.includes("/ for commands"), 5_000);
+    expect(out).not.toContain("nothing to interrupt");
+    expect(service.getRoomEvents({ room_id: joined.room_id, include_all: true })
+      .filter((event) => event.event_type === "message_sent")).toEqual([]);
   } finally {
     input.write("/quit\r");
     await session;

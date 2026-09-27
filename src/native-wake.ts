@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import net from "node:net";
+import { startQueuedCodexThread } from "./codex-queue-start.js";
 import type { RoomEvent } from "./types.js";
 
 export type NativeWakeTransportName = "claude_inbox" | "codex_queue" | "cmux";
@@ -26,6 +27,7 @@ export interface NativeWakeRequest extends NativeWakeRegistration {
   text: string;
   interrupt?: boolean;
   steer?: boolean;
+  start_queued?: boolean;
 }
 
 // failed: the harness definitely did not receive the wake, so a fallback may
@@ -194,7 +196,13 @@ export function deliverCodexQueue(request: NativeWakeRequest, options: NativeWak
       killSignal: "SIGKILL", maxBuffer: 64 * 1024, windowsHide: true,
       env: withoutClaudeInboxCredentials(options.env ?? process.env)
     }, (error, _stdout, stderr) => {
-      if (!error) { resolve({ outcome: "queued" }); return; }
+      if (!error) {
+        if (!request.start_queued) { resolve({ outcome: "queued" }); return; }
+        void startQueuedCodexThread(request.address, undefined, options.timeout_ms ?? 3_000)
+          .then((started) => resolve({ outcome: started ? "woken" : "queued" }))
+          .catch(() => resolve({ outcome: "queued" }));
+        return;
+      }
       if (error.code === "ENOENT" || error.code === "EACCES") {
         resolve({ outcome: "failed", error: "codex_unavailable" }); return;
       }

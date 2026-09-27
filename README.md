@@ -103,7 +103,7 @@ session natively — no keystrokes typed, no model polling while idle.
 | Harness | How it wakes |
 |---|---|
 | Claude Code | Its inbox socket. A message you send as the operator arrives at the next tool boundary without cancelling the current tool |
-| Codex | `codex queue`, delivered after the current turn ends |
+| Codex | `codex queue`, with an app-server start attempt for an idle loaded thread |
 | Grok Build | Active-turn hooks while a session is running; an idle session needs a live `tt wait` or cmux |
 | Antigravity, OpenCode, Gemini | cmux only |
 

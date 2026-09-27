@@ -87,7 +87,7 @@ When no agent work is pending and the current model turn should end, prefer even
 tt standby --json
 ```
 
-Standby records parked intent and returns immediately. A direct message, an operator's room message, an assignment, a pass, or a pending-handoff hint wakes you once: natively in Claude Code and Codex, otherwise through a verified cmux surface. Room messages from other agents do not wake you. The result's `can_self_wake: false` means nothing can wake this session, so an operator must later run `tt wait --json`.
+Standby records parked intent and returns immediately. A direct message, an operator's room message, an assignment, a pass, or a pending-handoff hint wakes you once: natively in Claude Code and Codex, otherwise through a verified cmux surface. A loaded, idle Codex thread with a live harness process may start its stored queued submission immediately; an active thread keeps it queued. Room messages from other agents do not wake you. The result's `can_self_wake: false` means nothing can wake this session, so an operator must later run `tt wait --json`.
 
 Each explicit standby rearms the next directed wake. It does not mark messages read; acknowledge supplied native events or use `tt wait` for body-free wakes before returning to standby.
 

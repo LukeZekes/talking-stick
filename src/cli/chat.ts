@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import readline from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
+import { planChatInterrupts } from "./chat-interrupt.js";
+import { interruptCodexThread } from "./codex-interrupt.js";
 import { ChatInputController } from "./chat-input.js";
 import { resolveChatKick } from "./chat-kick.js";
 import {
@@ -22,6 +24,7 @@ import {
 import type { Readable, Writable } from "node:stream";
 
 import { ProtocolError, isSqliteBusy } from "../errors.js";
+import { hasHookInterrupt, requestHookInterrupt } from "../interrupt-flags.js";
 import { deriveHumanCliIdentity, type DerivedIdentity } from "../identity.js";
 import {
   HUMAN_CHAT_SESSION_KIND,
@@ -125,7 +128,8 @@ export function describeChatDelivery(delivery: MessageDelivery): string {
   if (delivery.state === "queued" && delivery.interrupt_status === "unsupported") return "queued; immediate interrupt unavailable";
   if (delivery.state === "queued" && delivery.interrupt_status === "injected") return "urgent prompt injected";
   if (delivery.state === "ambiguous") return "wake unconfirmed";
-  if (delivery.state === "queued" || delivery.state === "woken") return "queued";
+  if (delivery.state === "woken") return "turn started";
+  if (delivery.state === "queued") return "queued";
   if (delivery.status === "pending" || delivery.status === "endpoint") return "queued";
   return "not acknowledged yet";
 }
@@ -206,6 +210,31 @@ export async function runChatSession(
   let screenActive = false;
   let failure: unknown;
   let hint: string | null = null;
+  let interruptHint: { text: string; until: number } | null = null;
+  const interruptIndicators = new Map<string,
+    { kind: "claude"; session_id: string } | { kind: "timed"; label: string; until: number }>();
+  const interruptStatuses = (): ReadonlyMap<string, string> => {
+    const now = Date.now();
+    const statuses = new Map<string, string>();
+    for (const [agentId, indicator] of interruptIndicators) {
+      if (indicator.kind === "claude" && hasHookInterrupt("claude", indicator.session_id)) {
+        statuses.set(agentId, "stopping");
+      } else if (indicator.kind === "timed" && now < indicator.until) {
+        statuses.set(agentId, indicator.label);
+      } else {
+        interruptIndicators.delete(agentId);
+      }
+    }
+    return statuses;
+  };
+  const currentHint = () => {
+    if (interruptHint && Date.now() >= interruptHint.until) interruptHint = null;
+    return interruptHint?.text ?? hint;
+  };
+  const interruptSignature = () => JSON.stringify({
+    statuses: [...interruptStatuses()], hint: currentHint()
+  });
+  let lastInterruptSignature = interruptSignature();
   // One room message can reach several agents, so each event keeps a state per
   // recipient and renders them on a single line under that message.
   const deliveryStates = new Map<number, Map<string, string>>();
@@ -248,7 +277,8 @@ export async function runChatSession(
       .sort((a, b) => Number(b.process_liveness === "gone") - Number(a.process_liveness === "gone") || a.agent_id.localeCompare(b.agent_id))
       .map((member) => ({ agent_id: member.agent_id, name: member.display_name || nameOf(member.agent_id),
         status: member.process_liveness === "gone" ? "ended" : describeMemberState(member, {
-          members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(), columns: dimensions().columns
+          members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
+          columns: dimensions().columns, interrupt_statuses: interruptStatuses()
         }) })));
   // Inline drawing: the composer occupies the last rows of the normal screen.
   // Erasing walks back up every row it drew, so a wrapped draft never leaves
@@ -275,8 +305,9 @@ export async function runChatSession(
     const draft = editor?.draft ?? { line: "", cursor: 0 };
     const frame = renderInlinePanel({
       room_path: joined.canonical_path, transcript, format: formatContext(),
-      status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date() },
-      draft, hint,
+      status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
+        interrupt_statuses: interruptStatuses() },
+      draft, hint: currentHint(),
       completions: editor?.completionVisible ? completionsFor(draft) : [],
       completion_index: editor?.completionIndex ?? 0,
       ...dimensions()
@@ -317,10 +348,11 @@ export async function runChatSession(
             owner,
             owner_since: ownerSince,
             reserved_for: reservedFor,
-            now: new Date()
+            now: new Date(),
+            interrupt_statuses: interruptStatuses()
           },
           draft: editor?.draft ?? { line: "", cursor: 0 },
-          hint,
+          hint: currentHint(),
           completions: editor?.completionVisible ? completionsFor(editor.draft) : [],
           completion_index: editor?.completionIndex ?? 0,
           ...dimensions()
@@ -434,8 +466,9 @@ export async function runChatSession(
       editor?.resize(dimensions().columns - 1);
       const draft = editor?.draft ?? { line: "", cursor: 0 };
       const panel = renderInlinePanel({ room_path: joined.canonical_path, transcript, format: formatContext(),
-        status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date() },
-        draft, hint, completions: editor?.completionVisible ? completionsFor(draft) : [],
+        status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
+          interrupt_statuses: interruptStatuses() },
+        draft, hint: currentHint(), completions: editor?.completionVisible ? completionsFor(draft) : [],
         completion_index: editor?.completionIndex ?? 0, ...dimensions() });
       const tailHeight = Math.max(0, dimensions().rows - panel.lines.length);
       const tail = transcript.viewport(tailHeight, Math.max(1, dimensions().columns - 1), formatContext());
@@ -782,6 +815,49 @@ export async function runChatSession(
     }
   };
 
+  const onEmptyEscape = () => {
+    void (async () => {
+      try {
+        refreshMembers();
+        const plan = planChatInterrupts(members, selfId);
+        if (plan.kind === "none") {
+          interruptHint = { text: "nothing to interrupt", until: Date.now() + 3_000 };
+          lastInterruptSignature = interruptSignature();
+          redraw();
+          return;
+        }
+        interruptHint = null;
+        await Promise.all(plan.steps.map(async (step) => {
+          if (step.kind === "unsupported") return;
+          if (step.kind === "codex") {
+            const result = await interruptCodexThread(step.thread_id);
+            if (result !== "idle") interruptIndicators.set(step.agent_id, {
+              kind: "timed", label: result === "sent" ? "interrupted" : `interrupt ${result}`,
+              until: Date.now() + 3_000
+            });
+            return;
+          }
+          const result = requestHookInterrupt("claude", step.session_id);
+          interruptIndicators.set(step.agent_id, result === "failed"
+            ? { kind: "timed", label: "interrupt failed", until: Date.now() + 3_000 }
+            : { kind: "claude", session_id: step.session_id });
+        }));
+        if (!closed) {
+          lastInterruptSignature = interruptSignature();
+          redraw();
+        }
+      } catch (error) {
+        if (isRoomGone(error)) {
+          reportRoomClosed();
+          stop();
+        } else if (!closed) {
+          interruptHint = { text: "interrupt unavailable", until: Date.now() + 3_000 };
+          lastInterruptSignature = interruptSignature();
+          redraw();
+        }
+      }
+    })();
+  };
   const submit = (line: string) => {
     try {
       handleLine(line);
@@ -817,13 +893,14 @@ export async function runChatSession(
         input: options.input,
         columns: dimensions().columns - 1,
         onChange: () => {
-          if (editor?.draft.line) hint = null;
+          if (editor?.draft.line) { hint = null; interruptHint = null; }
           redraw();
         },
         onSubmit: submit,
         onClear: () => {
           hint = "type /quit to exit";
         },
+        onEmptyEscape,
         onQuit: stop,
         onBottom: () => {
           transcript.scrollToBottom();
@@ -862,7 +939,10 @@ export async function runChatSession(
       editor = new ChatInputController({
         input: options.input,
         columns: dimensions().columns - 1,
-        onChange: drawComposer,
+        onChange: () => {
+          if (editor?.draft.line) interruptHint = null;
+          drawComposer();
+        },
         onSubmit: (line) => {
           eraseComposer();
           submit(line);
@@ -871,6 +951,7 @@ export async function runChatSession(
         onClear: () => {
           hint = "type /quit to exit";
         },
+        onEmptyEscape,
         onQuit: stop,
         // Scrollback belongs to the terminal in this mode.
         onBottom: () => {},
@@ -982,7 +1063,10 @@ export async function runChatSession(
         }
         cursor = result.cursor_event_seq;
         if (!closed) checkReceipts();
-        if ((stateChanged || statusStale) && !closed) {
+        const interruptChanged = (interruptIndicators.size > 0 || interruptHint !== null) &&
+          interruptSignature() !== lastInterruptSignature;
+        if ((stateChanged || statusStale || interruptChanged) && !closed) {
+          lastInterruptSignature = interruptSignature();
           redraw();
           lastStatusDraw = Date.now();
         }

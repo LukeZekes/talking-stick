@@ -11,6 +11,10 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+### Changed
+
+- In `tt chat`, Escape clears a nonempty draft in one press, including an open suggestion list. On an empty draft it requests a message-free interrupt for active Codex turns through the local app-server or, for a local Claude session, through a new tool hook that stops the turn at its next tool call with `continue: false` (the pending tool is denied). Run `tt install claude` to add the hook. Pending interrupts appear briefly in the status bar without adding transcript lines; a held Escape key arms only once. Ctrl+C still only clears the draft.
+
 ### Fixed
 
 - Installed lifecycle hooks retire an ended Claude, Codex, or Grok session by exact session and process identity, including its lease and wake endpoints. Old listeners cannot rejoin an ended session; a later resume permits it again. Claude `/clear` reports the old session immediately. Codex currently delays its end hook until thread teardown, so immediate Codex `/clear` cleanup remains unsupported.

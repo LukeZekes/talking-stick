@@ -427,6 +427,7 @@ export interface ChatStatusInput {
   reserved_for: AgentId | null;
   now: Date;
   columns: number;
+  interrupt_statuses?: ReadonlyMap<AgentId, string>;
 }
 
 // One dim line of room state for the operator: each agent
@@ -496,6 +497,8 @@ export function describeMemberState(
   member: RoomMember,
   input: ChatStatusInput
 ): string {
+  const interruptStatus = input.interrupt_statuses?.get(member.agent_id);
+  if (interruptStatus) return interruptStatus;
   if (member.agent_id === input.owner) {
     return input.owner_since
       ? `holding ${formatDuration(input.now, input.owner_since)}`

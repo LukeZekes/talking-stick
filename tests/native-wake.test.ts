@@ -37,6 +37,7 @@ function harness(options: {
   native?: (request: NativeWakeRequest) => NativeWakeResult | Promise<NativeWakeResult>;
   cmux?: (request: WakeRequest) => { delivered: boolean; error?: string };
   receiverAlive?: boolean;
+  processAlive?: boolean;
 } = {}) {
   const root = tempRoot();
   const project = path.join(root, "project");
@@ -48,7 +49,7 @@ function harness(options: {
     dataDir: path.join(root, "data"),
     hostId: HOST,
     policy: { waitForTurnPollMs: 2 },
-    processLivenessChecker: () => "alive",
+    processLivenessChecker: () => options.processAlive === false ? "gone" : "alive",
     receiverLivenessChecker: () => (options.receiverAlive ? "alive" : "gone"),
     nativeWakeTransport: {
       deliver(request) {
@@ -616,6 +617,19 @@ describe("concurrent wake batches", () => {
     expect(nativeRequests.map((request) => request.transport)).toEqual(["claude_inbox"]);
     await service.flushWakes();
     expect(nativeRequests.map((request) => request.transport)).toEqual(["claude_inbox", "codex_queue"]);
+    expect(nativeRequests.at(-1)?.start_queued).toBe(true);
+  });
+
+  test("a gone Codex process is not started through the daemon", async () => {
+    const { service, project, nativeRequests } = harness({ processAlive: false });
+    const roomId = joinPair(service, project);
+    service.joinPath({ agent_id: "codex:bb", context_path: project, process_metadata: metadata("codex", "codex-session") });
+    service.registerNativeWakeEndpoint({
+      agent_id: "codex:bb", room_id: roomId, transport: "codex_queue", address: "thread-b", secret: null,
+      harness_session_id: "codex-session", host_id: HOST
+    });
+    await service.sendMessageAndWake({ agent_id: "human:op:chat:1", room_id: roomId, to_agent_id: "codex:bb", body: "wake" });
+    expect(nativeRequests.at(-1)?.start_queued).toBe(false);
   });
 
   test("an interrupt reaches cmux after a normal wake definitely failed", async () => {
