@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
-  ancestorPaths,
   isWithinOrSame,
   resolveContextPath,
+  roomCandidatePaths,
   type ResolvedContextPath
 } from "./path-resolution.js";
 import { defaultPolicy } from "./config.js";
@@ -358,15 +358,14 @@ export class TalkingStickService {
     }
 
     const resolved = resolveContextPath(input.context_path);
-    const ancestors = ancestorPaths(
-      resolved.canonical_context_path,
-      resolved.workspace_root
-    );
+    const ancestors = roomCandidatePaths(resolved);
 
+    // Most specific first, in resolution order: callers take the first room.
+    const rows = this.findRoomsByCanonicalPaths(ancestors);
+    const rank = new Map(ancestors.map((candidate, index) => [candidate, index]));
+    rows.sort((left, right) => (rank.get(left.canonical_path) ?? 0) - (rank.get(right.canonical_path) ?? 0));
     return {
-      rooms: this.findRoomsByCanonicalPaths(ancestors).map((row) =>
-        this.mapRoomForList(row, now)
-      )
+      rooms: rows.map((row) => this.mapRoomForList(row, now))
     };
   }
 
@@ -1389,7 +1388,7 @@ export class TalkingStickService {
 
     const resolved = resolveContextPath(input.context_path);
     const room = this.findDeepestRoom(
-      ancestorPaths(resolved.canonical_context_path, resolved.workspace_root)
+      roomCandidatePaths(resolved)
     );
     if (!room) {
       throw new ProtocolError(
@@ -1963,7 +1962,7 @@ export class TalkingStickService {
 
     const resolved = resolveContextPath(input.context_path);
     const room = this.findDeepestRoom(
-      ancestorPaths(resolved.canonical_context_path, resolved.workspace_root)
+      roomCandidatePaths(resolved)
     );
     if (!room) {
       return { blocked: false, reason: "no_room" };
@@ -2553,7 +2552,7 @@ export class TalkingStickService {
   // never enrollment, turn acquisition, or evidence of an idle wake transport.
   prepareGrokHookDelivery(input: { context_path: string; harness_session_id: string; diagnostic?: (text: string) => void }): string | null {
     const resolved = resolveContextPath(input.context_path);
-    const room = this.findDeepestRoom(ancestorPaths(resolved.canonical_context_path, resolved.workspace_root));
+    const room = this.findDeepestRoom(roomCandidatePaths(resolved));
     if (!room || room.state === "closed") return null;
     // Most tool calls have no pending room work. Do not acquire a write lock
     // for those calls; revalidate membership and pending events inside below.
@@ -3528,10 +3527,7 @@ export class TalkingStickService {
     joinedExistingRoom: boolean;
     warning?: string;
   } {
-    const ancestors = ancestorPaths(
-      resolved.canonical_context_path,
-      resolved.workspace_root
-    );
+    const ancestors = roomCandidatePaths(resolved);
     const existingAncestor = this.findDeepestRoom(ancestors);
 
     if (forceNew) {
@@ -3569,7 +3565,7 @@ export class TalkingStickService {
     }
 
     return {
-      room: this.createRoom(resolved.workspace_root, timestamp),
+      room: this.createRoom(resolved.room_path, timestamp),
       joinedExistingRoom: false
     };
   }

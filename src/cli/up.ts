@@ -46,7 +46,7 @@ export async function handleUpCommand(
   const resolved = resolveContextPath(contextPath);
   const canonicalPath = resolved.canonical_context_path;
   const selectedRoom = pickDeepestRoom(runtime.commands.listRooms({ context_path: canonicalPath }).rooms);
-  const joinPath = selectedRoom?.canonical_path ?? resolved.workspace_root;
+  const joinPath = selectedRoom?.canonical_path ?? resolved.room_path;
   if (joinPath !== canonicalPath) {
     throw new Error(`Ordinary tt join/chat would select room ${joinPath}, not ${canonicalPath}. Use --path ${joinPath} for this launcher, or explicitly create a nested room first.`);
   }

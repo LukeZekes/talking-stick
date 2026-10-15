@@ -12,22 +12,76 @@ const workspaceMarkers = [
   "go.mod"
 ];
 
+// A directory holding this file is an explicit room boundary. It is plain
+// content, so every checkout and worktree of a branch resolves the same way.
+export const ROOM_DECLARATION_FILE = path.join(".talking-stick", "room.toml");
+
+export interface RoomDeclaration {
+  /** Directory that holds `.talking-stick/room.toml` in the caller's checkout. */
+  directory: string;
+  /** Path of that directory relative to the checkout root ("" for the root). */
+  rel_path: string;
+  name: string | null;
+}
+
 export interface ResolvedContextPath {
   requested_path: string;
   canonical_context_path: string;
+  /** Coordination root: the main checkout for Git worktrees. */
   workspace_root: string;
+  /** Git checkout that contains the context path, when inside Git. */
+  checkout_root: string | null;
+  declaration: RoomDeclaration | null;
+  /** Where this context's room lives when no nearer legacy room exists. */
+  room_path: string;
 }
 
 export function resolveContextPath(contextPath: string): ResolvedContextPath {
   const requestedPath = path.resolve(contextPath);
   const canonicalContextPath = canonicalizeContextPath(requestedPath);
-  const workspaceRoot = resolveWorkspaceRoot(canonicalContextPath);
+  const git = resolveGitRoots(canonicalContextPath);
+  const workspaceRoot = git?.coordination_root ?? resolveNonGitWorkspaceRoot(canonicalContextPath);
+  const declaration = findRoomDeclaration(canonicalContextPath, git?.checkout_root ?? null);
+  // A declared room is keyed by the coordination root plus its checkout-relative
+  // path, so <worktree>/pkg and <main>/pkg name the same room.
+  const roomPath = declaration
+    ? git ? path.join(workspaceRoot, declaration.rel_path) : declaration.directory
+    : workspaceRoot;
 
   return {
     requested_path: requestedPath,
     canonical_context_path: canonicalContextPath,
-    workspace_root: workspaceRoot
+    workspace_root: workspaceRoot,
+    checkout_root: git?.checkout_root ?? null,
+    declaration,
+    room_path: roomPath
   };
+}
+
+// Existing rooms that may serve this context, most specific first. Inside Git
+// the search never leaves the checkout: a repository is its own root, so an
+// older room above it no longer absorbs it. Outside Git, folders still bubble
+// up to the nearest existing room, bounded by $HOME.
+export function roomCandidatePaths(resolved: ResolvedContextPath): string[] {
+  const stop = resolved.declaration?.directory ?? resolved.checkout_root;
+  if (!stop) {
+    return ancestorPaths(resolved.canonical_context_path, resolved.workspace_root);
+  }
+  const candidates: string[] = [];
+  let current = resolved.canonical_context_path;
+  // Nearer legacy rooms (created with --force-new) keep winning, so live
+  // members, leases, and cursors are never moved by an upgrade.
+  while (isWithinOrSame(current, stop) && !samePath(current, stop)) {
+    candidates.push(current);
+    const parent = path.dirname(current);
+    if (samePath(parent, current)) break;
+    current = parent;
+  }
+  if (!resolved.declaration && !samePath(stop, resolved.room_path)) {
+    candidates.push(stop);
+  }
+  candidates.push(resolved.room_path);
+  return candidates;
 }
 
 export function canonicalizeContextPath(contextPath: string): string {
@@ -51,11 +105,11 @@ export function canonicalizeContextPath(contextPath: string): string {
 }
 
 export function resolveWorkspaceRoot(canonicalContextPath: string): string {
-  const gitRoot = resolveGitRoot(canonicalContextPath);
-  if (gitRoot) {
-    return gitRoot;
-  }
+  return resolveGitRoots(canonicalContextPath)?.coordination_root ??
+    resolveNonGitWorkspaceRoot(canonicalContextPath);
+}
 
+function resolveNonGitWorkspaceRoot(canonicalContextPath: string): string {
   const markerRoot = findNearestWorkspaceMarker(canonicalContextPath);
   if (markerRoot) {
     return markerRoot;
@@ -112,7 +166,7 @@ export function ancestorPaths(
   return ancestors;
 }
 
-function resolveGitRoot(canonicalContextPath: string): string | null {
+function resolveGitRoots(canonicalContextPath: string): { checkout_root: string; coordination_root: string } | null {
   try {
     const checkoutRoot = execFileSync(
       "git",
@@ -123,6 +177,7 @@ function resolveGitRoot(canonicalContextPath: string): string | null {
     if (!checkoutRoot) {
       return null;
     }
+    const realCheckoutRoot = fs.realpathSync.native(checkoutRoot);
 
     const commonDirectory = execFileSync(
       "git",
@@ -144,7 +199,39 @@ function resolveGitRoot(canonicalContextPath: string): string | null {
       commonDirectory && path.basename(commonDirectory) === ".git"
         ? path.dirname(commonDirectory)
         : checkoutRoot;
-    return fs.realpathSync.native(coordinationRoot);
+    return { checkout_root: realCheckoutRoot, coordination_root: fs.realpathSync.native(coordinationRoot) };
+  } catch {
+    return null;
+  }
+}
+
+// Walk up to the checkout root inside Git, or to the $HOME boundary outside it.
+function findRoomDeclaration(startPath: string, checkoutRoot: string | null): RoomDeclaration | null {
+  const homeBoundary = checkoutRoot ? null : resolveHomeMarkerBoundary(startPath);
+  let current = startPath;
+  while (true) {
+    if (homeBoundary && samePath(current, homeBoundary)) return null;
+    const file = path.join(current, ROOM_DECLARATION_FILE);
+    if (fs.existsSync(file)) {
+      return {
+        directory: current,
+        rel_path: checkoutRoot ? path.relative(checkoutRoot, current).split(path.sep).join("/") : "",
+        name: readDeclaredName(file)
+      };
+    }
+    if (checkoutRoot && samePath(current, checkoutRoot)) return null;
+    const parent = path.dirname(current);
+    if (samePath(parent, current)) return null;
+    current = parent;
+  }
+}
+
+// Only `name = "..."` is read today; an unreadable or empty file still declares
+// the room, because the file's presence is the declaration.
+function readDeclaredName(file: string): string | null {
+  try {
+    const match = /^\s*name\s*=\s*"([^"\n]*)"\s*(?:#.*)?$/m.exec(fs.readFileSync(file, "utf8"));
+    return match?.[1]?.trim() || null;
   } catch {
     return null;
   }

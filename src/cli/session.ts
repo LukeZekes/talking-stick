@@ -144,12 +144,9 @@ export function upsertSessionFromJoin(identity: DerivedIdentity, joined: {
   });
 }
 
+// listRooms for a context path returns rooms in resolution order, most
+// specific first. Path length is not specificity once a linked worktree's
+// candidates include rooms keyed under the main checkout.
 export function pickDeepestRoom(rooms: PathRoom[]): PathRoom | null {
-  if (rooms.length === 0) {
-    return null;
-  }
-
-  return rooms
-    .slice()
-    .sort((left, right) => right.canonical_path.length - left.canonical_path.length)[0];
+  return rooms[0] ?? null;
 }
