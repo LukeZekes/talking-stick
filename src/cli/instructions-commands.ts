@@ -1,4 +1,5 @@
 import {
+  BUNDLED_DEFAULT_ROLE_LINES,
   editInstructions,
   parseInstructionScope,
   resetInstructions,
@@ -13,9 +14,14 @@ import {
   type ParsedCommand
 } from "./parser.js";
 import { printResult } from "./output.js";
+import { roomRoleBlock } from "./role-commands.js";
+import { selectedRoom } from "./room-selector.js";
+import type { Runtime } from "./runtime.js";
+import { pickDeepestRoom } from "./session.js";
 
 export async function handleInstructionsCommand(
-  parsed: ParsedCommand
+  parsed: ParsedCommand,
+  runtime?: Runtime
 ): Promise<void> {
   const [subcommand = "show", ...rest] = parsed.positionals;
   const subParsed: ParsedCommand = {
@@ -26,7 +32,7 @@ export async function handleInstructionsCommand(
 
   switch (subcommand) {
     case "show":
-      handleInstructionsShowCommand(subParsed);
+      handleInstructionsShowCommand(subParsed, runtime);
       return;
     case "edit":
       await handleInstructionsEditCommand(subParsed);
@@ -61,7 +67,7 @@ function handleInstructionsUpdateCommand(parsed: ParsedCommand): void {
   );
 }
 
-function handleInstructionsShowCommand(parsed: ParsedCommand): void {
+function handleInstructionsShowCommand(parsed: ParsedCommand, runtime?: Runtime): void {
   const contextPath = resolveContextPathArg(parsed);
   const scope = parseInstructionScope(getStringOption(parsed, "scope"));
   const identity = deriveCliIdentity(parsed);
@@ -74,15 +80,20 @@ function handleInstructionsShowCommand(parsed: ParsedCommand): void {
             : undefined,
         options: { contextPath }
       });
+  const shown = showInstructions({
+    harness: getStringOption(parsed, "harness"),
+    scope,
+    options: {
+      contextPath,
+      identity
+    }
+  });
+  // In a room, the live role table replaces the bundled default-role line, so
+  // instructions and the /roles editor can never disagree.
+  const roles = scope === "effective" && runtime ? currentRoleBlock(runtime, parsed, contextPath, identity.agent_id) : null;
   const result = {
-    ...showInstructions({
-      harness: getStringOption(parsed, "harness"),
-      scope,
-      options: {
-        contextPath,
-        identity
-      }
-    }),
+    ...shown,
+    text: roles ? `${stripDefaultRoleLines(shown.text)}\n\n## Roles\n\n${roles}` : shown.text,
     updates
   };
 
@@ -161,4 +172,18 @@ function resolveContextPathArg(parsed: ParsedCommand): string {
     throw new Error("--path requires a value.");
   }
   return pathOption ?? parsed.positionals[0] ?? process.cwd();
+}
+
+function currentRoleBlock(runtime: Runtime, parsed: ParsedCommand, contextPath: string, agentId: string): string | null {
+  try {
+    const room = selectedRoom(runtime, parsed) ??
+      pickDeepestRoom(runtime.commands.listRooms({ context_path: contextPath }).rooms);
+    return room ? roomRoleBlock(runtime, room.room_id, agentId) : null;
+  } catch {
+    return null;
+  }
+}
+
+function stripDefaultRoleLines(text: string): string {
+  return text.split("\n").filter((line) => !BUNDLED_DEFAULT_ROLE_LINES.has(line)).join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }

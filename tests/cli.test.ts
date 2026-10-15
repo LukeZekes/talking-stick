@@ -3455,6 +3455,41 @@ describe("tt room", () => {
   });
 });
 
+describe("tt roles", () => {
+  test("instructions show the live role block, drop only bundled role lines, and keep user text", async () => {
+    const registry: string[] = [];
+    const { dataDir, project } = setupIsolatedCli(registry);
+    fs.writeFileSync(path.join(dataDir, "instructions.md"), "# Local\n\nDefault role: my own house rule\n");
+    process.env.TT_HARNESS_AGENT_ID = "claude:roles";
+    await captureStdout(["join", project, "--json"]);
+    process.env.TT_HARNESS_AGENT_ID = "codex:roles";
+    await captureStdout(["join", project, "--json"]);
+
+    process.env.TT_HARNESS_AGENT_ID = "claude:roles";
+    const shown = JSON.parse(await captureStdout(["instructions", "show", project, "--harness", "claude", "--json"]));
+    expect(shown.text).toContain("## Roles");
+    expect(shown.text).toContain("- You (claude:roles): architect");
+    expect(shown.text).toContain("- codex:roles: implementer");
+    expect(shown.text).toContain("Default role: my own house rule");
+    expect(shown.text).not.toContain("Default role: architecture, drafting");
+
+    // Agents can read roles but cannot assign them.
+    await expect(captureStdout(["roles", "set", "codex", "reviewer", "--path", project, "--json"])).rejects.toThrow(/operator/);
+    delete process.env.TT_HARNESS_AGENT_ID;
+    const applied = JSON.parse(await captureStdout(["roles", "set", "codex:roles", "reviewer,tester", "--in", "root", "--path", project, "--json"]));
+    expect(applied).toMatchObject({ status: "applied", version: 1, recipients: ["codex:roles"] });
+    process.env.TT_HARNESS_AGENT_ID = "codex:roles";
+    const forCodex = JSON.parse(await captureStdout(["instructions", "show", project, "--harness", "codex", "--json"]));
+    expect(forCodex.text).toContain("- You (codex:roles): reviewer (independent review and cross-checks); tester");
+
+    delete process.env.TT_HARNESS_AGENT_ID;
+    const cleared = JSON.parse(await captureStdout(["roles", "default", "grok", "clear", "--json"]));
+    expect(cleared).toMatchObject({ status: "cleared", roles: ["implementer", "reviewer"] });
+    expect(JSON.parse(fs.readFileSync(path.join(dataDir, "roles.json"), "utf8"))).toEqual({});
+    for (const dir of registry) fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
 function setupIsolatedCli(registry: string[]): { dataDir: string; project: string } {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "talking-stick-cli-"));
   registry.push(dataDir);

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
+import type { RoleSubject, RoomRoleAssignment } from "./roles.js";
 import {
   isWithinOrSame,
   resolveContextPath,
@@ -1779,6 +1780,122 @@ export class TalkingStickService {
     };
   }
 
+  // The body of sendMessage, run inside the caller's write transaction so
+  // another write (e.g. a role change) and its message commit together.
+  private sendMessageLocked(input: SendMessageInput, body: string, deliveryHint: DeliveryHint, timestamp: string,
+    senderMayBeNonMember = false): {
+    event_seq: number; event_id: string; created_at: string; wake_target_ids: AgentId[];
+  } {
+    const room = this.requireRoom(input.room_id);
+    if (room.state === "closed") {
+      throw new ProtocolError(
+        "room_closed",
+        "Messages cannot be sent to a closed room.",
+        { room_id: input.room_id }
+      );
+    }
+
+    if (senderMayBeNonMember) {
+      this.touchKnownMember(input.room_id, input.agent_id, timestamp, input.process_metadata);
+    } else {
+      this.touchMember(
+        input.room_id,
+        input.agent_id,
+        timestamp,
+        input.process_metadata
+      );
+    }
+
+    if (input.to_agent_id && input.to_agent_ids?.length) {
+      throw new ProtocolError(
+        "invalid_input",
+        "Use either to_agent_id or to_agent_ids, not both."
+      );
+    }
+    const named = [...new Set(input.to_agent_ids ?? [])];
+    for (const recipient of input.to_agent_id ? [input.to_agent_id] : named) {
+      const target = this.getMember(input.room_id, recipient);
+      if (!target) {
+        throw new ProtocolError(
+          "unknown_recipient",
+          "to_agent_id is not a member of this room.",
+          { to_agent_id: recipient }
+        );
+      }
+    }
+    // One named recipient keeps the directed form every existing reader
+    // understands; several share a single room event listing them.
+    const directed = input.to_agent_id ?? (named.length === 1 ? named[0] : null);
+    const scoped = !directed && named.length > 1 ? named : null;
+
+    // An operator's chat is addressed to the room, so a human room message
+    // reaches every agent that is a member right now, standby included. An
+    // agent's room message still wakes nobody: agents answering each other's
+    // broadcasts would loop. Later joiners never inherit earlier messages.
+    const humanSender = input.agent_id.startsWith("human:");
+    const wakeTargets: AgentId[] = directed
+      ? [directed]
+      : scoped
+        ? scoped
+        : humanSender
+          ? this.getMembers(input.room_id)
+              .filter((member) => member.agent_id !== input.agent_id &&
+                !isObserverMember(member) && !member.agent_id.startsWith("human:"))
+              .map((member) => member.agent_id)
+          : deliveryHint === "interrupt" && room.owner && room.owner !== input.agent_id
+            ? [room.owner]
+            : [];
+    const eventSeq = this.appendEvent({
+      room_id: input.room_id,
+      turn_id: room.turn_id,
+      event_type: "message_sent",
+      from_agent_id: input.agent_id,
+      to_agent_id: directed,
+      handoff: null,
+      reason: null,
+      created_at: timestamp,
+      payload: {
+        body, delivery_hint: deliveryHint,
+        ...(scoped ? { recipients: scoped } : {}),
+        // Who a room message went to, for display only. Unlike recipients it
+        // never narrows visibility: everyone in the room can still read it.
+        ...(!directed && !scoped && humanSender && wakeTargets.length > 0 ? { sent_to: wakeTargets } : {})
+      }
+    });
+
+    const row = this.db
+      .prepare<[number], { event_id: string }>(
+        "SELECT event_id FROM room_events WHERE event_seq = ?"
+      )
+      .get(eventSeq);
+
+    for (const wakeTargetId of wakeTargets) {
+      if (wakeTargetId === input.agent_id) continue;
+      this.queueStandbyWake(input.room_id, wakeTargetId);
+      if (deliveryHint === "interrupt") {
+        const target = this.getMember(input.room_id, wakeTargetId)!;
+        // Hook delivery must also see urgent events before an external wake
+        // attempt, including oversized events that cannot form an envelope.
+        this.db.prepare(`INSERT OR IGNORE INTO native_event_receipts (room_id, agent_id, event_seq) VALUES (?, ?, ?)`)
+          .run(input.room_id, wakeTargetId, eventSeq);
+        this.db.prepare(`INSERT INTO interrupt_deliveries
+          (room_id, agent_id, event_seq, harness_session_id, host_id) VALUES (?, ?, ?, ?, ?)`)
+          .run(input.room_id, wakeTargetId, eventSeq,
+            target.harness_session_id ?? `member:${target.agent_id}`,
+            target.harness_host_id ?? target.host_id ?? this.hostId);
+      } else {
+        this.queueNativeWake(input.room_id, wakeTargetId, "message", input.agent_id, eventSeq);
+      }
+    }
+
+    return {
+      event_seq: eventSeq,
+      event_id: row?.event_id ?? "",
+      created_at: timestamp,
+      wake_target_ids: wakeTargets.filter((target) => target !== input.agent_id)
+    };
+  }
+
   sendMessage(input: SendMessageInput): SendMessageResult {
     assertNonEmpty(input.agent_id, "agent_id");
     assertNonEmpty(input.room_id, "room_id");
@@ -1809,112 +1926,8 @@ export class TalkingStickService {
     const timestamp = now.toISOString();
     this.purgeExpiredIdleRooms(now);
 
-    const result = withImmediateTransaction(this.db, () => {
-      const room = this.requireRoom(input.room_id);
-      if (room.state === "closed") {
-        throw new ProtocolError(
-          "room_closed",
-          "Messages cannot be sent to a closed room.",
-          { room_id: input.room_id }
-        );
-      }
-
-      this.touchMember(
-        input.room_id,
-        input.agent_id,
-        timestamp,
-        input.process_metadata
-      );
-
-      if (input.to_agent_id && input.to_agent_ids?.length) {
-        throw new ProtocolError(
-          "invalid_input",
-          "Use either to_agent_id or to_agent_ids, not both."
-        );
-      }
-      const named = [...new Set(input.to_agent_ids ?? [])];
-      for (const recipient of input.to_agent_id ? [input.to_agent_id] : named) {
-        const target = this.getMember(input.room_id, recipient);
-        if (!target) {
-          throw new ProtocolError(
-            "unknown_recipient",
-            "to_agent_id is not a member of this room.",
-            { to_agent_id: recipient }
-          );
-        }
-      }
-      // One named recipient keeps the directed form every existing reader
-      // understands; several share a single room event listing them.
-      const directed = input.to_agent_id ?? (named.length === 1 ? named[0] : null);
-      const scoped = !directed && named.length > 1 ? named : null;
-
-      // An operator's chat is addressed to the room, so a human room message
-      // reaches every agent that is a member right now, standby included. An
-      // agent's room message still wakes nobody: agents answering each other's
-      // broadcasts would loop. Later joiners never inherit earlier messages.
-      const humanSender = input.agent_id.startsWith("human:");
-      const wakeTargets: AgentId[] = directed
-        ? [directed]
-        : scoped
-          ? scoped
-          : humanSender
-            ? this.getMembers(input.room_id)
-                .filter((member) => member.agent_id !== input.agent_id &&
-                  !isObserverMember(member) && !member.agent_id.startsWith("human:"))
-                .map((member) => member.agent_id)
-            : deliveryHint === "interrupt" && room.owner && room.owner !== input.agent_id
-              ? [room.owner]
-              : [];
-      const eventSeq = this.appendEvent({
-        room_id: input.room_id,
-        turn_id: room.turn_id,
-        event_type: "message_sent",
-        from_agent_id: input.agent_id,
-        to_agent_id: directed,
-        handoff: null,
-        reason: null,
-        created_at: timestamp,
-        payload: {
-          body, delivery_hint: deliveryHint,
-          ...(scoped ? { recipients: scoped } : {}),
-          // Who a room message went to, for display only. Unlike recipients it
-          // never narrows visibility: everyone in the room can still read it.
-          ...(!directed && !scoped && humanSender && wakeTargets.length > 0 ? { sent_to: wakeTargets } : {})
-        }
-      });
-
-      const row = this.db
-        .prepare<[number], { event_id: string }>(
-          "SELECT event_id FROM room_events WHERE event_seq = ?"
-        )
-        .get(eventSeq);
-
-      for (const wakeTargetId of wakeTargets) {
-        if (wakeTargetId === input.agent_id) continue;
-        this.queueStandbyWake(input.room_id, wakeTargetId);
-        if (deliveryHint === "interrupt") {
-          const target = this.getMember(input.room_id, wakeTargetId)!;
-          // Hook delivery must also see urgent events before an external wake
-          // attempt, including oversized events that cannot form an envelope.
-          this.db.prepare(`INSERT OR IGNORE INTO native_event_receipts (room_id, agent_id, event_seq) VALUES (?, ?, ?)`)
-            .run(input.room_id, wakeTargetId, eventSeq);
-          this.db.prepare(`INSERT INTO interrupt_deliveries
-            (room_id, agent_id, event_seq, harness_session_id, host_id) VALUES (?, ?, ?, ?, ?)`)
-            .run(input.room_id, wakeTargetId, eventSeq,
-              target.harness_session_id ?? `member:${target.agent_id}`,
-              target.harness_host_id ?? target.host_id ?? this.hostId);
-        } else {
-          this.queueNativeWake(input.room_id, wakeTargetId, "message", input.agent_id, eventSeq);
-        }
-      }
-
-      return {
-        event_seq: eventSeq,
-        event_id: row?.event_id ?? "",
-        created_at: timestamp,
-        wake_target_ids: wakeTargets.filter((target) => target !== input.agent_id)
-      };
-    });
+    const result = withImmediateTransaction(this.db, () =>
+      this.sendMessageLocked(input, body, deliveryHint, timestamp));
 
     const { wake_target_ids: wakeTargetIds, ...sendResult } = result;
     if (wakeTargetIds.length === 0) {
@@ -3579,6 +3592,70 @@ export class TalkingStickService {
     ).all(input.room_id, input.after_event_seq, input.agent_id, input.agent_id, limit).map((row) => this.mapEvent(row));
   }
 
+  /** The room's role assignments and their version (0 = never assigned). */
+  getRoomRoles(input: { room_id: string }): { version: number; assignments: RoomRoleAssignment[] } {
+    const room = this.requireRoom(input.room_id) as PathRoomRow & { roles_version?: number };
+    const rows = this.db.prepare<[string], { subject: string; roles_json: string }>(
+      "SELECT subject, roles_json FROM room_roles WHERE room_id = ? ORDER BY subject").all(input.room_id);
+    return {
+      version: room.roles_version ?? 0,
+      assignments: rows.map((row) => ({ subject: row.subject as RoleSubject, roles: parseRoles(row.roles_json) }))
+    };
+  }
+
+  /**
+   * Apply role changes and notify the affected agents in one transaction, so
+   * a crash can never leave a new version unannounced. `roles: null` clears an
+   * assignment (falls back); `[]` assigns "no role". notify builds the message
+   * from the new version and assignments; no recipients means no message.
+   */
+  setRoomRoles(input: {
+    agent_id: AgentId;
+    room_id: string;
+    changes: Array<{ subject: RoleSubject; roles: string[] | null }>;
+    notify: (state: { version: number; assignments: RoomRoleAssignment[]; before: RoomRoleAssignment[] }) => { body: string; to_agent_ids: AgentId[] };
+    process_metadata?: ProcessMetadata;
+  }): { version: number; event_seq: number | null; recipients: AgentId[] } {
+    assertNonEmpty(input.agent_id, "agent_id");
+    assertNonEmpty(input.room_id, "room_id");
+    // Roles are the operator's to assign: an agent could otherwise reassign
+    // its peers. Reading them stays open to everyone.
+    if (!input.agent_id.startsWith("human:")) {
+      throw new ProtocolError("operator_only", "Only the operator assigns roles (tt chat /roles, or tt roles set as a human).");
+    }
+    const timestamp = this.now().toISOString();
+    const result = withImmediateTransaction(this.db, () => {
+      this.requireRoom(input.room_id);
+      // The notification must compare against the state protected by this
+      // write transaction, including changes committed by another process.
+      const before = this.getRoomRoles({ room_id: input.room_id }).assignments;
+      for (const change of input.changes) {
+        if (!/^(agent|harness):\S+$/.test(change.subject)) {
+          throw new ProtocolError("invalid_input", `Invalid role subject ${change.subject}.`);
+        }
+        if (change.roles === null) {
+          this.db.prepare("DELETE FROM room_roles WHERE room_id = ? AND subject = ?").run(input.room_id, change.subject);
+        } else {
+          this.db.prepare(`INSERT INTO room_roles (room_id, subject, roles_json, set_by, set_at) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(room_id, subject) DO UPDATE SET roles_json = excluded.roles_json, set_by = excluded.set_by, set_at = excluded.set_at`)
+            .run(input.room_id, change.subject, JSON.stringify(change.roles), input.agent_id, timestamp);
+        }
+      }
+      this.db.prepare("UPDATE path_rooms SET roles_version = roles_version + 1 WHERE room_id = ?").run(input.room_id);
+      const state = this.getRoomRoles({ room_id: input.room_id });
+      const notice = input.notify({ ...state, before });
+      const recipients = [...new Set(notice.to_agent_ids)].filter((id) => id !== input.agent_id);
+      if (recipients.length === 0) return { version: state.version, event_seq: null, recipients };
+      const sent = this.sendMessageLocked({
+        agent_id: input.agent_id, room_id: input.room_id, body: notice.body,
+        ...(recipients.length === 1 ? { to_agent_id: recipients[0] } : { to_agent_ids: recipients }),
+        process_metadata: input.process_metadata
+      }, notice.body, "normal", timestamp, true);
+      return { version: state.version, event_seq: sent.event_seq, recipients };
+    });
+    return result;
+  }
+
   /** Highest event seq in any room; event_seq is one global sequence. */
   globalEventSeq(): number {
     return this.db.prepare<[], { seq: number | null }>("SELECT MAX(event_seq) AS seq FROM room_events").get()?.seq ?? 0;
@@ -4940,6 +5017,7 @@ export class TalkingStickService {
   }
 
   private deleteRoom(roomId: string): void {
+    this.db.prepare("DELETE FROM room_roles WHERE room_id = ?").run(roomId);
     this.db.prepare("DELETE FROM notes WHERE room_id = ?").run(roomId);
     this.db.prepare("DELETE FROM room_events WHERE room_id = ?").run(roomId);
     this.db.prepare("DELETE FROM room_members WHERE room_id = ?").run(roomId);
@@ -5719,6 +5797,15 @@ function joinWarnings(
 
 // Chat observers read and message the room but never take part in turn
 // scheduling, idle-claim deferral, solo detection, or room retention.
+function parseRoles(json: string): string[] {
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((role): role is string => typeof role === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 function isObserverMember(member: { session_kind: SessionKind }): boolean {
   return member.session_kind === HUMAN_CHAT_SESSION_KIND;
 }

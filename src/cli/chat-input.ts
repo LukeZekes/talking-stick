@@ -36,6 +36,8 @@ const PASTE_START = "\u001b[200~";
 const PASTE_END = "\u001b[201~";
 const MAX_PASTE_LENGTH = 65_536;
 
+export type ChatModalKey = "up" | "down" | "left" | "right" | "space" | "enter" | "escape" | "default";
+
 // Readline edits a private buffer; it never writes to the physical terminal.
 // Terminal-only controls are consumed before readline's keypress decoder.
 export class ChatInputController {
@@ -53,6 +55,14 @@ export class ChatInputController {
   private completionDismissed = false;
   private verticalColumn: number | undefined;
   private lastEmptyEscape = Number.NEGATIVE_INFINITY;
+  // While set, keys drive a modal panel (the /roles editor) and never reach
+  // readline: nothing typed in a modal can become chat text.
+  private modal: ((key: ChatModalKey) => void) | null = null;
+  // A terminal may deliver ESC and the rest of an arrow sequence separately.
+  private modalPending = "";
+  // Pasted text is never a modal command: swallow it until the paste ends.
+  private modalPaste = false;
+  private modalEscapeTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly options: ChatInputOptions) {
     this.sink = Object.assign(
@@ -134,6 +144,76 @@ export class ChatInputController {
     this.options.onChange();
   }
 
+  /** Route keys to a modal panel until cleared with null. The draft is untouched. */
+  setModal(handler: ((key: ChatModalKey) => void) | null): void {
+    this.modal = handler;
+    this.pending = "";
+    this.modalPending = "";
+    if (this.modalEscapeTimer) clearTimeout(this.modalEscapeTimer);
+    this.modalEscapeTimer = null;
+  }
+
+  get modalActive(): boolean {
+    return this.modal !== null;
+  }
+
+  private feedModal(text: string): void {
+    const keys: Array<[string, ChatModalKey]> = [
+      ["\u001b[A", "up"], ["\u001bOA", "up"], ["\u001b[B", "down"], ["\u001bOB", "down"],
+      ["\u001b[C", "right"], ["\u001bOC", "right"], ["\u001b[D", "left"], ["\u001bOD", "left"],
+      [" ", "space"], ["\r", "enter"], ["\n", "enter"], ["d", "default"], ["D", "default"],
+      ["k", "up"], ["j", "down"], ["h", "left"], ["l", "right"], ["\u0003", "escape"]
+    ];
+    if (this.modalEscapeTimer) clearTimeout(this.modalEscapeTimer);
+    this.modalEscapeTimer = null;
+    let rest = this.modalPending + text;
+    this.modalPending = "";
+    while (rest && this.modal) {
+      if (this.modalPaste) {
+        const end = rest.indexOf(PASTE_END);
+        if (end < 0) {
+          // Keep the longest suffix that could begin a split PASTE_END.
+          let keep = Math.min(PASTE_END.length - 1, rest.length);
+          while (keep > 0 && !PASTE_END.startsWith(rest.slice(-keep))) keep--;
+          this.modalPending = keep > 0 ? rest.slice(-keep) : "";
+          return;
+        }
+        rest = rest.slice(end + PASTE_END.length);
+        this.modalPaste = false;
+        continue;
+      }
+      if (rest.startsWith(PASTE_START)) {
+        rest = rest.slice(PASTE_START.length);
+        this.modalPaste = true;
+        continue;
+      }
+      // An incomplete escape sequence (a lone ESC, or the start of an arrow or
+      // paste marker) may be completed by the next chunk; wait briefly.
+      if (rest.startsWith("\u001b") && !/^\u001b(?:\[[0-?]*[ -/]*[@-~]|O.|[^[O])/.test(rest)) {
+        this.modalPending = rest;
+        this.modalEscapeTimer = setTimeout(() => {
+          this.modalEscapeTimer = null;
+          const pending = this.modalPending;
+          this.modalPending = "";
+          if (pending === "\u001b" && this.modal) {
+            this.modal("escape");
+            this.options.onChange();
+          }
+        }, 50);
+        return;
+      }
+      const match = keys.find(([sequence]) => rest.startsWith(sequence));
+      if (match) {
+        rest = rest.slice(match[0].length);
+        this.modal(match[1]);
+        continue;
+      }
+      // Skip any other escape sequence or character (pastes, mouse reports).
+      const sequence = /^\u001b\[[0-?]*[ -/]*[@-~]/.exec(rest)?.[0] ?? /^\u001b./.exec(rest)?.[0] ?? rest[0];
+      rest = rest.slice(sequence.length);
+    }
+  }
+
   /** Restore a saved draft, e.g. after returning to a room. */
   setDraft(line: string): void {
     if (this.closed) return;
@@ -150,6 +230,7 @@ export class ChatInputController {
     if (this.closed) return;
     this.closed = true;
     if (this.escapeTimer) clearTimeout(this.escapeTimer);
+    if (this.modalEscapeTimer) clearTimeout(this.modalEscapeTimer);
     this.options.input.off("data", this.onData);
     this.options.input.off("end", this.onEnd);
     this.options.input.pause();
@@ -174,6 +255,11 @@ export class ChatInputController {
 
   private readonly onData = (data: Buffer | string) => {
     if (this.closed) return;
+    if (this.modal) {
+      this.feedModal(typeof data === "string" ? data : this.decoder.write(data));
+      this.options.onChange();
+      return;
+    }
     if (this.escapeTimer) clearTimeout(this.escapeTimer);
     this.escapeTimer = null;
     this.pending += typeof data === "string" ? data : this.decoder.write(data);

@@ -368,6 +368,19 @@ const migrations: Migration[] = [
       pid INTEGER NOT NULL, process_started_at TEXT NOT NULL,
       PRIMARY KEY (room_id, agent_id)
     );`
+  },
+  {
+    id: 21,
+    name: "room_roles",
+    up: `CREATE TABLE room_roles (
+      room_id TEXT NOT NULL REFERENCES path_rooms(room_id) ON DELETE CASCADE,
+      subject TEXT NOT NULL,
+      roles_json TEXT NOT NULL,
+      set_by TEXT,
+      set_at TEXT NOT NULL,
+      PRIMARY KEY (room_id, subject)
+    );
+    ALTER TABLE path_rooms ADD COLUMN roles_version INTEGER NOT NULL DEFAULT 0;`
   }
 ];
 

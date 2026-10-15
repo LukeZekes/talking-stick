@@ -1975,3 +1975,36 @@ test.each([100, 18])("a room message header updates delivery marks across wrappe
     expect(screen).toContain("> draft");
   } finally { input.write(""); await session; vt.dispose(); }
 });
+
+test("/roles opens a key-driven editor; Enter applies and tells only the changed agent", async () => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "claude:aa", context_path: root });
+  service.joinPath({ agent_id: "codex:bb", context_path: root });
+  const input = new PassThrough();
+  const output = Object.assign(new PassThrough(), { columns: 120, rows: 20 });
+  let out = "";
+  output.on("data", (chunk) => { out += chunk.toString(); });
+  const session = runChatSession({
+    runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output,
+    terminal: true, inline: true, color: false, history: 0, show_turn_events: false, poll_ms: 5
+  });
+  await until(() => out.includes("Room"));
+  input.write("/roles\r");
+  await until(() => out.includes("Roles (v0)"));
+  // codex row, reviewer column, toggle on, apply.
+  input.write("\u001b[B");
+  input.write("\u001b[C\u001b[C");
+  input.write(" ");
+  input.write("\r");
+  await until(() => service.getRoomRoles({ room_id: joined.room_id }).version === 1);
+  expect(service.getRoomRoles({ room_id: joined.room_id }).assignments)
+    .toEqual([{ subject: "agent:codex:bb", roles: ["implementer", "reviewer"] }]);
+  await until(() => out.includes("Roles v1 applied; told codex"));
+  const messages = service.getRecentRoomEvents({ room_id: joined.room_id, limit: 20 })
+    .filter((event) => event.event_type === "message_sent");
+  expect(messages).toHaveLength(1);
+  expect(messages[0].to_agent_id).toBe("codex:bb");
+  input.write("/quit\r");
+  await session;
+});

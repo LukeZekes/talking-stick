@@ -6,7 +6,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { planChatInterrupts } from "./chat-interrupt.js";
 import { interruptCodexThread } from "./codex-interrupt.js";
 import { interruptCodexHerdr } from "./codex-herdr-interrupt.js";
-import { ChatInputController } from "./chat-input.js";
+import { ChatInputController, type ChatModalKey } from "./chat-input.js";
+import { createRolesEditor, renderRolesEditor, rolesEditorKey, type RolesEditorState } from "./roles-editor.js";
+import { applyRoleChanges, liveAgents, parseRoleList, parseRoleSubject, roomRoleBlock } from "./role-commands.js";
+import { readUserRoleDefaults, writeUserRoleDefault } from "../roles.js";
 import { resolveRoomSelector, roomShortName, selectedRoom } from "./room-selector.js";
 import { insideNestedRepository, isWithinOrSame, resolveContextPath } from "../path-resolution.js";
 import { resolveChatKick } from "./chat-kick.js";
@@ -348,6 +351,42 @@ export async function runChatSession(
     }
     return runtime.commands.openRoom({ context_path: directory });
   };
+  let rolesPanel: RolesEditorState | null = null;
+  const rolesPanelLines = () => rolesPanel
+    ? renderRolesEditor(rolesPanel, formatContext(), Math.max(4, dimensions().rows - 6), Math.max(20, dimensions().columns - 1))
+    : undefined;
+  const closeRolesPanel = () => {
+    rolesPanel = null;
+    editor?.setModal(null);
+    redraw();
+  };
+  const onRolesKey = (key: ChatModalKey) => {
+    if (!rolesPanel) return;
+    const { state, action } = rolesEditorKey(rolesPanel, key);
+    rolesPanel = state;
+    if (action.kind === "cancel") { closeRolesPanel(); print("Roles unchanged."); return; }
+    if (action.kind === "save_default") {
+      try { writeUserRoleDefault(action.harness, action.roles); }
+      catch (error) { rolesPanel = { ...state, notice: `! ${error instanceof Error ? error.message : String(error)}` }; }
+      redraw();
+      return;
+    }
+    if (action.kind === "apply") {
+      closeRolesPanel();
+      if (action.changes.length === 0) { print("Roles unchanged."); return; }
+      void applyRoleChanges(runtime, identity, roomId, action.changes)
+        .then((result) => print(`Roles v${result.version} applied; told ${result.recipients.map((id) => sanitizeChatText(nameOf(id))).join(", ") || "nobody"}.`))
+        .catch((error) => print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`));
+      return;
+    }
+    redraw();
+  };
+  const openRolesPanel = () => {
+    const { version, assignments } = runtime.commands.getRoomRoles({ room_id: roomId });
+    rolesPanel = createRolesEditor({ agents: liveAgents(runtime, roomId), assignments, userDefaults: readUserRoleDefaults(), version });
+    editor?.setModal(onRolesKey);
+    redraw();
+  };
   const switchTo = (room: PathRoom) => {
     if (room.room_id === roomId) { print(`Already in ${sanitizeChatText(room.canonical_path)}.`); return; }
     switchTarget = room;
@@ -474,7 +513,7 @@ export async function runChatSession(
     if (!inline || closed) return;
     const draft = editor?.draft ?? { line: "", cursor: 0 };
     const frame = renderInlinePanel({
-      room_path: joined.canonical_path, room_strip: roomStrip, transcript, format: formatContext(),
+      room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), transcript, format: formatContext(),
       status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
         interrupt_statuses: interruptStatuses() },
       draft, hint: currentHint(),
@@ -511,7 +550,7 @@ export async function runChatSession(
       try {
         const frame = renderChatScreen({
           room_path: joined.canonical_path,
-          room_strip: roomStrip,
+          room_strip: roomStrip, panel: rolesPanelLines(),
           transcript,
           format: formatContext(),
           status: {
@@ -636,7 +675,7 @@ export async function runChatSession(
       inlineFrame = null;
       editor?.resize(dimensions().columns - 1);
       const draft = editor?.draft ?? { line: "", cursor: 0 };
-      const panel = renderInlinePanel({ room_path: joined.canonical_path, room_strip: roomStrip, transcript, format: formatContext(),
+      const panel = renderInlinePanel({ room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), transcript, format: formatContext(),
         status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
           interrupt_statuses: interruptStatuses() },
         draft, hint: currentHint(), completions: editor?.completionVisible ? completionsFor(draft) : [],
@@ -861,6 +900,34 @@ export async function runChatSession(
         refreshMembers();
         print(describeRoom());
         return;
+      case "roles": {
+        const [action, target, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+        try {
+          if (!action) {
+            if (editor) { openRolesPanel(); return; }
+            print(roomRoleBlock(runtime, roomId, null));
+            return;
+          }
+          if (action === "default") {
+            if (!target) { print("Usage: /roles default <harness> <roles|none|clear>"); return; }
+            const roles = parseRoleList(rest.join(" "));
+            writeUserRoleDefault(target, roles);
+            print(`Default roles for ${sanitizeChatText(target)}: ${roles === null ? "bundled" : roles.join(", ") || "none"}.`);
+            return;
+          }
+          if (action === "set") {
+            if (!target) { print("Usage: /roles set <agent|harness> <roles|none|clear>"); return; }
+            void applyRoleChanges(runtime, identity, roomId, [{ subject: parseRoleSubject(target), roles: parseRoleList(rest.join(" ")) }])
+              .then((result) => print(`Roles v${result.version} applied; told ${result.recipients.map((id) => sanitizeChatText(nameOf(id))).join(", ") || "nobody"}.`))
+              .catch((error) => print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`));
+            return;
+          }
+          print("Usage: /roles · /roles set <agent|harness> <roles|none|clear> · /roles default <harness> <roles|none|clear>");
+        } catch (error) {
+          print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`);
+        }
+        return;
+      }
       case "rooms": {
         if (!consoleState) { print("This console shows one room."); return; }
         refreshStrip();
