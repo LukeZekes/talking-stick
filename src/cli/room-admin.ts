@@ -121,7 +121,7 @@ function listRooms(runtime: Runtime, parsed: ParsedCommand, target: string | und
   }));
   printResult(parsed, { anchor, rooms }, () => rooms.length === 0
     ? `No rooms under ${anchor}.`
-    : rooms.map((room) => `${room.current ? "*" : " "} #${room.name}  ${room.kind}  ${room.agents.join(", ") || "no agents"}${room.owner ? `  stick=${room.owner}` : ""}  ${room.canonical_path}`).join("\n"));
+    : rooms.map((room) => `${room.current ? "*" : " "} #${room.name}  ${room.kind}  ${room.agents.join(", ") || "no agents"}${room.owner ? `  stick=${room.owner}` : ""}  ${room.canonical_path}  ${room.room_id}`).join("\n"));
 }
 
 // Declare an existing legacy room's directory and key the room to it, keeping
