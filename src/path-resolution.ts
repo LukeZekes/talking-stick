@@ -234,7 +234,9 @@ function findRoomDeclaration(startPath: string, checkoutRoot: string | null): Ro
 
 // The file's presence is the declaration. Known keys are read; anything else
 // is reported so a typo is visible instead of silently ignored.
-const DECLARATION_KEYS = new Set(["name", "default_channel", "channels"]);
+// Channels are reserved for a later release; accepting their keys silently
+// would suggest they work.
+const DECLARATION_KEYS = new Set(["name"]);
 export function readDeclaration(file: string): { name: string | null; problem: string | null } {
   let text: string;
   try {

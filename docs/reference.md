@@ -90,13 +90,13 @@ A workspace maps to a room, so two agents `cd`'d anywhere under the same reposit
 same room automatically. Resolution, first match wins:
 
 1. `--in ROOM` or `TT_ROOM`.
-2. A declared room: the nearest directory, up to the checkout root, that contains
+2. An older nested room created with `--force-new` between your directory and the nearest
+   declaration (or the checkout root), nearest first. Existing rooms keep their members and
+   lease; `tt room adopt` turns one into a declared room without changing its id.
+3. A declared room: the nearest directory, up to the checkout root, that contains
    `.talking-stick/room.toml`. Create one with `tt room create packages/api [--name api]`
    and commit the file so every checkout shares the layout. In a monorepo each declared
    package is its own room; undeclared directories use the repository's root room.
-3. An older nested room created with `--force-new` inside the checkout, so existing rooms
-   keep their members and lease. `tt room adopt` turns one into a declared room without
-   changing its id.
 4. The repository's root room.
 
 Inside Git a repository is its own root: a room above the checkout (for example at `~/dev`)
@@ -108,8 +108,8 @@ existing room above it, or the nearest project marker. Marker files directly in 
 directory are ignored for descendant paths, so scratch directories under `$HOME` do not
 collapse into one home-scoped room unless you join home itself.
 
-`room.toml` accepts `name = "..."`. A file tt cannot parse still declares the room, and joins
-report the problem. A custom `name` is found by `--in` when the keyed path exists in the main
+`room.toml` accepts only `name = "..."` today. Any other content, including the reserved
+`channels` and `default_channel` keys, still declares the room, and joins report it. A custom `name` is found by `--in` when the keyed path exists in the main
 checkout; for a package that exists only on a linked worktree's branch, use its directory name,
 a path suffix, or the room id. `tt room remove` refuses while agents are in the room. Otherwise
 it deletes the room with its events and notes, as when the last agent leaves a room, detaching
