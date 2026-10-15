@@ -37,7 +37,7 @@ export function interruptCodexThread(
       socket.send(JSON.stringify({ method, ...(id === undefined ? {} : { id }), params }));
     };
     socket.on("open", () => send("initialize", 1, {
-      clientInfo: { name: "talking_stick", title: "Talking Stick", version: "0.20.0" },
+      clientInfo: { name: "talking_stick", title: "Talking Stick", version: "0.21.0" },
       capabilities: { experimentalApi: true }
     }));
     socket.on("message", (data) => {
