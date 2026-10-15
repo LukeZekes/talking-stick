@@ -221,6 +221,27 @@ describe("path resolution", () => {
     expect(plainApi.canonical_path).toBe(realPath(repo));
   });
 
+  test("retiring a declared room refuses agents but not chat observers", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "talking-stick-retire-"));
+    tempRoots.push(tempRoot);
+    const repo = createRepo(tempRoot);
+    const api = path.join(repo, "packages", "api");
+    declareRoom(api);
+    const service = new TalkingStickService({ dbPath: path.join(tempRoot, "state", "rooms.sqlite") });
+    services.push(service);
+    const opened = service.openRoom({ context_path: api });
+    expect(opened.canonical_path).toBe(realPath(api));
+    expect(service.joinPath({ agent_id: "codex:api", context_path: api }).room_id).toBe(opened.room_id);
+    expect(() => service.retireUnoccupiedRoom({ room_id: opened.room_id })).toThrow(/still has members/);
+    service.leaveRoom({ agent_id: "codex:api", room_id: opened.room_id });
+
+    const again = service.openRoom({ context_path: api });
+    service.joinPath({ agent_id: "human:op:chat:1", context_path: api,
+      process_metadata: { session_kind: "human_chat" } });
+    expect(service.retireUnoccupiedRoom({ room_id: again.room_id })).toEqual({ retired: true });
+    expect(service.listRooms({}).rooms.some((room) => room.room_id === again.room_id)).toBe(false);
+  });
+
   test("an existing nested legacy room keeps winning inside a declared room", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "talking-stick-mono-legacy-"));
     tempRoots.push(tempRoot);

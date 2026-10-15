@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ROOM_DECLARATION_FILE, readDeclaration } from "../path-resolution.js";
+import { ROOM_DECLARATION_FILE, readDeclaration, resolveContextPath } from "../path-resolution.js";
 import type { PathRoom } from "../types.js";
 import { getStringOption, type ParsedCommand } from "./parser.js";
 import type { Runtime } from "./runtime.js";
@@ -21,11 +21,18 @@ export function roomShortName(room: Pick<PathRoom, "canonical_path">): string {
   return name ?? (path.basename(room.canonical_path) || room.canonical_path);
 }
 
-// Accepts a room id, an absolute room path, a short name (`api`, `#api`), or a
-// path suffix (`web/api`). Exactly one open room must match; never creates.
-export function resolveRoomSelector(rooms: readonly PathRoom[], selector: string): PathRoom {
+// Accepts a room id, an absolute room path, `root` (the repository room for
+// contextPath), a short name (`api`, `#api`), or a path suffix (`web/api`).
+// Exactly one open room must match; never creates.
+export function resolveRoomSelector(rooms: readonly PathRoom[], selector: string, contextPath: string = process.cwd()): PathRoom {
   const open = rooms.filter((room) => room.state !== "closed");
   const wanted = selector.replace(/^#/, "");
+  if (wanted === "root") {
+    const anchor = resolveContextPath(contextPath).workspace_root;
+    const root = open.find((room) => room.canonical_path === anchor);
+    if (root) return root;
+    throw new Error(`No open room at the repository root ${anchor}. Run \`tt join ${anchor}\` first.`);
+  }
   const byId = open.filter((room) => room.room_id === wanted);
   if (byId.length === 1) return byId[0];
   const byPath = path.isAbsolute(wanted)
@@ -43,5 +50,7 @@ export function resolveRoomSelector(rooms: readonly PathRoom[], selector: string
 /** The explicitly selected room, or null when the command should resolve its path. */
 export function selectedRoom(runtime: Runtime, parsed: ParsedCommand, env: NodeJS.ProcessEnv = process.env): PathRoom | null {
   const selector = roomSelectorFrom(parsed, env);
-  return selector ? resolveRoomSelector(runtime.commands.listRooms({}).rooms, selector) : null;
+  return selector
+    ? resolveRoomSelector(runtime.commands.listRooms({}).rooms, selector, getStringOption(parsed, "path") ?? process.cwd())
+    : null;
 }

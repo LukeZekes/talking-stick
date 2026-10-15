@@ -12,10 +12,10 @@ import type { Runtime } from "./runtime.js";
 export function handleRoomCommand(runtime: Runtime, parsed: ParsedCommand): void {
   const [action, target] = parsed.positionals;
   switch (action) {
-    case "create": return createRoom(parsed, target);
+    case "create": return createRoom(runtime, parsed, target);
     case "list": return listRooms(runtime, parsed, target);
     case "adopt": return adoptRoom(runtime, parsed, target);
-    case "remove": return removeRoom(parsed, target);
+    case "remove": return removeRoom(runtime, parsed, target);
     default:
       throw new Error("Usage: tt room create [path] [--name NAME] | list [path] | adopt [path] | remove [path]");
   }
@@ -36,14 +36,23 @@ function writeDeclaration(directory: string, name: string | undefined): string {
   return file;
 }
 
-function createRoom(parsed: ParsedCommand, target: string | undefined): void {
+function createRoom(runtime: Runtime, parsed: ParsedCommand, target: string | undefined): void {
   const directory = resolveContextPath(target ?? process.cwd()).canonical_context_path;
   if (!fs.statSync(directory, { throwIfNoEntry: false })?.isDirectory()) {
     throw new Error(`${directory} is not a directory.`);
   }
   const file = writeDeclaration(directory, getStringOption(parsed, "name"));
   const resolved = resolveContextPath(directory);
-  const result = { status: "created", declaration: file, room_path: resolved.room_path,
+  // Open the row now so `--in <name>` and `tt up --in` work before any join.
+  let room: PathRoom;
+  try {
+    room = runtime.commands.openRoom({ context_path: directory });
+  } catch (error) {
+    fs.rmSync(file, { force: true });
+    try { fs.rmdirSync(path.dirname(file)); } catch { /* .talking-stick holds other files */ }
+    throw error;
+  }
+  const result = { status: "created", declaration: file, room_id: room.room_id, room_path: resolved.room_path,
     rel_path: resolved.declaration?.rel_path ?? "", name: resolved.declaration?.name ?? path.basename(directory) };
   printResult(parsed, result, () => [
     `Declared room ${result.name} at ${directory}.`,
@@ -67,7 +76,7 @@ function listRooms(runtime: Runtime, parsed: ParsedCommand, target: string | und
   const rooms: RoomListing[] = runtime.commands.listRooms({}).rooms
     .filter((room) => room.state !== "closed" && isWithinOrSame(room.canonical_path, anchor))
     .map((room) => ({
-      name: roomShortName(room),
+      name: room.canonical_path === anchor ? "root" : roomShortName(room),
       room_id: room.room_id,
       canonical_path: room.canonical_path,
       state: room.state,
@@ -103,15 +112,18 @@ function adoptRoom(runtime: Runtime, parsed: ParsedCommand, target: string | und
     () => `Adopted room ${room.room_id} at ${directory}${rekeyed.canonical_path !== directory ? ` (keyed as ${rekeyed.canonical_path})` : ""}. Commit ${file} to share it.`);
 }
 
-// Removes only the declaration. The room keeps serving its current members and
-// idles out normally; new joins resolve to the parent room.
-function removeRoom(parsed: ParsedCommand, target: string | undefined): void {
+// Removes the declaration and the room it keyed, so later joins really do
+// resolve to the parent. Refuses while agents are still in the room.
+function removeRoom(runtime: Runtime, parsed: ParsedCommand, target: string | undefined): void {
   const resolved = resolveContextPath(target ?? process.cwd());
   const declaration = resolved.declaration;
   if (!declaration) throw new Error(`No room declaration covers ${resolved.canonical_context_path}.`);
+  const room = runtime.commands.listRooms({}).rooms.find((candidate) =>
+    candidate.canonical_path === resolved.room_path || candidate.canonical_path === declaration.directory);
+  const retired = room ? runtime.commands.retireUnoccupiedRoom({ room_id: room.room_id }).retired : false;
   const file = declarationFile(declaration.directory);
   fs.rmSync(file);
   try { fs.rmdirSync(path.dirname(file)); } catch { /* .talking-stick holds other files */ }
-  printResult(parsed, { status: "removed", declaration: file },
-    () => `Removed ${file}. Current members stay until they rejoin; new joins use the parent room.`);
+  printResult(parsed, { status: "removed", declaration: file, retired_room_id: retired ? room?.room_id ?? null : null },
+    () => `Removed ${file}${retired ? ` and retired room ${room?.room_id} (any chat console on it is detached)` : ""}. New joins use the parent room.`);
 }

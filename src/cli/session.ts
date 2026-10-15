@@ -88,17 +88,21 @@ export function resolveSessionForNotes(
   return session;
 }
 
-// An explicitly selected room keys its session by room_id, never by path.
+// An explicitly selected room keys its session by room_id, never by path: a
+// stale entry for a replaced room at the same path must not be returned.
 function sessionForRoom(identity: DerivedIdentity, room: PathRoom): CliSession {
   const sessionPath = resolveCliSessionPath();
-  return findCliSessionByRoom(sessionPath, identity.agent_id, room.room_id) ??
-    insertCliSessionIfAbsent(sessionPath, {
-      agent_id: identity.agent_id,
-      room_id: room.room_id,
-      canonical_path: room.canonical_path,
-      workspace_root: resolveContextPath(room.canonical_path).workspace_root,
-      updated_at: new Date().toISOString()
-    });
+  const existing = findCliSessionByRoom(sessionPath, identity.agent_id, room.room_id);
+  if (existing) return existing;
+  const session = {
+    agent_id: identity.agent_id,
+    room_id: room.room_id,
+    canonical_path: room.canonical_path,
+    workspace_root: resolveContextPath(room.canonical_path).workspace_root,
+    updated_at: new Date().toISOString()
+  };
+  upsertJoinedCliSession(sessionPath, session);
+  return findCliSessionByRoom(sessionPath, identity.agent_id, room.room_id) ?? session;
 }
 
 function findLiveSession(

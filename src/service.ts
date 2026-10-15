@@ -3544,6 +3544,38 @@ export class TalkingStickService {
     });
   }
 
+  /**
+   * Delete a room whose declaration is being removed. Refuses while any agent
+   * is a member: removing a declaration must not strand a live lease. Chat
+   * consoles are observers and do not block it.
+   */
+  retireUnoccupiedRoom(input: { room_id: string }): { retired: boolean } {
+    assertNonEmpty(input.room_id, "room_id");
+    return withImmediateTransaction(this.db, () => {
+      const room = this.db.prepare<[string], PathRoomRow>("SELECT * FROM path_rooms WHERE room_id = ?").get(input.room_id);
+      if (!room) return { retired: false };
+      const agents = this.getMembers(room.room_id).filter((member) => !isObserverMember(member));
+      if (agents.length > 0 || room.owner) {
+        throw new ProtocolError("target_active",
+          `Room ${room.room_id} still has members (${agents.map((member) => member.agent_id).join(", ") || room.owner}). Ask them to leave first.`);
+      }
+      this.deleteRoom(room.room_id);
+      return { retired: true };
+    });
+  }
+
+  /**
+   * Open (find or create) the room a path resolves to, without joining it, so
+   * a declared room can be selected by name before any agent has joined.
+   */
+  openRoom(input: { context_path: string }): PathRoom {
+    assertNonEmpty(input.context_path, "context_path");
+    const resolved = resolveContextPath(input.context_path);
+    const now = this.now();
+    return withImmediateTransaction(this.db, () =>
+      this.mapRoomForList(this.findOrCreateRoomForJoin(resolved, false, now.toISOString()).room, now));
+  }
+
   // An explicit selector never creates a room: a typo must not open a new one.
   private selectExplicitRoom(roomId: string): { room: PathRoomRow; joinedExistingRoom: boolean; warning?: string } {
     const room = this.db.prepare<[string], PathRoomRow>("SELECT * FROM path_rooms WHERE room_id = ?").get(roomId);

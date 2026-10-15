@@ -3371,10 +3371,13 @@ describe("tt room", () => {
     expect(created).toMatchObject({ status: "created", rel_path: "packages/api", name: "api" });
     expect(fs.readFileSync(path.join(api, ".talking-stick", "room.toml"), "utf8")).toContain('name = "api"');
     await expect(captureStdout(["room", "create", api, "--json"])).rejects.toThrow(/already declares/);
+    // Selectable by name before any agent has joined from inside it.
+    expect(JSON.parse(await captureStdout(["state", "--in", "#api", "--json"])).room.room_id).toBe(created.room_id);
 
     const root = JSON.parse(await captureStdout(["join", project, "--json"]));
     const fromSrc = JSON.parse(await captureStdout(["join", path.join(api, "src"), "--json"]));
     expect(fromSrc.canonical_path).toBe(api);
+    expect(fromSrc.room_id).toBe(created.room_id);
     expect(fromSrc.room_id).not.toBe(root.room_id);
 
     process.env.TT_HARNESS_AGENT_ID = "codex:rooms";
@@ -3387,11 +3390,32 @@ describe("tt room", () => {
 
     const listed = JSON.parse(await captureStdout(["room", "list", project, "--json"]));
     expect(listed.rooms.map((room: { name: string; kind: string }) => [room.name, room.kind]).sort())
-      .toEqual([["api", "declared"], [path.basename(project), "root"]]);
+      .toEqual([["api", "declared"], ["root", "root"]]);
+    expect(JSON.parse(await captureStdout(["state", "--in", "#root", "--path", path.join(api, "src"), "--json"])).room.room_id)
+      .toBe(root.room_id);
 
+    // An explicit selector never trusts a stale path-keyed session.
+    const sessionsFile = path.join(process.env.TALKING_STICK_DATA_DIR!, "cli-sessions.json");
+    const sessions = JSON.parse(fs.readFileSync(sessionsFile, "utf8"));
+    const list = Array.isArray(sessions) ? sessions : sessions.sessions;
+    const stale = list.find((entry: { agent_id: string; canonical_path: string }) =>
+      entry.agent_id === "codex:rooms" && entry.canonical_path === api);
+    stale.room_id = "00000000-0000-4000-8000-000000000000";
+    fs.writeFileSync(sessionsFile, JSON.stringify(sessions));
+    expect(JSON.parse(await captureStdout(["state", "--in", "api", "--json"])).room.room_id).toBe(fromSrc.room_id);
+
+    await expect(captureStdout(["room", "remove", api, "--json"])).rejects.toThrow(/still has members/);
+    expect(fs.existsSync(path.join(api, ".talking-stick", "room.toml"))).toBe(true);
+    process.env.TT_HARNESS_AGENT_ID = "claude:rooms";
+    await captureStdout(["leave", "--in", "api", "--json"]);
+    process.env.TT_HARNESS_AGENT_ID = "codex:rooms";
+    await captureStdout(["leave", "--in", "api", "--json"]);
     const removed = JSON.parse(await captureStdout(["room", "remove", path.join(api, "src"), "--json"]));
+    // The last agent leaving already deleted the room; remove retires it otherwise.
     expect(removed.status).toBe("removed");
     expect(fs.existsSync(path.join(api, ".talking-stick"))).toBe(false);
+    process.env.TT_HARNESS_AGENT_ID = "grok:after";
+    expect(JSON.parse(await captureStdout(["join", path.join(api, "src"), "--json"])).room_id).toBe(root.room_id);
     for (const dir of registry) fs.rmSync(dir, { recursive: true, force: true });
   });
 

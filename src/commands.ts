@@ -160,6 +160,14 @@ export class TalkingStickCommands {
     return this.service.rekeyRoomPath(input);
   }
 
+  openRoom(input: { context_path: string }): PathRoom {
+    return this.service.openRoom(input);
+  }
+
+  retireUnoccupiedRoom(input: { room_id: string }): { retired: boolean } {
+    return this.service.retireUnoccupiedRoom(input);
+  }
+
   listRooms(input: ListRoomsInput = {}): ListRoomsResult {
     return this.service.listRooms(input);
   }
