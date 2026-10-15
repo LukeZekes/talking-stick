@@ -3613,7 +3613,7 @@ export class TalkingStickService {
     agent_id: AgentId;
     room_id: string;
     changes: Array<{ subject: RoleSubject; roles: string[] | null }>;
-    notify: (state: { version: number; assignments: RoomRoleAssignment[] }) => { body: string; to_agent_ids: AgentId[] };
+    notify: (state: { version: number; assignments: RoomRoleAssignment[]; before: RoomRoleAssignment[] }) => { body: string; to_agent_ids: AgentId[] };
     process_metadata?: ProcessMetadata;
   }): { version: number; event_seq: number | null; recipients: AgentId[] } {
     assertNonEmpty(input.agent_id, "agent_id");
@@ -3626,6 +3626,9 @@ export class TalkingStickService {
     const timestamp = this.now().toISOString();
     const result = withImmediateTransaction(this.db, () => {
       this.requireRoom(input.room_id);
+      // The notification must compare against the state protected by this
+      // write transaction, including changes committed by another process.
+      const before = this.getRoomRoles({ room_id: input.room_id }).assignments;
       for (const change of input.changes) {
         if (!/^(agent|harness):\S+$/.test(change.subject)) {
           throw new ProtocolError("invalid_input", `Invalid role subject ${change.subject}.`);
@@ -3640,7 +3643,7 @@ export class TalkingStickService {
       }
       this.db.prepare("UPDATE path_rooms SET roles_version = roles_version + 1 WHERE room_id = ?").run(input.room_id);
       const state = this.getRoomRoles({ room_id: input.room_id });
-      const notice = input.notify(state);
+      const notice = input.notify({ ...state, before });
       const recipients = [...new Set(notice.to_agent_ids)].filter((id) => id !== input.agent_id);
       if (recipients.length === 0) return { version: state.version, event_seq: null, recipients };
       const sent = this.sendMessageLocked({

@@ -8,7 +8,8 @@ import {
   effectiveRoles,
   readUserRoleDefaults,
   renderRoleBlock,
-  writeUserRoleDefault
+  writeUserRoleDefault,
+  type RoomRoleAssignment
 } from "../src/roles.js";
 
 const cleanups: Array<() => void> = [];
@@ -103,4 +104,22 @@ test("no effective change sends nothing but still versions the table", () => {
   const result = service.setRoomRoles({ agent_id: "human:op", room_id: room.room_id,
     changes: [{ subject: "harness:claude", roles: ["architect"] }], notify: () => ({ body: "unused", to_agent_ids: [] }) });
   expect(result).toEqual({ version: 1, event_seq: null, recipients: [] });
+});
+
+test("role notices compare with the state inside the write transaction", () => {
+  const { service, room } = roomWithAgents();
+  service.setRoomRoles({ agent_id: "human:op", room_id: room.room_id,
+    changes: [{ subject: "agent:codex:b", roles: ["tester"] }],
+    notify: () => ({ body: "unused", to_agent_ids: [] }) });
+  let observed: { before: RoomRoleAssignment[]; assignments: RoomRoleAssignment[] } | undefined;
+  service.setRoomRoles({ agent_id: "human:op", room_id: room.room_id,
+    changes: [{ subject: "agent:codex:b", roles: ["reviewer"] }],
+    notify: ({ before, assignments }) => {
+      observed = { before, assignments };
+      return { body: "unused", to_agent_ids: [] };
+    } });
+  expect(observed).toEqual({
+    before: [{ subject: "agent:codex:b", roles: ["tester"] }],
+    assignments: [{ subject: "agent:codex:b", roles: ["reviewer"] }]
+  });
 });

@@ -172,7 +172,7 @@ export class TalkingStickCommands {
   setRoomRoles(identity: DerivedIdentity, input: {
     room_id: string;
     changes: Array<{ subject: RoleSubject; roles: string[] | null }>;
-    notify: (state: { version: number; assignments: RoomRoleAssignment[] }) => { body: string; to_agent_ids: string[] };
+    notify: (state: { version: number; assignments: RoomRoleAssignment[]; before: RoomRoleAssignment[] }) => { body: string; to_agent_ids: string[] };
   }) {
     return this.service.setRoomRoles({ ...input, agent_id: identity.agent_id, process_metadata: identity.process_metadata });
   }

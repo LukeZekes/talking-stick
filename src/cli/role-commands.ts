@@ -63,14 +63,13 @@ export async function applyRoleChanges(runtime: Runtime, identity: DerivedIdenti
   changes: Array<{ subject: RoleSubject; roles: string[] | null }>) {
   const agents = liveAgents(runtime, roomId);
   const defaults = readUserRoleDefaults();
-  const before = runtime.commands.getRoomRoles({ room_id: roomId });
   const key = (agent: string, assignments: readonly RoomRoleAssignment[]) =>
     JSON.stringify(effectiveRoles(agent, assignments, defaults).roles);
   const result = runtime.commands.setRoomRoles(identity, {
     room_id: roomId,
     changes,
-    notify: ({ version, assignments }) => {
-      const changed = agents.filter((agent) => key(agent, before.assignments) !== key(agent, assignments));
+    notify: ({ version, assignments, before }) => {
+      const changed = agents.filter((agent) => key(agent, before) !== key(agent, assignments));
       return {
         to_agent_ids: changed,
         body: `[roles v${version}] Your role in this room changed. It applies from your next turn; it never changes who holds the stick.\n` +
