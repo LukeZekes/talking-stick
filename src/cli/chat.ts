@@ -324,6 +324,21 @@ export async function runChatSession(
     roomStrip = next;
     return changed;
   };
+  const openRoomAtPath = (target: string): PathRoom | null => {
+    if (!consoleState) return null;
+    // Relative to the caller's checkout when it belongs to this console's
+    // repository (a worktree keeps its branch's declarations), else the anchor.
+    const caller = resolveContextPath(options.context_path);
+    const checkout = caller.workspace_root === consoleState.anchor ? caller.checkout_root ?? consoleState.anchor : consoleState.anchor;
+    const directory = path.resolve(checkout, target);
+    if (!fs.statSync(directory, { throwIfNoEntry: false })?.isDirectory()) return null;
+    const resolved = resolveContextPath(directory);
+    if (!isWithinOrSame(resolved.room_path, consoleState.anchor) ||
+        (resolved.checkout_root !== null && resolved.workspace_root !== consoleState.anchor)) {
+      throw new Error(`${directory} belongs to another repository.`);
+    }
+    return runtime.commands.openRoom({ context_path: directory });
+  };
   const switchTo = (room: PathRoom) => {
     if (room.room_id === roomId) { print(`Already in ${sanitizeChatText(room.canonical_path)}.`); return; }
     switchTarget = room;
@@ -854,7 +869,21 @@ export async function runChatSession(
           // /go stays inside this console's repository.
           const local = runtime.commands.listRooms({}).rooms.filter((room) =>
             isWithinOrSame(room.canonical_path, consoleState.anchor) && !insideNestedRepository(room.canonical_path, consoleState.anchor));
-          switchTo(resolveRoomSelector(local, args.trim(), consoleState.anchor));
+          let room: PathRoom;
+          try {
+            room = resolveRoomSelector(local, args.trim(), consoleState.anchor);
+          } catch (error) {
+            // A directory (relative to this checkout) opens its room the way a
+            // join from there would, e.g. a committed declaration nobody has
+            // joined yet on this machine. Only for a plain path-shaped argument
+            // with no match at all: `#name` and ambiguous names keep their error.
+            const target = args.trim();
+            const noMatch = error instanceof Error && error.message.startsWith("No open room matches");
+            const opened = noMatch && !target.startsWith("#") ? openRoomAtPath(target) : null;
+            if (!opened) throw error;
+            room = opened;
+          }
+          switchTo(room);
         } catch (error) {
           print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`);
         }

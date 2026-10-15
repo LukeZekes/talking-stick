@@ -30,7 +30,7 @@ export const CHAT_COMMANDS: ChatCommandInfo[] = [
   { name: "quit", usage: "/quit", description: "leave the chat" },
   { name: "who", usage: "/who", description: "members and who has the stick" },
   { name: "rooms", usage: "/rooms", description: "rooms in this repository with agents or unread messages" },
-  { name: "go", usage: "/go <room>", description: "switch to another room (also Alt+←/→)" },
+  { name: "go", usage: "/go <room|dir>", description: "switch rooms (also Alt+←/→); a directory opens its room" },
   { name: "older", usage: "/older", description: "load an earlier page of saved messages" },
   { name: "kick", usage: "/kick <agent>", description: "remove a member; --force for a live agent" },
   {

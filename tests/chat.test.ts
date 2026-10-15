@@ -805,7 +805,14 @@ describe("tt chat session", () => {
     await until(() => transcript.includes("#api"));
     expect(transcript).not.toContain(here);
     input.write(`/go ${here}\n`);
-    await until(() => transcript.includes("No open room matches"));
+    await until(() => transcript.includes("belongs to another repository"));
+    // A relative directory resolves in the active room's repository, not the caller's.
+    fs.mkdirSync(path.join(other, "docs", ".talking-stick"), { recursive: true });
+    fs.writeFileSync(path.join(other, "docs", ".talking-stick", "room.toml"), "");
+    fs.mkdirSync(path.join(here, "docs"), { recursive: true });
+    input.write("/go docs\n");
+    await until(() => service.listRooms({}).rooms.some((room) => room.canonical_path === path.join(other, "docs")));
+    expect(service.listRooms({}).rooms.some((room) => room.canonical_path === path.join(here, "docs"))).toBe(false);
     input.write("/quit\n");
     await run;
   });
@@ -860,6 +867,17 @@ describe("tt chat session", () => {
       .some((event) => (event.payload as { body?: string } | null)?.body === "hello api"));
 
     expect(members(rootRoom.room_id)).toContain(identity.agent_id);
+
+    // A committed declaration nobody has joined here has no room yet; /go by
+    // directory opens it.
+    const docs = path.join(root, "docs");
+    fs.mkdirSync(path.join(docs, ".talking-stick"), { recursive: true });
+    fs.writeFileSync(path.join(docs, ".talking-stick", "room.toml"), "");
+    input.write("/go #docs\n");
+    await until(() => transcript.includes("No open room matches #docs"));
+    input.write("/go docs\n");
+    await until(() => service.listRooms({}).rooms.some((room) => room.canonical_path === docs));
+    await until(() => members(service.listRooms({}).rooms.find((room) => room.canonical_path === docs)!.room_id).includes(identity.agent_id));
 
     input.write("/go root\n");
     await until(() => transcript.split("In the room: claude").length > 2);
