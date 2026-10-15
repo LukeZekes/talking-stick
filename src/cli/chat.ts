@@ -3,6 +3,7 @@ import readline from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 import { planChatInterrupts } from "./chat-interrupt.js";
 import { interruptCodexThread } from "./codex-interrupt.js";
+import { interruptCodexHerdr } from "./codex-herdr-interrupt.js";
 import { ChatInputController } from "./chat-input.js";
 import { resolveChatKick } from "./chat-kick.js";
 import {
@@ -830,7 +831,10 @@ export async function runChatSession(
         await Promise.all(plan.steps.map(async (step) => {
           if (step.kind === "unsupported") return;
           if (step.kind === "codex") {
-            const result = await interruptCodexThread(step.thread_id);
+            const member = members.find((candidate) => candidate.agent_id === step.agent_id);
+            const paneResult = member ? interruptCodexHerdr(member) : "unavailable";
+            const result = paneResult === "unavailable"
+              ? await interruptCodexThread(step.thread_id) : paneResult;
             if (result !== "idle") interruptIndicators.set(step.agent_id, {
               kind: "timed", label: result === "sent" ? "interrupted" : `interrupt ${result}`,
               until: Date.now() + 3_000

@@ -28,9 +28,12 @@ export class FakeHerdr {
   failSplit = false;
   ambiguousSplitAt: number | null = null;
   ambiguousChat = false;
+  emptyChatOutput = false;
   failFocus = false;
   omitDestinationIds = false;
   failProcessInfo = false;
+  failSendKeys = false;
+  agentStatus = "idle";
   private splits = 0;
   private nextPane = 2;
   private nextPid = 5000;
@@ -94,7 +97,7 @@ export class FakeHerdr {
         agent: pane.agent!.kind,
         ...(pane.agent!.name ? { name: pane.agent!.name } : {}),
         ...(pane.agent!.session_id ? { agent_session: { kind: "id", value: pane.agent!.session_id } } : {}),
-        agent_status: "idle"
+        agent_status: this.agentStatus
       })) });
     }
     if (group === "pane" && command === "get") {
@@ -131,7 +134,12 @@ export class FakeHerdr {
       this.panes.get(args[2])!.chatPid = pid;
       this.startTimes.set(pid, `Wed Oct  7 10:00:${String(pid % 60).padStart(2, "0")} 2026`);
       if (this.ambiguousChat) throw new Error("spawnSync herdr ETIMEDOUT");
+      if (this.emptyChatOutput) return "";
       return ok({ ran: true });
+    }
+    if (group === "pane" && command === "send-keys") {
+      if (this.failSendKeys) throw new Error("send-keys timed out");
+      return "";
     }
     if (group === "agent" && command === "start") {
       const kind = option("--kind");

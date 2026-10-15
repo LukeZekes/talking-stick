@@ -90,7 +90,7 @@ describe("tt up planning", () => {
       ["herdr", "pane", "split", "--pane", "<chat-pane>", "--direction", "down", "--cwd", repo, "--no-focus"],
       ["herdr", "agent", "start", plan.agents[0].herdr_name, "--kind", "claude", "--pane", "<claude-pane>", "--timeout", "60000", "--", plan.agents[0].prompt],
       ["herdr", "pane", "split", "--pane", "<claude-pane>", "--direction", "down", "--cwd", repo, "--no-focus"],
-      ["herdr", "agent", "start", plan.agents[1].herdr_name, "--kind", "codex", "--pane", "<codex-pane>", "--timeout", "60000", "--", plan.agents[1].prompt]
+      ["herdr", "agent", "start", plan.agents[1].herdr_name, "--kind", "codex", "--pane", "<codex-pane>", "--timeout", "60000", "--", "--no-daemon", plan.agents[1].prompt]
     ]);
   });
 

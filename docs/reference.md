@@ -300,7 +300,8 @@ not proof the model has acted.
 Typing `/`, `@`, or `!@` shows suggestions above the room bar. Up/Down choose, Tab or Enter accept,
 and Enter sends once the word is complete. Escape clears a nonempty draft in one press, even while
 suggestions are open. On an empty draft it attempts a message-free interrupt: Codex uses the local
-app-server's active-turn cancellation. For a local Claude session, chat leaves a flag that the
+app-server's active-turn cancellation, or sends Escape to its Herdr pane when that pane's session
+and process match the room member. For a local Claude session, chat leaves a flag that the
 installed interrupt hook (added by `tt install claude`) reads before and after each tool call: it
 denies the pending tool and ends the turn with `continue: false`. Claude cannot be stopped mid-reply
 or inside a running tool, and a flag no tool call claims within 60 seconds expires. The status bar

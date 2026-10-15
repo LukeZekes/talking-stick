@@ -250,6 +250,14 @@ describe("tt up execution", () => {
     expect(herdr.calls.some((call) => call[1] === "focus")).toBe(false);
   });
 
+  test("accepts empty successful pane-run output only after live chat proof", async () => {
+    const { run, herdr } = setup();
+    herdr.emptyChatOutput = true;
+    const result = await run(["claude"]);
+    expect(result.status).toBe("launched");
+    expect(result.chat.state).toBe("opened");
+  });
+
   test.each(["new-tab", "new-workspace"] as const)("shows %s after startup and before join observation", async (topology) => {
     const { run, herdr, setMembers } = setup();
     setMembers(() => {

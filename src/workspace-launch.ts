@@ -33,14 +33,17 @@ export interface LaunchAdapter {
   executable: string;
   // Interactive positional prompt accepted after Herdr's `--`.
   initial_prompt: boolean;
+  cli_args: string[];
   experimental: boolean;
 }
 
 // Explicit per-harness adapters; other Herdr kinds are not implied support.
 const LAUNCH_ADAPTERS: Record<LaunchAgent, LaunchAdapter> = {
-  claude: { herdr_kind: "claude", harness: "claude-code", executable: "claude", initial_prompt: true, experimental: false },
-  codex: { herdr_kind: "codex", harness: "codex", executable: "codex", initial_prompt: true, experimental: false },
-  grok: { herdr_kind: "grok", harness: "grok", executable: "grok", initial_prompt: true, experimental: true }
+  claude: { herdr_kind: "claude", harness: "claude-code", executable: "claude", initial_prompt: true, cli_args: [], experimental: false },
+  // With the shared daemon, Codex tools and hooks inherit the daemon's stale
+  // Herdr pane and PID, so neither Herdr nor tt can prove the new pane joined.
+  codex: { herdr_kind: "codex", harness: "codex", executable: "codex", initial_prompt: true, cli_args: ["--no-daemon"], experimental: false },
+  grok: { herdr_kind: "grok", harness: "grok", executable: "grok", initial_prompt: true, cli_args: [], experimental: true }
 };
 
 export const LAUNCH_AGENTS = Object.keys(LAUNCH_ADAPTERS) as LaunchAgent[];
@@ -356,10 +359,11 @@ function planSteps(
       "herdr", "agent", "start", agent.herdr_name, "--kind", LAUNCH_ADAPTERS[agent.agent].herdr_kind,
       "--pane", pane, "--timeout", String(AGENT_START_TIMEOUT_MS)
     ];
+    const cliArgs = LAUNCH_ADAPTERS[agent.agent].cli_args;
     if (agent.prompt_delivery === "initial_argument") {
-      steps.push({ kind: "start", agent: agent.agent, description: `Start ${agent.agent} with the bootstrap prompt.`, argv: [...start, "--", agent.prompt] });
+      steps.push({ kind: "start", agent: agent.agent, description: `Start ${agent.agent} with the bootstrap prompt.`, argv: [...start, "--", ...cliArgs, agent.prompt] });
     } else {
-      steps.push({ kind: "start", agent: agent.agent, description: `Start ${agent.agent}.`, argv: start });
+      steps.push({ kind: "start", agent: agent.agent, description: `Start ${agent.agent}.`, argv: cliArgs.length ? [...start, "--", ...cliArgs] : start });
       steps.push({
         kind: "prompt",
         agent: agent.agent,

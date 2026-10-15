@@ -146,8 +146,10 @@ blindly retried. After checking old panes and confirming exited agents, `--forge
 discards this command's launch record without closing panes. `--print --forget`
 previews that fresh plan without changing the record. `--timeout 120s` bounds join
 observation in addition to each startup timeout. Skills must be installed first;
-native per-agent argument forwarding is deferred. Grok remains unconfirmed when
-Herdr omits its session identity. Operator live acceptance is still pending.
+Codex starts with `--no-daemon` so its tools and hooks retain the new pane's
+process identity for join verification. Chat Escape interrupts an active Codex
+turn in that pane through Herdr after matching its session and process. Grok
+remains unconfirmed when Herdr omits its session identity.
 Pass the exact room/workspace root to `--path`; a subdirectory that would join an
 ancestor room is rejected with the root path to use.
 

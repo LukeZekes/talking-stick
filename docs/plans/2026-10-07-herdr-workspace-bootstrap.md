@@ -69,6 +69,9 @@ harnesses are subsequent adapters, not implicit support.
    Call `herdr agent start` with a unique name and the returned pane ID. Prefer
    the harness's initial-prompt positional argument after Herdr's `--`; both
    installed Claude and Codex CLIs advertise interactive positional prompts.
+   Start Codex with `--no-daemon` before the prompt so its hooks and tools run
+   in the pane's process context; the shared daemon carries stale Herdr pane
+   identity and cannot prove a fresh join.
    After all startup calls, focus an explicitly created tab/workspace using its
    returned ID. Failed focus leaves panes usable and reports manual navigation.
    Emit step outcomes and changed join status on stderr so a bounded wait is

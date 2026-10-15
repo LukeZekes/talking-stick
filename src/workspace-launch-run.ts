@@ -275,7 +275,10 @@ function runStep(runner: HerdrRunner, step: LaunchStep, args: string[]): StepOut
     : step.kind === "prompt" ? AGENT_PROMPT_TIMEOUT_MS + CALL_HEADROOM_MS
       : undefined;
   try {
-    return { kind: "ok", result: runHerdrJson(runner, args, { timeoutMs }) };
+    // `herdr pane run` succeeds with an empty stdout on current Herdr. The
+    // command is only submitted here; observeJoins still requires live proof.
+    return { kind: "ok", result: runHerdrJson(runner, args,
+      { timeoutMs, allowEmptySuccess: step.kind === "chat" }) };
   } catch (error) {
     if (error instanceof HerdrError) return { kind: "error", code: error.code, message: error.message };
     return { kind: "error", code: null, message: error instanceof Error ? error.message : String(error) };

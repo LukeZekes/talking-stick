@@ -77,7 +77,7 @@ export function readHerdrContext(
 export function runHerdrJson(
   runner: HerdrRunner,
   args: readonly string[],
-  options: { timeoutMs?: number } = {}
+  options: { timeoutMs?: number; allowEmptySuccess?: boolean } = {}
 ): Record<string, unknown> {
   let output: string;
   try {
@@ -89,6 +89,7 @@ export function runHerdrJson(
       herdrErrorCode(error)
     );
   }
+  if (options.allowEmptySuccess && output.trim() === "") return {};
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
