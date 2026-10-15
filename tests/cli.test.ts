@@ -3391,6 +3391,22 @@ describe("tt room", () => {
     const listed = JSON.parse(await captureStdout(["room", "list", project, "--json"]));
     expect(listed.rooms.map((room: { name: string; kind: string }) => [room.name, room.kind]).sort())
       .toEqual([["api", "declared"], ["root", "root"]]);
+    const apiListing = listed.rooms.find((room: { name: string }) => room.name === "api");
+    expect(apiListing.agents.sort()).toEqual(["claude:rooms", "codex:rooms"]);
+    expect(JSON.parse(await captureStdout(["room", "list", path.join(api, "src"), "--json"])).rooms
+      .find((room: { current: boolean }) => room.current).name).toBe("api");
+    // A room selected in another repository lists that repository.
+    const elsewhere = path.join(path.dirname(project), "elsewhere");
+    fs.mkdirSync(elsewhere);
+    execFileSync("git", ["init", "-q", "-b", "main", elsewhere]);
+    const otherRoot = JSON.parse(await captureStdout(["join", elsewhere, "--json"]));
+    const crossRepo = JSON.parse(await captureStdout(["room", "list", project, "--in", otherRoot.room_id, "--json"]));
+    expect(crossRepo.anchor).toBe(fs.realpathSync.native(elsewhere));
+    expect(crossRepo.rooms.map((room: { current: boolean; name: string }) => [room.name, room.current])).toEqual([["root", true]]);
+    await captureStdout(["leave", "--in", otherRoot.room_id, "--json"]);
+    process.env.TT_ROOM = otherRoot.room_id; // now stale: the room was deleted on leave
+    expect(JSON.parse(await captureStdout(["room", "list", project, "--json"])).anchor).toBe(project);
+    delete process.env.TT_ROOM;
     expect(JSON.parse(await captureStdout(["state", "--in", "#root", "--path", path.join(api, "src"), "--json"])).room.room_id)
       .toBe(root.room_id);
 

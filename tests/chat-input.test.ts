@@ -305,3 +305,20 @@ test("Alt+Left/Right asks to switch rooms without sending, and a draft can be re
     editor.close();
   }
 });
+
+test("/go completes room names and path-suffix parts, keeping text after the cursor", () => {
+  const rooms = [
+    { name: "root", description: ". · 1 agent" },
+    { name: "svc/api", description: "svc/api · 2 agents" },
+    { name: "web/api", description: "web/api · 0 agents" },
+    { name: "docs", description: "docs · 0 agents" }
+  ];
+  const offered = (line: string) => getChatCompletions({ line, cursor: line.length }, [], [], rooms).map((entry) => entry.label);
+  expect(offered("/go ")).toEqual(["#root", "#svc/api", "#web/api", "#docs"]);
+  expect(offered("/go a")).toEqual(["#svc/api", "#web/api"]);
+  expect(offered("/go #we")).toEqual(["#web/api"]);
+  expect(offered("/go zz")).toEqual([]);
+  const [first] = getChatCompletions({ line: "/go do", cursor: 6 }, [], [], rooms);
+  expect(first.draft).toEqual({ line: "/go docs ", cursor: 9 });
+  expect(offered("/g")).toContain("/go <room|dir>");
+});

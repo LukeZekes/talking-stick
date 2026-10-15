@@ -324,3 +324,16 @@ export function isWithinOrSame(candidate: string, root: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
 }
+
+// A nested Git repository below the anchor has its own rooms. Paths that do
+// not exist here (keyed under the main checkout) are kept.
+export function insideNestedRepository(roomPath: string, anchor: string): boolean {
+  let current = roomPath;
+  while (current !== anchor && isWithinOrSame(current, anchor)) {
+    if (fs.existsSync(path.join(current, ".git"))) return true;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return false;
+}

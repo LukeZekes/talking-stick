@@ -8,7 +8,7 @@ import { interruptCodexThread } from "./codex-interrupt.js";
 import { interruptCodexHerdr } from "./codex-herdr-interrupt.js";
 import { ChatInputController } from "./chat-input.js";
 import { resolveRoomSelector, roomShortName, selectedRoom } from "./room-selector.js";
-import { isWithinOrSame, resolveContextPath } from "../path-resolution.js";
+import { insideNestedRepository, isWithinOrSame, resolveContextPath } from "../path-resolution.js";
 import { resolveChatKick } from "./chat-kick.js";
 import {
   ChatTranscript,
@@ -39,6 +39,7 @@ import {
   type RoomEvent,
   type RoomMember
 } from "../types.js";
+import type { ChatRoomCompletion } from "./chat-view.js";
 import {
   formatRoomStrip,
   buildNameResolver,
@@ -270,6 +271,8 @@ export async function runChatSession(
   let roomStrip = "";
   let stripOrder: PathRoom[] = [];
   let roomNames = new Map<string, string>();
+  // Every open room in this repository except the current one, for /go completion.
+  let goRooms: ChatRoomCompletion[] = [];
   let lastStripRefresh = 0;
   // Other rooms in this repository that have live agents, unread messages, or
   // a past visit. The console joins listed rooms as an observer so agents there
@@ -303,6 +306,12 @@ export async function runChatSession(
       } catch { /* the room closed between list and join */ }
     }
     roomNames = uniqueRoomNames([joined, ...listed], consoleState.anchor);
+    const allNames = uniqueRoomNames([joined, ...rooms], consoleState.anchor);
+    goRooms = rooms.map((room) => {
+      const agents = activity.get(room.room_id)?.agent_members ?? 0;
+      const where = path.relative(consoleState.anchor, room.canonical_path) || ".";
+      return { name: allNames.get(room.room_id) ?? roomShortName(room), description: `${where} · ${agents} agent${agents === 1 ? "" : "s"}` };
+    }).sort((left, right) => left.name.localeCompare(right.name));
     for (const room of listed) {
       // A visit already showed everything up to last_seen; never replay it.
       const after = Math.max(consoleState.directed_seen.get(room.room_id) ?? 0,
@@ -440,7 +449,7 @@ export async function runChatSession(
         status: member.process_liveness === "gone" ? "ended" : describeMemberState(member, {
           members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
           columns: dimensions().columns, interrupt_statuses: interruptStatuses()
-        }) })));
+        }) })), goRooms);
   // Inline drawing: the composer occupies the last rows of the normal screen.
   // Erasing walks back up every row it drew, so a wrapped draft never leaves
   // fragments behind in the scrollback.
@@ -1344,19 +1353,6 @@ export async function runChatSession(
   return switchTarget ? { kind: "switch", room: switchTarget } : { kind: "quit" };
 }
 
-
-// A nested Git repository below the anchor has its own rooms. Paths that do
-// not exist here (keyed under the main checkout) are kept.
-function insideNestedRepository(roomPath: string, anchor: string): boolean {
-  let current = roomPath;
-  while (current !== anchor && isWithinOrSame(current, anchor)) {
-    if (fs.existsSync(path.join(current, ".git"))) return true;
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return false;
-}
 
 // Short names for the strip: `root` for the repository room, else the
 // declared name or basename, lengthened to the shortest unique path suffix

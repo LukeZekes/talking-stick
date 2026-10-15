@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ROOM_DECLARATION_FILE, isWithinOrSame, resolveContextPath } from "../path-resolution.js";
+import { ROOM_DECLARATION_FILE, insideNestedRepository, isWithinOrSame, resolveContextPath } from "../path-resolution.js";
+import { HUMAN_CHAT_SESSION_KIND } from "../types.js";
 import type { PathRoom } from "../types.js";
 import { printResult } from "./output.js";
 import { getStringOption, type ParsedCommand } from "./parser.js";
-import { roomShortName } from "./room-selector.js";
+import { roomShortName, selectedRoom } from "./room-selector.js";
 import type { Runtime } from "./runtime.js";
 
 // `tt room create|list|adopt|remove`. Declarations are files in the checkout;
@@ -68,25 +69,59 @@ interface RoomListing {
   state: PathRoom["state"];
   owner: string | null;
   kind: "root" | "declared" | "legacy";
+  /** This caller's room for the given path. */
+  current: boolean;
+  /** Live agents (not chat consoles), so a harness knows who works where. */
+  agents: string[];
 }
 
+// One compact listing of the repository's rooms and who is in each, for an
+// agent to read once on entry or when a task spans rooms.
 function listRooms(runtime: Runtime, parsed: ParsedCommand, target: string | undefined): void {
   const resolved = resolveContextPath(target ?? process.cwd());
-  const anchor = resolved.workspace_root;
-  const rooms: RoomListing[] = runtime.commands.listRooms({}).rooms
-    .filter((room) => room.state !== "closed" && isWithinOrSame(room.canonical_path, anchor))
-    .map((room) => ({
-      name: room.canonical_path === anchor ? "root" : roomShortName(room),
-      room_id: room.room_id,
-      canonical_path: room.canonical_path,
-      state: room.state,
-      owner: room.owner,
-      kind: room.canonical_path === anchor ? "root" as const
-        : fs.existsSync(declarationFile(room.canonical_path)) ? "declared" as const : "legacy" as const
-    }));
+  // An explicit --in stays strict; a stale inherited TT_ROOM must not block
+  // the discovery an agent uses to recover from it.
+  let selected: PathRoom | null = null;
+  try {
+    selected = selectedRoom(runtime, parsed);
+  } catch (error) {
+    if (getStringOption(parsed, "in")) throw error;
+  }
+  // A room selected with --in/TT_ROOM brings its own repository (same rule as
+  // chat); a keyed path absent on disk falls back to the caller's repository.
+  const anchor = selected && fs.existsSync(selected.canonical_path)
+    ? resolveContextPath(selected.canonical_path).workspace_root
+    : resolved.workspace_root;
+  const currentId = selected?.room_id ??
+    runtime.commands.listRooms({ context_path: resolved.canonical_context_path }).rooms[0]?.room_id ?? null;
+  const open = runtime.commands.listRooms({}).rooms
+    .filter((room) => room.state !== "closed" && isWithinOrSame(room.canonical_path, anchor) &&
+      !insideNestedRepository(room.canonical_path, anchor));
+  const names = new Map<string, string>();
+  for (const room of open) {
+    const base = room.canonical_path === anchor ? "root" : roomShortName(room);
+    const clash = open.some((other) => other !== room && other.canonical_path !== anchor && roomShortName(other) === base);
+    names.set(room.room_id, clash ? path.relative(anchor, room.canonical_path).split(path.sep).join("/") : base);
+  }
+  const rooms: RoomListing[] = open.map((room) => ({
+    name: names.get(room.room_id)!,
+    room_id: room.room_id,
+    canonical_path: room.canonical_path,
+    state: room.state,
+    owner: room.owner,
+    kind: room.canonical_path === anchor ? "root" as const
+      : fs.existsSync(declarationFile(room.canonical_path)) ? "declared" as const : "legacy" as const,
+    current: room.room_id === currentId,
+    // Read without an agent id so listing never refreshes the caller's presence
+    // in other rooms. A parked agent can be inactive by recency yet alive.
+    agents: runtime.commands.getRoomState({ room_id: room.room_id }).members
+      .filter((member) => member.session_kind !== HUMAN_CHAT_SESSION_KIND && member.process_liveness !== "gone" &&
+        (member.status === "active" || member.process_liveness === "alive"))
+      .map((member) => member.agent_id)
+  }));
   printResult(parsed, { anchor, rooms }, () => rooms.length === 0
     ? `No rooms under ${anchor}.`
-    : rooms.map((room) => `#${room.name}  ${room.kind}  ${room.state}${room.owner ? ` owner=${room.owner}` : ""}  ${room.canonical_path}  ${room.room_id}`).join("\n"));
+    : rooms.map((room) => `${room.current ? "*" : " "} #${room.name}  ${room.kind}  ${room.agents.join(", ") || "no agents"}${room.owner ? `  stick=${room.owner}` : ""}  ${room.canonical_path}  ${room.room_id}`).join("\n"));
 }
 
 // Declare an existing legacy room's directory and key the room to it, keeping
