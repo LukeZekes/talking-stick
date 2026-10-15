@@ -11,9 +11,13 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+### Added
+
+- `tt up --agents claude,codex[,grok]` launches agents and a chat console in Herdr panes, and `--print` previews the exact Herdr commands first. An existing agent is skipped only when its Herdr session, pane process, and process start time match its room membership, including a parked agent whose room presence has lapsed while its process still runs; anything unproven is reported for inspection rather than relaunched. Launches are serialized per path, recorded around every side effect, never retry an uncertain start, and wait a bounded time for each agent to join ([#91](https://github.com/mostlydev/talking-stick/issues/91)).
+
 ### Changed
 
-- In `tt chat`, Escape clears a nonempty draft in one press, including an open suggestion list. On an empty draft it requests a message-free interrupt for active Codex turns through the local app-server or, for a local Claude session, through a new tool hook that stops the turn at its next tool call with `continue: false` (the pending tool is denied). Run `tt install claude` to add the hook. Pending interrupts appear briefly in the status bar without adding transcript lines; a held Escape key arms only once. Ctrl+C still only clears the draft.
+- In `tt chat`, Escape clears a nonempty draft in one press, including an open suggestion list. On an empty draft it requests a message-free interrupt for active Codex turns through the local app-server, or through a verified Herdr pane for Codex launched with `--no-daemon`. A local Claude session uses a tool hook that stops the turn at its next tool call with `continue: false` (the pending tool is denied). Run `tt install claude` to add the hook. Pending interrupts appear briefly in the status bar without adding transcript lines; a held Escape key arms only once. Ctrl+C still only clears the draft.
 
 ### Fixed
 

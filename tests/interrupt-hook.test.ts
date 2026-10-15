@@ -126,7 +126,7 @@ test("the installed shell guard skips tt unless a Claude flag exists", () => {
   cleanup.push(() => fs.rmSync(bin, { recursive: true, force: true }));
   fs.writeFileSync(path.join(bin, "tt"), "#!/bin/sh\necho called \"$@\"\n", { mode: 0o755 });
   const run = () => execFileSync("/bin/sh", ["-c", command], {
-    encoding: "utf8", input: "{}",
+    encoding: "utf8",
     env: { PATH: `${bin}:/usr/bin:/bin`, HOME: dir, TALKING_STICK_DATA_DIR: dir }
   });
   expect(run()).toBe("");
