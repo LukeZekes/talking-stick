@@ -29,6 +29,7 @@ export interface ChatCommandInfo {
 export const CHAT_COMMANDS: ChatCommandInfo[] = [
   { name: "quit", usage: "/quit", description: "leave the chat" },
   { name: "who", usage: "/who", description: "members and who has the stick" },
+  { name: "roles", usage: "/roles", description: "edit who does what in this room (Space toggles; d saves a default)" },
   { name: "rooms", usage: "/rooms", description: "rooms in this repository with agents or unread messages" },
   { name: "go", usage: "/go <room|dir>", description: "switch rooms (Tab: open rooms; also Alt+←/→); a directory opens its room" },
   { name: "older", usage: "/older", description: "load an earlier page of saved messages" },
@@ -756,6 +757,11 @@ export interface ChatScreenInput {
   room_path?: string;
   /** Other rooms in this repository, e.g. "#api 2● · #web", already painted. */
   room_strip?: string;
+  /**
+   * A modal panel (e.g. the /roles editor), already painted. It takes the
+   * place of the suggestion menu above the room bar.
+   */
+  panel?: string[];
   transcript: ChatTranscript;
   format: ChatFormatContext;
   status: Omit<ChatStatusInput, "columns">;
@@ -782,13 +788,14 @@ export function renderInlinePanel(input: ChatScreenInput): ChatFrame {
     return { lines: [truncateStyled(CHAT_PROMPT + input.draft.line.replace(/\n/g, " "), width)], cursor: { row: 0, col: 0 } };
   }
   const matches = input.completions ?? [];
-  const menuCapacity = Math.min(matches.length, 3, Math.max(0, height - 4));
+  const panel = input.panel ?? null;
+  const menuCapacity = panel ? Math.min(panel.length, Math.max(0, height - 4)) : Math.min(matches.length, 3, Math.max(0, height - 4));
   const topRows = menuCapacity + 1;
   const composerCapacity = Math.max(1, Math.min(MAX_COMPOSER_ROWS, height - topRows - 2));
   const composer = layoutComposer(input.draft, width, composerCapacity);
   const selected = Math.max(0, Math.min(input.completion_index ?? 0, matches.length - 1));
   const first = Math.max(0, selected - menuCapacity + 1);
-  const menu = Array.from({ length: menuCapacity }, (_, row) => {
+  const menu = panel ? panel.slice(-menuCapacity).map((line) => truncateStyled(line, width)) : Array.from({ length: menuCapacity }, (_, row) => {
     const entry = matches[first + row];
     if (!entry) return "";
     const active = first + row === selected;
@@ -896,11 +903,13 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
   const completions = input.completions ?? getChatCompletions(input.draft, []);
   const selected = Math.max(0, Math.min(input.completion_index ?? 0, completions.length - 1));
   const first = Math.max(0, selected - menuCapacity + 1);
-  const menuRows = completions.slice(first, first + menuCapacity).map((entry, index) => {
-    const active = first + index === selected;
-    const label = active && context.color ? `\u001b[1m${entry.label}\u001b[0m` : entry.label;
-    return truncateStyled(`${active ? "›" : " "} ${label}  ${dim(context, entry.description)}`, width);
-  });
+  const menuRows = input.panel
+    ? input.panel.slice(-Math.max(1, transcriptHeight - 1)).map((line) => truncateStyled(line, width))
+    : completions.slice(first, first + menuCapacity).map((entry, index) => {
+      const active = first + index === selected;
+      const label = active && context.color ? `\u001b[1m${entry.label}\u001b[0m` : entry.label;
+      return truncateStyled(`${active ? "›" : " "} ${label}  ${dim(context, entry.description)}`, width);
+    });
 
   const rule = dim(context, "─".repeat(width));
   const footer = renderFooter(input, width);

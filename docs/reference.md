@@ -21,6 +21,7 @@ For the introduction and quickstart, see [`README.md`](../README.md).
 ```text
 tt whoami [--explain]                                     # show the resolved CLI identity
 tt list [path]                                            # list rooms
+tt roles [show] | set <agent|harness> <roles|none|clear> | default <harness> <roles|none|clear> [--in ROOM]
 tt room create [path] [--name NAME]                       # declare a room boundary (.talking-stick/room.toml)
 tt room list [path]                                       # this repository's rooms, live agents in each, current marked
 tt room adopt [path] [--name NAME]                        # declare an existing nested room, keeping its id
@@ -312,6 +313,7 @@ it. Scrolling, selection, and copying stay with the terminal.
 | `/events` | Toggle turn and handoff events, hidden by default |
 | `/help`, `/help keys` | Show chat commands, or keyboard shortcuts |
 | `/older` | Print an earlier page of saved messages; in fullscreen, scroll into older history |
+| `/roles` | Edit roles: ↑↓ member, ←→ role, Space toggle, `d` save as harness default, Enter apply, Esc cancel. `/roles set <agent|harness> <roles|none|clear>` and `/roles default <harness> <roles|none|clear>` work as text |
 | `/rooms` | List rooms in this repository with live agents, unread messages, or a past visit. Chat joins them as an observer so agents there can address you; those messages show inline as `#room › agent → you: …` |
 | `/go <room>` (Tab completes open rooms) or Alt+←/→ | Switch the console to another room; drafts and memberships are kept until chat exits. `/go <dir>` (relative to the active repository's checkout) opens a directory's room even if nobody has joined it yet, e.g. a committed declaration; `#name` never falls back to a directory |
 | `/bottom` or Ctrl+End | Fullscreen: return to latest messages. Default mode: use the terminal's scroll-to-bottom shortcut |
