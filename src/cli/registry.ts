@@ -178,7 +178,7 @@ export const COMMAND_REGISTRY: CommandEntry[] = [
     startupMaintenance: true,
     internal: false,
     usage: "tt room create [path] [--name NAME] | list [path] | adopt [path] [--name NAME] | remove [path]",
-    description: "Declare, list, adopt, or remove rooms inside a repository.",
+    description: "Declare, list, adopt, or remove rooms inside a repository (remove deletes an agent-free room and its history).",
     handler: ({ runtime, parsed }) => handleRoomCommand(requireRuntime(runtime), parsed)
   },
   {

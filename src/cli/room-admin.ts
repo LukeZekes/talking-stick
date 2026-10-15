@@ -112,8 +112,10 @@ function adoptRoom(runtime: Runtime, parsed: ParsedCommand, target: string | und
     () => `Adopted room ${room.room_id} at ${directory}${rekeyed.canonical_path !== directory ? ` (keyed as ${rekeyed.canonical_path})` : ""}. Commit ${file} to share it.`);
 }
 
-// Removes the declaration and the room it keyed, so later joins really do
-// resolve to the parent. Refuses while agents are still in the room.
+// Removes the declaration and deletes the room it keyed, with its events and
+// notes, so later joins really do resolve to the parent. That matches the
+// existing lifecycle, where the last agent leaving deletes a room. Refuses
+// while any agent is still in the room.
 function removeRoom(runtime: Runtime, parsed: ParsedCommand, target: string | undefined): void {
   const resolved = resolveContextPath(target ?? process.cwd());
   const declaration = resolved.declaration;
@@ -125,5 +127,5 @@ function removeRoom(runtime: Runtime, parsed: ParsedCommand, target: string | un
   fs.rmSync(file);
   try { fs.rmdirSync(path.dirname(file)); } catch { /* .talking-stick holds other files */ }
   printResult(parsed, { status: "removed", declaration: file, retired_room_id: retired ? room?.room_id ?? null : null },
-    () => `Removed ${file}${retired ? ` and retired room ${room?.room_id} (any chat console on it is detached)` : ""}. New joins use the parent room.`);
+    () => `Removed ${file}${retired ? ` and deleted room ${room?.room_id} with its events and notes (any chat console on it is detached)` : ""}. New joins use the parent room.`);
 }
