@@ -353,7 +353,7 @@ export async function runChatSession(
   };
   let rolesPanel: RolesEditorState | null = null;
   const rolesPanelLines = () => rolesPanel
-    ? renderRolesEditor(rolesPanel, formatContext(), Math.max(4, dimensions().rows - 6))
+    ? renderRolesEditor(rolesPanel, formatContext(), Math.max(4, dimensions().rows - 6), Math.max(20, dimensions().columns - 1))
     : undefined;
   const closeRolesPanel = () => {
     rolesPanel = null;

@@ -100,3 +100,16 @@ test("a harness row with no agent applies a room harness assignment, and the vie
   expect(lines.some((line) => line.startsWith("›"))).toBe(true);
   void state;
 });
+
+test("the focused role remains visible in an 80-column terminal", () => {
+  const state = createRolesEditor({
+    agents: ["codex:a-very-long-session-identifier"],
+    assignments: [{ subject: "agent:codex:a-very-long-session-identifier", roles: ["security-auditor"] }],
+    userDefaults: {}, version: 3
+  });
+  const focused = press(state, "left").state;
+  const lines = renderRolesEditor(focused, { color: false } as never, 8, 80);
+  expect(lines[1]).toContain("security-auditor");
+  expect(lines[1]).toContain("‹");
+  expect(lines.slice(1).every((line) => line.length <= 80)).toBe(true);
+});

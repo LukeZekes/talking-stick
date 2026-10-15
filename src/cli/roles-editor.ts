@@ -95,11 +95,25 @@ export function rolesEditorKey(state: RolesEditorState, key: ChatModalKey): { st
 }
 
 // maxLines bounds the panel; the member rows scroll to keep the selection visible.
-export function renderRolesEditor(state: RolesEditorState, context: ChatFormatContext, maxLines = 40): string[] {
+export function renderRolesEditor(state: RolesEditorState, context: ChatFormatContext, maxLines = 40, maxColumns = 80): string[] {
   const paint = (code: string, text: string) => context.color ? `\u001b[${code}m${text}\u001b[0m` : text;
-  const nameWidth = Math.min(28, Math.max(6, ...state.rows.map((row) => row.label.length)));
+  const nameWidth = Math.min(28, Math.max(6, ...state.rows.map((row) => row.label.length), 6), Math.max(6, maxColumns - 12));
   const cell = (on: boolean) => on ? "[x]" : "[ ]";
-  const header = " ".repeat(nameWidth + 4) + state.columns.map((column) => column.padEnd(Math.max(column.length, 3) + 2)).join("");
+  const widths = state.columns.map((column) => Math.max(column.length, 3) + 2);
+  // Keep the focused role in view when custom roles or long member ids make
+  // the grid wider than the terminal. The edge marks reveal hidden columns.
+  const available = Math.max(3, maxColumns - nameWidth - 6);
+  const selected = Math.min(state.col, state.columns.length - 1);
+  let firstColumn = 0;
+  let used = widths.slice(0, selected + 1).reduce((sum, width) => sum + width, 0);
+  while (firstColumn < selected && used > available) used -= widths[firstColumn++];
+  let lastColumn = selected + 1;
+  while (lastColumn < widths.length && used + widths[lastColumn] <= available) used += widths[lastColumn++];
+  const visible = state.columns.slice(firstColumn, lastColumn);
+  const leftEdge = firstColumn > 0 ? "‹" : " ";
+  const rightEdge = lastColumn < state.columns.length ? "›" : " ";
+  const header = " ".repeat(nameWidth + 4) + leftEdge + visible.map((column, index) =>
+    column.padEnd(widths[firstColumn + index]).slice(0, available)).join("") + rightEdge;
   const lines = [
     paint("1", `Roles (v${state.version})`) + paint("2", "  ↑↓ member · ←→ role · Space toggle · d save as harness default · Enter apply · Esc cancel"),
     paint("2", header)
@@ -110,11 +124,12 @@ export function renderRolesEditor(state: RolesEditorState, context: ChatFormatCo
   state.rows.slice(first, first + capacity).forEach((row, offset) => {
     const rowIndex = first + offset;
     const name = sanitizeChatText(row.label).slice(0, nameWidth).padEnd(nameWidth);
-    const cells = state.columns.map((column, colIndex) => {
-      const text = cell(row.roles.includes(column)).padEnd(Math.max(column.length, 3) + 2);
+    const cells = visible.map((column, index) => {
+      const colIndex = firstColumn + index;
+      const text = cell(row.roles.includes(column)).padEnd(widths[colIndex]).slice(0, available);
       return rowIndex === state.row && colIndex === state.col ? paint("7", text.trimEnd()) + text.slice(text.trimEnd().length) : text;
     }).join("");
-    lines.push(`${rowIndex === state.row ? "›" : " "} ${name}${changed(row) ? "*" : " "} ${cells}`);
+    lines.push(`${rowIndex === state.row ? "›" : " "} ${name}${changed(row) ? "*" : " "}${leftEdge}${cells}${rightEdge}`);
   });
   if (state.notice) lines.push(paint("2", state.notice));
   return lines;
