@@ -2,6 +2,7 @@ import os from "node:os";
 import { detectNativeWakeEndpoints } from "./native-wake.js";
 import { TalkingStickService } from "./service.js";
 import type {
+  PathRoom,
   AddNoteResult,
   GetRoomEventsInput,
   GetRoomEventsViewResult,
@@ -43,6 +44,7 @@ import type { DerivedIdentity } from "./identity.js";
 
 export interface JoinPathCommandInput {
   context_path: string;
+  room_id?: string;
   force_new?: boolean;
 }
 
@@ -154,6 +156,18 @@ export class TalkingStickCommands {
     this.service.close();
   }
 
+  rekeyRoomPath(input: { room_id: string; canonical_path: string }): PathRoom {
+    return this.service.rekeyRoomPath(input);
+  }
+
+  openRoom(input: { context_path: string }): PathRoom {
+    return this.service.openRoom(input);
+  }
+
+  retireUnoccupiedRoom(input: { room_id: string }): { retired: boolean } {
+    return this.service.retireUnoccupiedRoom(input);
+  }
+
   listRooms(input: ListRoomsInput = {}): ListRoomsResult {
     return this.service.listRooms(input);
   }
@@ -165,6 +179,7 @@ export class TalkingStickCommands {
     return this.service.joinPath({
       agent_id: identity.agent_id,
       context_path: input.context_path,
+      room_id: input.room_id,
       force_new: input.force_new,
       process_metadata: identity.process_metadata
     });

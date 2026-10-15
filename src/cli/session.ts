@@ -12,12 +12,15 @@ import {
 import { resolveContextPath } from "../path-resolution.js";
 import { getStringOption, type ParsedCommand } from "./parser.js";
 import type { Runtime } from "./runtime.js";
+import { selectedRoom } from "./room-selector.js";
 
 export function resolveSessionForReads(
   runtime: Runtime,
   parsed: ParsedCommand,
   identity: DerivedIdentity
 ): CliSession {
+  const explicit = selectedRoom(runtime, parsed);
+  if (explicit) return sessionForRoom(identity, explicit);
   const contextPath = parsed.positionals[0] ?? process.cwd();
   const resolvedPath = resolveContextPath(contextPath);
   const sessionPath = resolveCliSessionPath();
@@ -49,6 +52,8 @@ export function resolveSessionForNotes(
   parsed: ParsedCommand,
   identity: DerivedIdentity
 ): CliSession {
+  const explicit = selectedRoom(runtime, parsed);
+  if (explicit) return sessionForRoom(identity, explicit);
   const contextPath = getStringOption(parsed, "path") ?? process.cwd();
   const resolvedPath = resolveContextPath(contextPath);
   const sessionPath = resolveCliSessionPath();
@@ -83,6 +88,23 @@ export function resolveSessionForNotes(
   return session;
 }
 
+// An explicitly selected room keys its session by room_id, never by path: a
+// stale entry for a replaced room at the same path must not be returned.
+function sessionForRoom(identity: DerivedIdentity, room: PathRoom): CliSession {
+  const sessionPath = resolveCliSessionPath();
+  const existing = findCliSessionByRoom(sessionPath, identity.agent_id, room.room_id);
+  if (existing) return existing;
+  const session = {
+    agent_id: identity.agent_id,
+    room_id: room.room_id,
+    canonical_path: room.canonical_path,
+    workspace_root: resolveContextPath(room.canonical_path).workspace_root,
+    updated_at: new Date().toISOString()
+  };
+  upsertJoinedCliSession(sessionPath, session);
+  return findCliSessionByRoom(sessionPath, identity.agent_id, room.room_id) ?? session;
+}
+
 function findLiveSession(
   runtime: Runtime,
   sessionPath: string,
@@ -107,13 +129,12 @@ function findLiveSession(
 
 export function requireLeaseSession(
   identity: DerivedIdentity,
-  contextPath: string
+  contextPath: string,
+  roomId?: string
 ): CliSession {
-  const session = findCliSessionForContextPath(
-    resolveCliSessionPath(),
-    identity.agent_id,
-    contextPath
-  );
+  const session = roomId
+    ? findCliSessionByRoom(resolveCliSessionPath(), identity.agent_id, roomId)
+    : findCliSessionForContextPath(resolveCliSessionPath(), identity.agent_id, contextPath);
 
   if (!session?.lease_id || session.turn_id === null || session.turn_id === undefined) {
     throw new Error("No active lease for this path. Run `tt wait` or `tt takeover` first.");
@@ -144,12 +165,9 @@ export function upsertSessionFromJoin(identity: DerivedIdentity, joined: {
   });
 }
 
+// listRooms for a context path returns rooms in resolution order, most
+// specific first. Path length is not specificity once a linked worktree's
+// candidates include rooms keyed under the main checkout.
 export function pickDeepestRoom(rooms: PathRoom[]): PathRoom | null {
-  if (rooms.length === 0) {
-    return null;
-  }
-
-  return rooms
-    .slice()
-    .sort((left, right) => right.canonical_path.length - left.canonical_path.length)[0];
+  return rooms[0] ?? null;
 }

@@ -11,6 +11,20 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+### Breaking changes
+
+- Inside Git, a repository is its own root: `tt join`, reads, and hooks no longer select a room above the checkout (for example one at `~/dev`). Linked worktrees still share the main checkout's rooms. Outside Git, folders still join the nearest existing room above them.
+
+### Added
+
+- Declared rooms. A directory containing `.talking-stick/room.toml` is its own room, so packages in a monorepo can have separate rooms. The room is keyed by the main checkout path plus its path inside the checkout, so every linked worktree on a branch with the declaration shares it. `tt room create|list|adopt|remove` manage declarations: `adopt` turns an existing nested room into a declared one without changing its id, and `remove` deletes an agent-free room with its history. A malformed `room.toml` still declares the room, and joins report the problem.
+- `--in <room>` and `TT_ROOM` name a room explicitly (by id, path, `root`, short name, or path suffix) for join, wait, standby, take, chat, reads, notes, messages, and handoffs. They never create a room.
+- `tt up` pins every launched pane to one room id with `TT_ROOM` (and `tt chat --in`) while panes keep the caller's directory, so launching from a subdirectory or a linked worktree works. A new room is opened only after preflight passes.
+
+### Changed
+
+- `--force-new` is deprecated in favour of `tt room create`; it still creates a nested room and now warns.
+
 ## [0.21.0] — 2026-10-15
 
 Full notes: [`docs/releases/0.21.0.md`](docs/releases/0.21.0.md).

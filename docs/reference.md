@@ -21,7 +21,11 @@ For the introduction and quickstart, see [`README.md`](../README.md).
 ```text
 tt whoami [--explain]                                     # show the resolved CLI identity
 tt list [path]                                            # list rooms
-tt join [path] [--force-new]                              # join the room for path
+tt room create [path] [--name NAME]                       # declare a room boundary (.talking-stick/room.toml)
+tt room list [path]                                       # rooms in this repository: root, declared, legacy
+tt room adopt [path] [--name NAME]                        # declare an existing nested room, keeping its id
+tt room remove [path]                                     # remove a declaration and delete its agent-free room
+tt join [path] [--in ROOM] [--force-new]                  # join the room for path (--force-new is deprecated)
 tt leave [path]                                           # leave the room for path
 tt wait [path] [--timeout 110s] [--park|--claim] [--after N]  # ownership + events; saved cursor by default
 tt standby [path] [--wake cmux|manual]                    # return immediately; wake later on directed action
@@ -31,7 +35,7 @@ tt health [path] [--verbose|--all]                        # concise safety/actio
 tt status [path] [--verbose|--all]                        # alias for health
 tt events [path] [--all] [--after N] [--limit N] [--wait|--follow] [--event TYPE[,TYPE]] [--target self|any|agent]
 tt chat [path] [--history N] [--events] [--fullscreen] [--mouse|--no-mouse]   # operator console
-tt up --agents claude,codex[,grok] [--path DIR] [--new-tab|--new-workspace] [--print] [--forget] [--timeout 120s] # experimental Herdr launcher
+tt up --agents claude,codex[,grok] [--path DIR] [--in ROOM] [--new-tab|--new-workspace] [--print] [--forget] [--timeout 120s] # experimental Herdr launcher
 tt msg send <recipient|room> <body...> [--interrupt] [--stdin] [--path DIR]
 tt msg recv [--wait|--follow] [--from agent] [--after N] [--target self|any|agent] [--path DIR]
 tt ack <delivery-token> [--json]                          # acknowledge a native delivery envelope
@@ -53,7 +57,14 @@ tt self-update [--print] [--manager npm|pnpm|yarn|bun]
 ```
 
 `[path]` defaults to the current working directory. Pass it only when you intentionally
-want a different or nested room.
+want a different room.
+
+`--in ROOM` (or the `TT_ROOM` environment variable) names a room explicitly for `join`,
+`wait`, `try`, `standby`, `take`, `chat`, `state`, `health`, `events`, `msg`, `notes`,
+`release`, `pass`, and `assign`. `ROOM` is a room id, an absolute room path, `root`
+(the repository's root room), a short name (`api` or `#api`), or a path suffix
+(`web/api`). Exactly one open room must match; `--in` never creates a room. `tt chat #api`
+is shorthand for `tt chat --in api` (quote `#api` in shells where `#` starts a comment).
 
 Help flags are always read-only. `--help` and `-h` take precedence over command execution,
 even for stateful commands such as `wait`, `release`, `assign`, `notes add`, or `msg send`;
@@ -75,12 +86,34 @@ require `--reason` unless the command includes `--operator-requested`.
 
 ### Rooms and paths
 
-A workspace maps to a room — usually the `git` root or nearest project marker — so two agents
-`cd`'d anywhere under the same repo join the same room automatically. An existing parent room
-wins across a nested Git repository or nearer project marker; `--force-new` is the explicit way
-to create a nested room. Marker files directly in your home directory are ignored for descendant
-paths, so scratch directories under `$HOME` do not collapse into one home-scoped room unless you
-join home itself.
+A workspace maps to a room, so two agents `cd`'d anywhere under the same repository join the
+same room automatically. Resolution, first match wins:
+
+1. `--in ROOM` or `TT_ROOM`.
+2. An older nested room created with `--force-new` between your directory and the nearest
+   declaration (or the checkout root), nearest first. Existing rooms keep their members and
+   lease; `tt room adopt` turns one into a declared room without changing its id.
+3. A declared room: the nearest directory, up to the checkout root, that contains
+   `.talking-stick/room.toml`. Create one with `tt room create packages/api [--name api]`
+   and commit the file so every checkout shares the layout. In a monorepo each declared
+   package is its own room; undeclared directories use the repository's root room.
+4. The repository's root room.
+
+Inside Git a repository is its own root: a room above the checkout (for example at `~/dev`)
+no longer absorbs it. Linked worktrees share the main checkout's rooms: a declared room is
+keyed by the main checkout path plus its path inside the checkout, so
+`<worktree>/packages/api` and `<main>/packages/api` are one room. A worktree whose branch
+lacks the declaration uses the root room. Outside Git, a folder still joins the nearest
+existing room above it, or the nearest project marker. Marker files directly in your home
+directory are ignored for descendant paths, so scratch directories under `$HOME` do not
+collapse into one home-scoped room unless you join home itself.
+
+`room.toml` accepts only `name = "..."` today. Any other content, including the reserved
+`channels` and `default_channel` keys, still declares the room, and joins report it. A custom `name` is found by `--in` when the keyed path exists in the main
+checkout; for a package that exists only on a linked worktree's branch, use its directory name,
+a path suffix, or the room id. `tt room remove` refuses while agents are in the room. Otherwise
+it deletes the room with its events and notes, as when the last agent leaves a room, detaching
+any chat console, and later joins resolve to the parent room.
 
 On the local host, members whose harness process has definitely ended and whose last `tt`
 activity was over an hour ago are removed automatically, except the stick holder and reserved
@@ -502,9 +535,9 @@ hook deliveries may retry after one minute at the next hook. Hooks never auto-jo
 
 ## Design highlights
 
-- **Parent-room resolution.** An agent at any depth under `/repo/` joins the `/repo/` room
-  automatically, even when the chosen subfolder is a nested Git/project root. The search stops before
-  a descendant implicitly inherits a room at `$HOME`; nested rooms require explicit `force_new`.
+- **Declared rooms.** An agent at any depth under `/repo/` joins the `/repo/` room automatically,
+  unless a nearer directory declares its own room with `.talking-stick/room.toml`. A repository never
+  joins a room above its checkout; linked worktrees share the main checkout's rooms.
 - **Structured handoffs.** `tt release` and `tt pass` carry a typed `Handoff` with required `status` /
   `next_action` and optional `artifacts[]` pointing at specific files and line ranges.
 - **Fair handoff selection.** Normal release prefers a recent waiter that is new or has gone longest

@@ -85,11 +85,11 @@ describe("tt up planning", () => {
     expect(plan.agents[0].prompt).toContain(repo);
     expect(plan.agents[0].prompt).toMatch(/Do not claim the stick/);
     expect(plan.steps.map((step) => step.argv)).toEqual([
-      ["herdr", "pane", "split", "--pane", "w1:p1", "--direction", "right", "--cwd", repo, "--no-focus"],
-      ["herdr", "pane", "run", "<chat-pane>", "tt chat"],
-      ["herdr", "pane", "split", "--pane", "<chat-pane>", "--direction", "down", "--cwd", repo, "--no-focus"],
+      ["herdr", "pane", "split", "--pane", "w1:p1", "--direction", "right", "--cwd", repo, "--env", "TT_ROOM=<room-id>", "--no-focus"],
+      ["herdr", "pane", "run", "<chat-pane>", "tt chat --in <room-id>"],
+      ["herdr", "pane", "split", "--pane", "<chat-pane>", "--direction", "down", "--cwd", repo, "--env", "TT_ROOM=<room-id>", "--no-focus"],
       ["herdr", "agent", "start", plan.agents[0].herdr_name, "--kind", "claude", "--pane", "<claude-pane>", "--timeout", "60000", "--", plan.agents[0].prompt],
-      ["herdr", "pane", "split", "--pane", "<claude-pane>", "--direction", "down", "--cwd", repo, "--no-focus"],
+      ["herdr", "pane", "split", "--pane", "<claude-pane>", "--direction", "down", "--cwd", repo, "--env", "TT_ROOM=<room-id>", "--no-focus"],
       ["herdr", "agent", "start", plan.agents[1].herdr_name, "--kind", "codex", "--pane", "<codex-pane>", "--timeout", "60000", "--", "--no-daemon", plan.agents[1].prompt]
     ]);
   });
@@ -98,8 +98,11 @@ describe("tt up planning", () => {
     const { base, repo } = fixture();
     const plan = planWorkspaceLaunch({ ...base, topology: "new-tab" });
     expect(plan.steps[0].argv).toEqual([
-      "herdr", "tab", "create", "--workspace", "w1", "--cwd", repo, "--label", "talking-stick", "--no-focus"
+      "herdr", "tab", "create", "--workspace", "w1", "--cwd", repo, "--label", "talking-stick", "--env", "TT_ROOM=<room-id>", "--no-focus"
     ]);
+    const pinned = planWorkspaceLaunch({ ...base, topology: "new-tab", pin_room_id: "room-42" });
+    expect(pinned.steps.filter((step) => step.argv.includes("--env")).every((step) => step.argv.includes("TT_ROOM=room-42"))).toBe(true);
+    expect(pinned.steps.find((step) => step.kind === "chat")?.argv.at(-1)).toBe("tt chat --in room-42");
     const splits = plan.steps.filter((step) => step.argv[2] === "split").map((step) => step.argv[6]);
     expect(splits).toEqual(["right", "down"]);
   });

@@ -106,6 +106,12 @@ export interface PlanWorkspaceLaunchInput {
   herdr: HerdrContext | null;
   runner: HerdrRunner;
   room: { room_id: string; members: RoomMember[] } | null;
+  /**
+   * Room every launched pane is pinned to through TT_ROOM, independent of the
+   * panes' cwd (a linked worktree checkout may not contain the room path).
+   * A preview of a room that does not exist yet shows a placeholder.
+   */
+  pin_room_id?: string | null;
   readStartTime: StartTimeReader;
   record?: LaunchRecord | null;
   env?: NodeJS.ProcessEnv;
@@ -241,7 +247,8 @@ export function planWorkspaceLaunch(input: PlanWorkspaceLaunchInput): WorkspaceL
     chat = { action: "inspect", reason: "No agents need launching, so a new layout would contain only a console. Run tt chat in the existing agents' tab, or close the old agents and use --forget for a fresh layout." };
   }
   const steps = input.herdr
-    ? planSteps(input.topology, input.herdr, canonicalPath, callerDirection, chat.action === "launch", agents)
+    ? planSteps(input.topology, input.herdr, canonicalPath, callerDirection, chat.action === "launch", agents,
+        input.pin_room_id ?? input.room?.room_id ?? "<room-id>")
     : [];
 
   return {
@@ -302,9 +309,12 @@ function planSteps(
   canonicalPath: string,
   callerDirection: "right" | "down",
   openChat: boolean,
-  agents: LaunchAgentPlan[]
+  agents: LaunchAgentPlan[],
+  pinRoomId: string
 ): LaunchStep[] {
   const steps: LaunchStep[] = [];
+  // Every tt command in a launched pane inherits the pinned room.
+  const pin = ["--env", `TT_ROOM=${pinRoomId}`];
   const launching = agents.filter((agent) => agent.action === "launch");
   if (!openChat && launching.length === 0) return steps;
   // Without a new chat console, the first agent takes the anchor pane instead.
@@ -316,26 +326,26 @@ function planSteps(
       kind: "anchor",
       produces: anchorPane,
       description: `Create a workspace; its root pane (${anchorPane}) anchors the layout.`,
-      argv: ["herdr", "workspace", "create", "--cwd", canonicalPath, "--label", path.basename(canonicalPath), "--no-focus"]
+      argv: ["herdr", "workspace", "create", "--cwd", canonicalPath, "--label", path.basename(canonicalPath), ...pin, "--no-focus"]
     });
   } else if (topology === "new-tab") {
     steps.push({
       kind: "anchor",
       produces: anchorPane,
       description: `Create a tab in the caller's workspace; its root pane (${anchorPane}) anchors the layout.`,
-      argv: ["herdr", "tab", "create", "--workspace", herdr.workspace_id ?? "<workspace>", "--cwd", canonicalPath, "--label", "talking-stick", "--no-focus"]
+      argv: ["herdr", "tab", "create", "--workspace", herdr.workspace_id ?? "<workspace>", "--cwd", canonicalPath, "--label", "talking-stick", ...pin, "--no-focus"]
     });
   } else {
     steps.push({
       kind: "anchor",
       produces: anchorPane,
       description: `Split the caller pane for ${anchorPane}, keeping focus.`,
-      argv: ["herdr", "pane", "split", "--pane", herdr.pane_id, "--direction", callerDirection, "--cwd", canonicalPath, "--no-focus"]
+      argv: ["herdr", "pane", "split", "--pane", herdr.pane_id, "--direction", callerDirection, "--cwd", canonicalPath, ...pin, "--no-focus"]
     });
     agentDirection = callerDirection === "right" ? "down" : "right";
   }
   if (openChat) {
-    steps.push({ kind: "chat", description: "Open the operator chat console.", argv: ["herdr", "pane", "run", anchorPane, "tt chat"] });
+    steps.push({ kind: "chat", description: "Open the operator chat console.", argv: ["herdr", "pane", "run", anchorPane, `tt chat --in ${pinRoomId}`] });
   }
 
   let previous = anchorPane;
@@ -352,7 +362,7 @@ function planSteps(
         agent: agent.agent,
         produces: pane,
         description: `Create a fresh shell pane for ${agent.agent}.`,
-        argv: ["herdr", "pane", "split", "--pane", previous, "--direction", direction, "--cwd", canonicalPath, "--no-focus"]
+        argv: ["herdr", "pane", "split", "--pane", previous, "--direction", direction, "--cwd", canonicalPath, ...pin, "--no-focus"]
       });
     }
     const start = [

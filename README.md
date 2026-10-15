@@ -150,8 +150,10 @@ Codex starts with `--no-daemon` so its tools and hooks retain the new pane's
 process identity for join verification. Chat Escape interrupts an active Codex
 turn in that pane through Herdr after matching its session and process. Grok
 remains unconfirmed when Herdr omits its session identity.
-Pass the exact room/workspace root to `--path`; a subdirectory that would join an
-ancestor room is rejected with the root path to use.
+Panes start in the directory you launch from, and every pane is pinned to one room
+(`TT_ROOM`, and `tt chat --in` for the console): the room an ordinary `tt join` from there
+selects, or the one named with `--in`. A room that does not exist yet is created only after
+preflight passes.
 
 ## Installing and updating
 

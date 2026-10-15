@@ -1,3 +1,4 @@
+import { selectedRoom } from "./room-selector.js";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import {
@@ -58,7 +59,11 @@ export async function handleWaitCommand(
   }
   const contextPath = parsed.positionals[0] ?? process.cwd();
   const identity = deriveCliIdentity(parsed);
-  const joined = runtime.commands.joinPath(identity, { context_path: contextPath });
+  const explicit = selectedRoom(runtime, parsed);
+  const joined = runtime.commands.joinPath(identity, {
+    context_path: explicit?.canonical_path ?? contextPath,
+    room_id: explicit?.room_id
+  });
   upsertSessionFromJoin(identity, joined);
   const sessionPath = resolveCliSessionPath();
   const session = findCliSessionByRoom(sessionPath, identity.agent_id, joined.room_id);
@@ -306,8 +311,10 @@ export function handleStandbyCommand(
 ): void {
   const contextPath = parsed.positionals[0] ?? process.cwd();
   const identity = deriveCliIdentity(parsed);
+  const explicit = selectedRoom(runtime, parsed);
   const joined = runtime.commands.joinPath(identity, {
-    context_path: contextPath
+    context_path: explicit?.canonical_path ?? contextPath,
+    room_id: explicit?.room_id
   });
   upsertSessionFromJoin(identity, joined);
   registerNativeWake(runtime, identity, joined.room_id);
@@ -388,7 +395,11 @@ export async function handleTakeCommand(
   const identity = deriveCliIdentity(parsed);
   const reason = resolveTakeoverReason(parsed);
   const operatorOverride = shouldUseOperatorOverride(parsed);
-  const joined = runtime.commands.joinPath(identity, { context_path: contextPath });
+  const explicit = selectedRoom(runtime, parsed);
+  const joined = runtime.commands.joinPath(identity, {
+    context_path: explicit?.canonical_path ?? contextPath,
+    room_id: explicit?.room_id
+  });
   upsertSessionFromJoin(identity, joined);
 
   const availability = await runtime.commands.waitForTurn(identity, {
@@ -478,7 +489,7 @@ export async function handleReleaseCommand(
   rejectUnsupportedPathOption(parsed, "release");
   const identity = deriveCliIdentity(parsed);
   const contextPath = parsed.positionals[0] ?? process.cwd();
-  const session = requireLeaseSession(identity, contextPath);
+  const session = requireLeaseSession(identity, contextPath, selectedRoom(runtime, parsed)?.room_id);
   const handoff = await resolveHandoff(parsed);
   const result = runtime.commands.releaseStick(identity, {
     room_id: session.room_id,
@@ -515,7 +526,7 @@ export async function handlePassCommand(
 
   const identity = deriveCliIdentity(parsed);
   const contextPath = parsed.positionals[0] ?? process.cwd();
-  const session = requireLeaseSession(identity, contextPath);
+  const session = requireLeaseSession(identity, contextPath, selectedRoom(runtime, parsed)?.room_id);
   const handoff = await resolveHandoff(parsed);
   const result = runtime.commands.releaseStick(identity, {
     room_id: session.room_id,
@@ -547,7 +558,7 @@ export async function handleAssignCommand(
 
   const identity = deriveCliIdentity(parsed);
   const contextPath = parsed.positionals[1] ?? process.cwd();
-  const session = requireLeaseSession(identity, contextPath);
+  const session = requireLeaseSession(identity, contextPath, selectedRoom(runtime, parsed)?.room_id);
   const handoff = await resolveHandoff(parsed);
   const target = resolveAssignmentTarget(
     runtime,

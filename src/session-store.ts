@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "./atomic-write.js";
 import { resolveDataDir } from "./config.js";
-import { ancestorPaths, resolveContextPath } from "./path-resolution.js";
+import { resolveContextPath, roomCandidatePaths } from "./path-resolution.js";
 
 export interface CliSession {
   agent_id: string;
@@ -249,10 +249,7 @@ export function findCliSessionForContextPath(
     byPath.set(session.canonical_path, sessionsForPath);
   }
 
-  for (const candidatePath of ancestorPaths(
-    resolved.canonical_context_path,
-    resolved.workspace_root
-  )) {
+  for (const candidatePath of roomCandidatePaths(resolved)) {
     const matches = byPath.get(candidatePath);
     if (!matches || matches.length === 0) {
       continue;

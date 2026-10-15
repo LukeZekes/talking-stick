@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
-  ancestorPaths,
   isWithinOrSame,
   resolveContextPath,
+  roomCandidatePaths,
   type ResolvedContextPath
 } from "./path-resolution.js";
 import { defaultPolicy } from "./config.js";
@@ -358,15 +358,14 @@ export class TalkingStickService {
     }
 
     const resolved = resolveContextPath(input.context_path);
-    const ancestors = ancestorPaths(
-      resolved.canonical_context_path,
-      resolved.workspace_root
-    );
+    const ancestors = roomCandidatePaths(resolved);
 
+    // Most specific first, in resolution order: callers take the first room.
+    const rows = this.findRoomsByCanonicalPaths(ancestors);
+    const rank = new Map(ancestors.map((candidate, index) => [candidate, index]));
+    rows.sort((left, right) => (rank.get(left.canonical_path) ?? 0) - (rank.get(right.canonical_path) ?? 0));
     return {
-      rooms: this.findRoomsByCanonicalPaths(ancestors).map((row) =>
-        this.mapRoomForList(row, now)
-      )
+      rooms: rows.map((row) => this.mapRoomForList(row, now))
     };
   }
 
@@ -380,11 +379,13 @@ export class TalkingStickService {
     this.purgeExpiredIdleRooms(now);
 
     return withImmediateTransaction(this.db, () => {
-      const roomSelection = this.findOrCreateRoomForJoin(
-        resolved,
-        input.force_new === true,
-        timestamp
-      );
+      const roomSelection = input.room_id
+        ? this.selectExplicitRoom(input.room_id)
+        : this.findOrCreateRoomForJoin(
+            resolved,
+            input.force_new === true,
+            timestamp
+          );
       const existingMember = this.getMember(
         roomSelection.room.room_id,
         input.agent_id
@@ -424,6 +425,7 @@ export class TalkingStickService {
       }
       const warning = joinWarnings(
         roomSelection.warning,
+        input.room_id ? undefined : resolved.declaration?.problem,
         supersededAgentIds.length > 0
           ? `Superseded previous harness session(s): ${supersededAgentIds.join(", ")}.`
           : undefined
@@ -1389,7 +1391,7 @@ export class TalkingStickService {
 
     const resolved = resolveContextPath(input.context_path);
     const room = this.findDeepestRoom(
-      ancestorPaths(resolved.canonical_context_path, resolved.workspace_root)
+      roomCandidatePaths(resolved)
     );
     if (!room) {
       throw new ProtocolError(
@@ -1963,7 +1965,7 @@ export class TalkingStickService {
 
     const resolved = resolveContextPath(input.context_path);
     const room = this.findDeepestRoom(
-      ancestorPaths(resolved.canonical_context_path, resolved.workspace_root)
+      roomCandidatePaths(resolved)
     );
     if (!room) {
       return { blocked: false, reason: "no_room" };
@@ -2553,7 +2555,7 @@ export class TalkingStickService {
   // never enrollment, turn acquisition, or evidence of an idle wake transport.
   prepareGrokHookDelivery(input: { context_path: string; harness_session_id: string; diagnostic?: (text: string) => void }): string | null {
     const resolved = resolveContextPath(input.context_path);
-    const room = this.findDeepestRoom(ancestorPaths(resolved.canonical_context_path, resolved.workspace_root));
+    const room = this.findDeepestRoom(roomCandidatePaths(resolved));
     if (!room || room.state === "closed") return null;
     // Most tool calls have no pending room work. Do not acquire a write lock
     // for those calls; revalidate membership and pending events inside below.
@@ -3519,6 +3521,70 @@ export class TalkingStickService {
     };
   }
 
+  /**
+   * Re-key an existing room to a declared room path. The room id, members,
+   * lease, events, and cursors are untouched; only the path that resolution
+   * finds it by changes. Refuses to merge into another room.
+   */
+  rekeyRoomPath(input: { room_id: string; canonical_path: string }): PathRoom {
+    assertNonEmpty(input.room_id, "room_id");
+    assertNonEmpty(input.canonical_path, "canonical_path");
+    return withImmediateTransaction(this.db, () => {
+      const room = this.requireRoom(input.room_id);
+      if (room.canonical_path !== input.canonical_path) {
+        const other = this.findRoomByCanonicalPath(input.canonical_path);
+        if (other) {
+          throw new ProtocolError("target_active",
+            `Room ${other.room_id} already serves ${input.canonical_path}; refusing to merge ${room.room_id} into it.`);
+        }
+        this.db.prepare("UPDATE path_rooms SET canonical_path = ?, updated_at = ? WHERE room_id = ?")
+          .run(input.canonical_path, this.now().toISOString(), room.room_id);
+      }
+      return this.mapRoomForList(this.requireRoom(room.room_id), this.now());
+    });
+  }
+
+  /**
+   * Delete a room whose declaration is being removed. Refuses while any agent
+   * is a member: removing a declaration must not strand a live lease. Chat
+   * consoles are observers and do not block it.
+   */
+  retireUnoccupiedRoom(input: { room_id: string }): { retired: boolean } {
+    assertNonEmpty(input.room_id, "room_id");
+    return withImmediateTransaction(this.db, () => {
+      const room = this.db.prepare<[string], PathRoomRow>("SELECT * FROM path_rooms WHERE room_id = ?").get(input.room_id);
+      if (!room) return { retired: false };
+      const agents = this.getMembers(room.room_id).filter((member) => !isObserverMember(member));
+      if (agents.length > 0 || room.owner) {
+        throw new ProtocolError("target_active",
+          `Room ${room.room_id} still has members (${agents.map((member) => member.agent_id).join(", ") || room.owner}). Ask them to leave first.`);
+      }
+      this.deleteRoom(room.room_id);
+      return { retired: true };
+    });
+  }
+
+  /**
+   * Open (find or create) the room a path resolves to, without joining it, so
+   * a declared room can be selected by name before any agent has joined.
+   */
+  openRoom(input: { context_path: string }): PathRoom {
+    assertNonEmpty(input.context_path, "context_path");
+    const resolved = resolveContextPath(input.context_path);
+    const now = this.now();
+    return withImmediateTransaction(this.db, () =>
+      this.mapRoomForList(this.findOrCreateRoomForJoin(resolved, false, now.toISOString()).room, now));
+  }
+
+  // An explicit selector never creates a room: a typo must not open a new one.
+  private selectExplicitRoom(roomId: string): { room: PathRoomRow; joinedExistingRoom: boolean; warning?: string } {
+    const room = this.db.prepare<[string], PathRoomRow>("SELECT * FROM path_rooms WHERE room_id = ?").get(roomId);
+    if (!room || room.state === "closed") {
+      throw new ProtocolError("room_not_found", `No open room ${roomId}. Use \`tt room list\` to see rooms.`);
+    }
+    return { room, joinedExistingRoom: true };
+  }
+
   private findOrCreateRoomForJoin(
     resolved: ResolvedContextPath,
     forceNew: boolean,
@@ -3528,10 +3594,7 @@ export class TalkingStickService {
     joinedExistingRoom: boolean;
     warning?: string;
   } {
-    const ancestors = ancestorPaths(
-      resolved.canonical_context_path,
-      resolved.workspace_root
-    );
+    const ancestors = roomCandidatePaths(resolved);
     const existingAncestor = this.findDeepestRoom(ancestors);
 
     if (forceNew) {
@@ -3549,9 +3612,12 @@ export class TalkingStickService {
       return {
         room: this.createRoom(resolved.canonical_context_path, timestamp),
         joinedExistingRoom: false,
-        warning: existingAncestor
-          ? `Created nested room inside ${existingAncestor.canonical_path}`
-          : undefined
+        warning: joinWarnings(
+          existingAncestor
+            ? `Created nested room inside ${existingAncestor.canonical_path}`
+            : undefined,
+          "--force-new is deprecated: it creates an unnamed room that only this machine's database knows. Use `tt room create` to declare a room instead."
+        )
       };
     }
 
@@ -3569,7 +3635,7 @@ export class TalkingStickService {
     }
 
     return {
-      room: this.createRoom(resolved.workspace_root, timestamp),
+      room: this.createRoom(resolved.room_path, timestamp),
       joinedExistingRoom: false
     };
   }

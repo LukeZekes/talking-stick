@@ -118,29 +118,42 @@ describe("tt up execution", () => {
     }
   });
 
-  test("rejects an ancestor-room mismatch before launching into the wrong room", async () => {
+  test("a subdirectory launch keeps the panes' cwd and pins the room an ordinary join selects", async () => {
     const { herdr, repo, dataDir, home, bin } = setup();
     const nested = path.join(repo, "child");
     fs.mkdirSync(nested);
-    const runtime = { commands: { listRooms: () => ({ rooms: [{ canonical_path: repo, room_id: "parent" }] }) } } as unknown as Runtime;
-    await expect(handleUpCommand(runtime,
-      parseCommand(["up", "--agents", "claude", "--path", nested, "--print", "--json"]),
-      { env: { PATH: bin, TALKING_STICK_DATA_DIR: dataDir, HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" }, homeDir: home, runner: herdr.runner }
-    )).rejects.toThrow(`Use --path ${repo}`);
-    expect(herdr.calls).toEqual([]);
+    const runtime = { commands: {
+      listRooms: () => ({ rooms: [{ canonical_path: repo, room_id: "parent", state: "idle" }] }),
+      getRoomState: () => ({ members: [] })
+    } } as unknown as Runtime;
+    const output: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => { output.push(String(chunk)); return true; });
+    try {
+      await handleUpCommand(runtime,
+        parseCommand(["up", "--agents", "claude", "--path", nested, "--print", "--json"]),
+        { env: { PATH: bin, TALKING_STICK_DATA_DIR: dataDir, HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" }, homeDir: home, runner: herdr.runner });
+    } finally { stdout.mockRestore(); }
+    const plan = JSON.parse(output.join(""));
+    expect(plan.room_id).toBe("parent");
+    const splits = plan.steps.filter((step: { argv: string[] }) => step.argv[2] === "split");
+    expect(splits.every((step: { argv: string[] }) => step.argv.includes(nested) && step.argv.includes("TT_ROOM=parent"))).toBe(true);
+    expect(herdr.calls.some((call) => ["split", "create", "start", "run"].includes(call[1]))).toBe(false);
   });
 
-  test("rejects a subdirectory whose new room would be created at its workspace root", async () => {
+  test("a blocked launch never opens a room", async () => {
     const { herdr, repo, dataDir, home, bin } = setup();
-    const nested = path.join(repo, "child");
-    fs.mkdirSync(nested);
-    fs.writeFileSync(path.join(repo, "package.json"), "{}");
-    const runtime = { commands: { listRooms: () => ({ rooms: [] }) } } as unknown as Runtime;
-    await expect(handleUpCommand(runtime,
-      parseCommand(["up", "--agents", "claude", "--path", nested, "--print", "--json"]),
-      { env: { PATH: bin, TALKING_STICK_DATA_DIR: dataDir, HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" }, homeDir: home, runner: herdr.runner }
-    )).rejects.toThrow(`Use --path ${repo}`);
-    expect(herdr.calls).toEqual([]);
+    let opened = 0;
+    const runtime = { commands: {
+      listRooms: () => ({ rooms: [] }),
+      openRoom: () => { opened++; return { room_id: "new", canonical_path: repo }; }
+    } } as unknown as Runtime;
+    const previousExit = process.exitCode;
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      await handleUpCommand(runtime, parseCommand(["up", "--agents", "claude", "--path", repo, "--json"]),
+        { env: { PATH: bin, TALKING_STICK_DATA_DIR: dataDir, HERDR_ENV: "0" }, homeDir: home, runner: herdr.runner });
+    } finally { stdout.mockRestore(); process.exitCode = previousExit; }
+    expect(opened).toBe(0);
   });
 
   test("preview --forget leaves its record untouched and failed preflight never discards it", async () => {

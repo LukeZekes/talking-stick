@@ -157,6 +157,105 @@ describe("path resolution", () => {
     expect(forced.warning).toContain("Created nested room inside");
   });
 
+  test("a declared package is its own room inside a monorepo", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "talking-stick-mono-"));
+    tempRoots.push(tempRoot);
+    const repo = createRepo(tempRoot);
+    const api = path.join(repo, "packages", "api");
+    declareRoom(api);
+    const service = new TalkingStickService({ dbPath: path.join(tempRoot, "state", "rooms.sqlite") });
+    services.push(service);
+
+    const resolved = resolveContextPath(path.join(api, "src"));
+    expect(resolved.declaration).toEqual({ directory: realPath(api), rel_path: "packages/api", name: "api", problem: null });
+    expect(resolved.room_path).toBe(realPath(api));
+
+    const root = service.joinPath({ agent_id: "claude:root", context_path: repo });
+    const apiJoin = service.joinPath({ agent_id: "codex:api", context_path: path.join(api, "src") });
+    const webJoin = service.joinPath({ agent_id: "grok:web", context_path: path.join(repo, "packages", "web") });
+    expect(apiJoin.room_id).not.toBe(root.room_id);
+    expect(apiJoin.canonical_path).toBe(realPath(api));
+    expect(webJoin.room_id).toBe(root.room_id);
+    expect(service.joinPath({ agent_id: "codex:api2", context_path: api }).room_id).toBe(apiJoin.room_id);
+    expect(service.getRoomHealth({ agent_id: "codex:api", context_path: path.join(api, "src") }).room.room_id)
+      .toBe(apiJoin.room_id);
+
+    // A typo still declares the room but is reported on join.
+    declareRoom(path.join(repo, "packages", "web"), 'nmae = "web"\n');
+    const typo = service.joinPath({ agent_id: "grok:typo", context_path: path.join(repo, "packages", "web") });
+    expect(typo.canonical_path).toBe(realPath(path.join(repo, "packages", "web")));
+    expect(typo.warning).toMatch(/room\.toml:1 is not understood: nmae/);
+  });
+
+  test("worktrees converge on one declared room and branches without it use the root", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "talking-stick-mono-wt-"));
+    tempRoots.push(tempRoot);
+    const repo = createRepo(tempRoot);
+    commitAll(repo);
+    execFileSync("git", ["-C", repo, "worktree", "add", "-q", "-b", "plain", path.join(tempRoot, "plain")]);
+    declareRoom(path.join(repo, "packages", "api"));
+    commitAll(repo);
+    const declared = path.join(tempRoot, "declared");
+    execFileSync("git", ["-C", repo, "worktree", "add", "-q", "-b", "declared", declared]);
+    const service = new TalkingStickService({ dbPath: path.join(tempRoot, "state", "rooms.sqlite") });
+    services.push(service);
+
+    const mainApi = service.joinPath({ agent_id: "claude:main", context_path: path.join(repo, "packages", "api") });
+    const linkedApi = service.joinPath({ agent_id: "codex:linked", context_path: path.join(declared, "packages", "api", "src") });
+    expect(linkedApi.room_id).toBe(mainApi.room_id);
+    expect(linkedApi.canonical_path).toBe(path.join(realPath(repo), "packages", "api"));
+
+    // A legacy room created exactly at the worktree's declaration directory
+    // keeps its id and lease on the next ordinary join.
+    const wtApi = path.join(declared, "packages", "api");
+    const legacy = service.joinPath({ agent_id: "claude:wt-legacy", context_path: wtApi, force_new: true });
+    expect(legacy.room_id).not.toBe(mainApi.room_id);
+    const grant = await service.waitForTurn({ agent_id: "claude:wt-legacy", room_id: legacy.room_id, max_wait_ms: 0, allow_solo_claim: true });
+    expect(grant.status).toBe("your_turn");
+    const rejoin = service.joinPath({ agent_id: "claude:wt-legacy", context_path: path.join(wtApi, "src") });
+    expect(rejoin.room_id).toBe(legacy.room_id);
+    expect(rejoin.room_state.owner).toBe("claude:wt-legacy");
+
+    const plainApi = service.joinPath({ agent_id: "grok:plain", context_path: path.join(tempRoot, "plain", "packages", "api") });
+    expect(plainApi.room_id).not.toBe(mainApi.room_id);
+    expect(plainApi.canonical_path).toBe(realPath(repo));
+  });
+
+  test("retiring a declared room refuses agents but not chat observers", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "talking-stick-retire-"));
+    tempRoots.push(tempRoot);
+    const repo = createRepo(tempRoot);
+    const api = path.join(repo, "packages", "api");
+    declareRoom(api);
+    const service = new TalkingStickService({ dbPath: path.join(tempRoot, "state", "rooms.sqlite") });
+    services.push(service);
+    const opened = service.openRoom({ context_path: api });
+    expect(opened.canonical_path).toBe(realPath(api));
+    expect(service.joinPath({ agent_id: "codex:api", context_path: api }).room_id).toBe(opened.room_id);
+    expect(() => service.retireUnoccupiedRoom({ room_id: opened.room_id })).toThrow(/still has members/);
+    service.leaveRoom({ agent_id: "codex:api", room_id: opened.room_id });
+
+    const again = service.openRoom({ context_path: api });
+    service.joinPath({ agent_id: "human:op:chat:1", context_path: api,
+      process_metadata: { session_kind: "human_chat" } });
+    expect(service.retireUnoccupiedRoom({ room_id: again.room_id })).toEqual({ retired: true });
+    expect(service.listRooms({}).rooms.some((room) => room.room_id === again.room_id)).toBe(false);
+  });
+
+  test("an existing nested legacy room keeps winning inside a declared room", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "talking-stick-mono-legacy-"));
+    tempRoots.push(tempRoot);
+    const repo = createRepo(tempRoot);
+    const src = path.join(repo, "packages", "api", "src");
+    const service = new TalkingStickService({ dbPath: path.join(tempRoot, "state", "rooms.sqlite") });
+    services.push(service);
+    const legacy = service.joinPath({ agent_id: "claude:legacy", context_path: src, force_new: true });
+    declareRoom(path.join(repo, "packages", "api"));
+    expect(service.joinPath({ agent_id: "codex:legacy", context_path: src }).room_id).toBe(legacy.room_id);
+    expect(service.joinPath({ agent_id: "codex:api", context_path: path.join(repo, "packages", "api") }).room_id)
+      .not.toBe(legacy.room_id);
+  });
+
   test("git worktrees share the main repository room unless explicitly isolated", () => {
     const tempRoot = fs.mkdtempSync(
       path.join(os.tmpdir(), "talking-stick-worktree-")
@@ -201,12 +300,18 @@ describe("path resolution", () => {
     expect(linkedJoin.canonical_path).toBe(realPath(main));
     expect(service.listRooms({ context_path: linked }).rooms).toHaveLength(1);
 
-    // A room above the main checkout must also be discoverable from an
-    // external linked checkout, where that umbrella is not a real ancestor.
+    // A repository is its own root: a room above the main checkout no longer
+    // absorbs the repository or its linked worktrees.
     const umbrella = service.joinPath({ agent_id: "human:umbrella", context_path: path.dirname(main), force_new: true });
     service.leaveRoom({ agent_id: "claude:main", room_id: mainJoin.room_id });
     service.leaveRoom({ agent_id: "codex:linked", room_id: mainJoin.room_id });
-    expect(service.joinPath({ agent_id: "codex:umbrella", context_path: linked }).room_id).toBe(umbrella.room_id);
+    expect(umbrella.room_id).not.toBe(mainJoin.room_id);
+    // The emptied repository room may have been retired; either way the
+    // worktree and main checkout land in the repository's room, not the umbrella.
+    const fromLinked = service.joinPath({ agent_id: "codex:umbrella", context_path: linked });
+    expect(fromLinked.room_id).not.toBe(umbrella.room_id);
+    expect(fromLinked.canonical_path).toBe(realPath(main));
+    expect(service.joinPath({ agent_id: "claude:umbrella", context_path: main }).room_id).toBe(fromLinked.room_id);
 
     const isolated = service.joinPath({
       agent_id: "grok:isolated",
@@ -226,6 +331,29 @@ describe("path resolution", () => {
     ).toBe(isolated.room_id);
   });
 });
+
+function createRepo(tempRoot: string, name = "repo"): string {
+  const repo = path.join(tempRoot, name);
+  fs.mkdirSync(path.join(repo, "packages", "api", "src"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "packages", "web"), { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main", repo]);
+  execFileSync("git", ["-C", repo, "config", "user.name", "Test User"]);
+  execFileSync("git", ["-C", repo, "config", "user.email", "test@example.com"]);
+  fs.writeFileSync(path.join(repo, "package.json"), "{}\n");
+  fs.writeFileSync(path.join(repo, "packages", "web", "package.json"), "{}\n");
+  fs.writeFileSync(path.join(repo, "packages", "api", "src", "index.ts"), "\n");
+  return repo;
+}
+
+function declareRoom(directory: string, body = 'name = "api"\n'): void {
+  fs.mkdirSync(path.join(directory, ".talking-stick"), { recursive: true });
+  fs.writeFileSync(path.join(directory, ".talking-stick", "room.toml"), body);
+}
+
+function commitAll(repo: string): void {
+  execFileSync("git", ["-C", repo, "add", "-A"]);
+  execFileSync("git", ["-C", repo, "commit", "-q", "-m", "snapshot"]);
+}
 
 function createTempHome(): { home: string; tempRoot: string } {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "talking-stick-path-"));

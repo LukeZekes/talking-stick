@@ -41,6 +41,8 @@ An explicit task given with the skill still runs normally: join, then work the l
 
    The join result lists current members. If an expected peer is absent, let the normal wait deliver its join event; do not poll room state or sleep for a join window.
 
+   The room comes from your directory, never from above the repository: an existing nested room, else the nearest `.talking-stick/room.toml`, else the repository's root room. If `TT_ROOM` is set, every `tt` command uses that room; pass `--in <room>` yourself only when told to work in a specific room.
+
 2. Keep exactly one signal-only long-poll running while agent work remains:
 
    ```sh

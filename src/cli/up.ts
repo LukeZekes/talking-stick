@@ -19,6 +19,7 @@ import { deriveCliIdentity } from "./identity.js";
 import { printResult } from "./output.js";
 import { getStringOption, hasOption, parseWaitTimeout, type ParsedCommand } from "./parser.js";
 import type { Runtime } from "./runtime.js";
+import { selectedRoom } from "./room-selector.js";
 import { pickDeepestRoom } from "./session.js";
 
 export const UP_USAGE =
@@ -45,46 +46,58 @@ export async function handleUpCommand(
   const contextPath = getStringOption(parsed, "path") ?? process.cwd();
   const resolved = resolveContextPath(contextPath);
   const canonicalPath = resolved.canonical_context_path;
-  const selectedRoom = pickDeepestRoom(runtime.commands.listRooms({ context_path: canonicalPath }).rooms);
-  const joinPath = selectedRoom?.canonical_path ?? resolved.workspace_root;
-  if (joinPath !== canonicalPath) {
-    throw new Error(`Ordinary tt join/chat would select room ${joinPath}, not ${canonicalPath}. Use --path ${joinPath} for this launcher, or explicitly create a nested room first.`);
-  }
+  const preview = hasOption(parsed, "print");
+  // Panes start in the caller's directory; the room is chosen separately and
+  // pinned by id, so a linked worktree or a subdirectory launches into the
+  // room an ordinary join from here would use (or the one named with --in).
+  const resolvedRoom = selectedRoom(runtime, parsed) ??
+    pickDeepestRoom(runtime.commands.listRooms({ context_path: canonicalPath }).rooms);
+  // Lock and record follow the room, not the cwd, so two worktrees launching
+  // into one room serialize. A room opened below keeps this same path.
+  const roomKey = resolvedRoom?.canonical_path ?? resolved.room_path;
   const runner = options.runner ?? createSystemHerdrRunner(env);
   const readStartTime = options.readStartTime ?? createSystemStartTimeReader();
   const dataDir = resolveDataDir({ env });
-  const preview = hasOption(parsed, "print");
 
   // A preview takes no lock; a launch plans under the lock so a concurrent
   // launcher cannot act on the same stale view of the room and record.
-  const release = preview ? () => {} : acquireLaunchLock(dataDir, canonicalPath);
+  const release = preview ? () => {} : acquireLaunchLock(dataDir, roomKey);
   try {
     const forget = hasOption(parsed, "forget");
-    const record = forget ? null : readLaunchRecord(dataDir, canonicalPath);
-    const plan = planWorkspaceLaunch({
+    const record = forget ? null : readLaunchRecord(dataDir, roomKey);
+    const planFor = (roomId: string | null) => planWorkspaceLaunch({
       agents,
       context_path: contextPath,
       topology,
       herdr: readHerdrContext(env),
       runner,
-      room: findExactRoom(runtime, parsed, canonicalPath),
+      room: roomWithMembers(runtime, parsed, roomId),
+      pin_room_id: roomId,
       readStartTime,
       record,
       env,
       homeDir: options.homeDir
     });
+    let targetRoomId = resolvedRoom?.room_id ?? null;
+    let plan = planFor(targetRoomId);
+    // A room that does not exist yet is opened only under the lock, after the
+    // plan passes preflight, so a blocked launch never leaves an empty room.
+    if (!preview && !targetRoomId && plan.status === "ready") {
+      targetRoomId = runtime.commands.openRoom({ context_path: canonicalPath }).room_id;
+      plan = planFor(targetRoomId);
+    }
     if (preview) {
       printResult(parsed, plan, () => renderPlan(plan));
       if (plan.status !== "ready") process.exitCode = 1;
       return;
     }
     if (forget && plan.status !== "blocked") {
-      fs.rmSync(launchRecordPath(dataDir, canonicalPath), { force: true });
+      fs.rmSync(launchRecordPath(dataDir, roomKey), { force: true });
     }
     const result = await executeWorkspaceLaunch(plan, {
       runner,
       readStartTime,
-      readMembers: () => findExactRoom(runtime, parsed, canonicalPath)?.members ?? null,
+      readMembers: () => roomWithMembers(runtime, parsed, targetRoomId)?.members ?? null,
       dataDir,
       record,
       joinTimeoutMs,
@@ -108,14 +121,12 @@ function parseTopology(parsed: ParsedCommand): LaunchTopology {
   return newWorkspace ? "new-workspace" : newTab ? "new-tab" : "here";
 }
 
-// Only the room for this exact path counts; a parent room is a different room.
-function findExactRoom(runtime: Runtime, parsed: ParsedCommand, canonicalPath: string) {
-  const rooms = runtime.commands.listRooms({ context_path: canonicalPath }).rooms;
-  const room = pickDeepestRoom(rooms.filter((candidate) => candidate.canonical_path === canonicalPath));
-  if (!room) return null;
+// Membership of the pinned room only; another room is a different room.
+function roomWithMembers(runtime: Runtime, parsed: ParsedCommand, roomId: string | null) {
+  if (!roomId) return null;
   const identity = deriveCliIdentity(parsed);
-  const state = runtime.commands.getRoomState({ room_id: room.room_id, agent_id: identity.agent_id });
-  return { room_id: room.room_id, members: state.members };
+  const state = runtime.commands.getRoomState({ room_id: roomId, agent_id: identity.agent_id });
+  return { room_id: roomId, members: state.members };
 }
 
 export function renderPlan(plan: WorkspaceLaunchPlan): string {

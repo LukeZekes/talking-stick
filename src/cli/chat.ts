@@ -5,6 +5,7 @@ import { planChatInterrupts } from "./chat-interrupt.js";
 import { interruptCodexThread } from "./codex-interrupt.js";
 import { interruptCodexHerdr } from "./codex-herdr-interrupt.js";
 import { ChatInputController } from "./chat-input.js";
+import { resolveRoomSelector, selectedRoom } from "./room-selector.js";
 import { resolveChatKick } from "./chat-kick.js";
 import {
   ChatTranscript,
@@ -87,6 +88,8 @@ export interface ChatSessionOptions {
   runtime: Runtime;
   identity: DerivedIdentity;
   context_path: string;
+  /** Join exactly this room instead of resolving context_path. */
+  room_id?: string;
   input: Readable;
   output: Writable;
   terminal: boolean;
@@ -143,10 +146,16 @@ export async function handleChatCommand(
   const identity = createChatIdentity(agentId);
   const terminal = chatTerminalCapable(process.stdin, process.stdout, process.env);
 
+  // `tt chat #api` names a room; a plain positional is still a path.
+  const positional = parsed.positionals[0];
+  const explicit = positional?.startsWith("#")
+    ? resolveRoomSelector(runtime.commands.listRooms({}).rooms, positional)
+    : selectedRoom(runtime, parsed);
   await runChatSession({
     runtime,
     identity,
-    context_path: parsed.positionals[0] ?? process.cwd(),
+    context_path: explicit?.canonical_path ?? positional ?? process.cwd(),
+    room_id: explicit?.room_id,
     input: process.stdin,
     output: process.stdout,
     terminal,
@@ -181,7 +190,8 @@ export async function runChatSession(
   const inline = terminal && !fullscreen;
   const selfId = identity.agent_id;
   const joined = runtime.commands.joinPath(identity, {
-    context_path: options.context_path
+    context_path: options.context_path,
+    room_id: options.room_id
   });
   const roomId = joined.room_id;
 
