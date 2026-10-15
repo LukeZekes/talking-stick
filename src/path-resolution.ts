@@ -22,6 +22,8 @@ export interface RoomDeclaration {
   /** Path of that directory relative to the checkout root ("" for the root). */
   rel_path: string;
   name: string | null;
+  /** Set when the file has content tt does not understand; it still declares the room. */
+  problem: string | null;
 }
 
 export interface ResolvedContextPath {
@@ -215,10 +217,12 @@ function findRoomDeclaration(startPath: string, checkoutRoot: string | null): Ro
     if (homeBoundary && samePath(current, homeBoundary)) return null;
     const file = path.join(current, ROOM_DECLARATION_FILE);
     if (fs.existsSync(file)) {
+      const parsed = readDeclaration(file);
       return {
         directory: current,
         rel_path: checkoutRoot ? path.relative(checkoutRoot, current).split(path.sep).join("/") : "",
-        name: readDeclaredName(file)
+        name: parsed.name,
+        problem: parsed.problem
       };
     }
     if (checkoutRoot && samePath(current, checkoutRoot)) return null;
@@ -228,15 +232,31 @@ function findRoomDeclaration(startPath: string, checkoutRoot: string | null): Ro
   }
 }
 
-// Only `name = "..."` is read today; an unreadable or empty file still declares
-// the room, because the file's presence is the declaration.
-function readDeclaredName(file: string): string | null {
+// The file's presence is the declaration. Known keys are read; anything else
+// is reported so a typo is visible instead of silently ignored.
+const DECLARATION_KEYS = new Set(["name", "default_channel", "channels"]);
+export function readDeclaration(file: string): { name: string | null; problem: string | null } {
+  let text: string;
   try {
-    const match = /^\s*name\s*=\s*"([^"\n]*)"\s*(?:#.*)?$/m.exec(fs.readFileSync(file, "utf8"));
-    return match?.[1]?.trim() || null;
-  } catch {
-    return null;
+    text = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    return { name: null, problem: `${file} is unreadable: ${error instanceof Error ? error.message : String(error)}` };
   }
+  let name: string | null = null;
+  for (const [index, raw] of text.split(/\r?\n/).entries()) {
+    const line = raw.replace(/\s+#.*$/, "").trim();
+    if (!line || line.startsWith("#")) continue;
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(line);
+    if (!match || !DECLARATION_KEYS.has(match[1])) {
+      return { name, problem: `${file}:${index + 1} is not understood: ${raw.trim()}` };
+    }
+    if (match[1] === "name") {
+      const value = /^"([^"\n]*)"$/.exec(match[2]);
+      if (!value) return { name, problem: `${file}:${index + 1}: name must be a quoted string` };
+      name = value[1].trim() || null;
+    }
+  }
+  return { name, problem: null };
 }
 
 function findNearestWorkspaceMarker(startPath: string): string | null {

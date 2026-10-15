@@ -1,6 +1,7 @@
 import { runGrokInboxHookCommand } from "./grok-inbox-hook.js";
 import { runSessionHookCommand } from "./session-hook.js";
 import { runInterruptHookCommand } from "./interrupt-hook.js";
+import { handleRoomCommand } from "./room-admin.js";
 import { deriveCliIdentity } from "./identity.js";
 import { printResult } from "./output.js";
 import { runGuardCommand } from "./guardian.js";
@@ -172,11 +173,20 @@ export const COMMAND_REGISTRY: CommandEntry[] = [
     handler: ({ runtime, parsed }) => handleListCommand(requireRuntime(runtime), parsed)
   },
   {
+    name: "room",
+    needsRuntime: true,
+    startupMaintenance: true,
+    internal: false,
+    usage: "tt room create [path] [--name NAME] | list [path] | adopt [path] [--name NAME] | remove [path]",
+    description: "Declare, list, adopt, or remove rooms inside a repository.",
+    handler: ({ runtime, parsed }) => handleRoomCommand(requireRuntime(runtime), parsed)
+  },
+  {
     name: "join",
     needsRuntime: true,
     startupMaintenance: true,
     internal: false,
-    usage: "tt join [path] [--force-new]",
+    usage: "tt join [path] [--in ROOM] [--force-new]",
     description: "Join the room for a workspace path.",
     handler: ({ runtime, parsed }) => handleJoinCommand(requireRuntime(runtime), parsed)
   },

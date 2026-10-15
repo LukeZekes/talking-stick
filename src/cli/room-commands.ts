@@ -1,3 +1,4 @@
+import { selectedRoom } from "./room-selector.js";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import { deriveCliIdentity, resolveCliIdentity } from "./identity.js";
@@ -62,8 +63,10 @@ export function handleJoinCommand(
 ): void {
   const contextPath = parsed.positionals[0] ?? process.cwd();
   const identity = deriveCliIdentity(parsed);
+  const explicit = selectedRoom(runtime, parsed);
   const joined = runtime.commands.joinPath(identity, {
-    context_path: contextPath,
+    context_path: explicit?.canonical_path ?? contextPath,
+    room_id: explicit?.room_id,
     force_new: parsed.options.has("force-new")
   });
   upsertSessionFromJoin(identity, joined);

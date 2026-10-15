@@ -425,6 +425,7 @@ export class TalkingStickService {
       }
       const warning = joinWarnings(
         roomSelection.warning,
+        input.room_id ? undefined : resolved.declaration?.problem,
         supersededAgentIds.length > 0
           ? `Superseded previous harness session(s): ${supersededAgentIds.join(", ")}.`
           : undefined
@@ -3520,8 +3521,31 @@ export class TalkingStickService {
     };
   }
 
+  /**
+   * Re-key an existing room to a declared room path. The room id, members,
+   * lease, events, and cursors are untouched; only the path that resolution
+   * finds it by changes. Refuses to merge into another room.
+   */
+  rekeyRoomPath(input: { room_id: string; canonical_path: string }): PathRoom {
+    assertNonEmpty(input.room_id, "room_id");
+    assertNonEmpty(input.canonical_path, "canonical_path");
+    return withImmediateTransaction(this.db, () => {
+      const room = this.requireRoom(input.room_id);
+      if (room.canonical_path !== input.canonical_path) {
+        const other = this.findRoomByCanonicalPath(input.canonical_path);
+        if (other) {
+          throw new ProtocolError("target_active",
+            `Room ${other.room_id} already serves ${input.canonical_path}; refusing to merge ${room.room_id} into it.`);
+        }
+        this.db.prepare("UPDATE path_rooms SET canonical_path = ?, updated_at = ? WHERE room_id = ?")
+          .run(input.canonical_path, this.now().toISOString(), room.room_id);
+      }
+      return this.mapRoomForList(this.requireRoom(room.room_id), this.now());
+    });
+  }
+
   // An explicit selector never creates a room: a typo must not open a new one.
-  private selectExplicitRoom(roomId: string): { room: PathRoomRow; joinedExistingRoom: boolean } {
+  private selectExplicitRoom(roomId: string): { room: PathRoomRow; joinedExistingRoom: boolean; warning?: string } {
     const room = this.db.prepare<[string], PathRoomRow>("SELECT * FROM path_rooms WHERE room_id = ?").get(roomId);
     if (!room || room.state === "closed") {
       throw new ProtocolError("room_not_found", `No open room ${roomId}. Use \`tt room list\` to see rooms.`);

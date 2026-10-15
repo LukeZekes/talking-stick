@@ -167,7 +167,7 @@ describe("path resolution", () => {
     services.push(service);
 
     const resolved = resolveContextPath(path.join(api, "src"));
-    expect(resolved.declaration).toEqual({ directory: realPath(api), rel_path: "packages/api", name: "api" });
+    expect(resolved.declaration).toEqual({ directory: realPath(api), rel_path: "packages/api", name: "api", problem: null });
     expect(resolved.room_path).toBe(realPath(api));
 
     const root = service.joinPath({ agent_id: "claude:root", context_path: repo });
@@ -179,6 +179,12 @@ describe("path resolution", () => {
     expect(service.joinPath({ agent_id: "codex:api2", context_path: api }).room_id).toBe(apiJoin.room_id);
     expect(service.getRoomHealth({ agent_id: "codex:api", context_path: path.join(api, "src") }).room.room_id)
       .toBe(apiJoin.room_id);
+
+    // A typo still declares the room but is reported on join.
+    declareRoom(path.join(repo, "packages", "web"), 'nmae = "web"\n');
+    const typo = service.joinPath({ agent_id: "grok:typo", context_path: path.join(repo, "packages", "web") });
+    expect(typo.canonical_path).toBe(realPath(path.join(repo, "packages", "web")));
+    expect(typo.warning).toMatch(/room\.toml:1 is not understood: nmae/);
   });
 
   test("worktrees converge on one declared room and branches without it use the root", async () => {
