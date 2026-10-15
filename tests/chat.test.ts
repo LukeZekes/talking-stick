@@ -706,7 +706,7 @@ describe("tt chat session", () => {
       .toEqual([expect.objectContaining({ unread_messages: 2, unread_directed: 1, agent_members: 1 })]);
     expect(formatRoomStrip([
       { name: "web", unread: 0, directed: 0 }, { name: "api", unread: 3, directed: 1 }, { name: "docs", unread: 2, directed: 0 }
-    ], { color: false, name_of: (id) => id } as never)).toBe("#api 1@ · #docs 2● · #web");
+    ], { color: false, name_of: (id: string) => id } as never)).toBe("#api 1@ · #docs 2● · #web");
   });
 
   test("switches rooms with /go, keeps memberships until exit, and lists rooms with agents", async () => {
