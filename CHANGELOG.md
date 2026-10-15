@@ -11,33 +11,25 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+## [0.21.0] — 2026-10-15
+
+Full notes: [`docs/releases/0.21.0.md`](docs/releases/0.21.0.md).
+
 ### Breaking changes
 
 - Inside Git, a repository is its own root: `tt join`, reads, and hooks no longer select a room above the checkout (for example one at `~/dev`). Linked worktrees still share the main checkout's rooms. Outside Git, folders still join the nearest existing room above them.
 
 ### Added
 
-- Declared rooms. A directory containing `.talking-stick/room.toml` is its own room, so packages in a monorepo can have separate rooms. The room is keyed by the main checkout path plus its path inside the checkout, so every linked worktree on a branch with the declaration shares it. `tt room create|list|adopt|remove` manage declarations: `adopt` turns an existing nested room into a declared one without changing its id, and `remove` deletes an agent-free room with its history. A malformed `room.toml` still declares the room, and joins report the problem.
+- Declared rooms. A directory containing `.talking-stick/room.toml` is its own room, so packages in a monorepo can have separate rooms. The room is keyed by the main checkout path plus its path inside the checkout, so every linked worktree on a branch with the declaration shares it. `tt room create|list|adopt|remove` manage declarations: `adopt` turns an existing nested room into a declared one without changing its id, and `remove` deletes an agent-free room with its history. `tt room list` names the live agents in each room and marks your current one. A malformed `room.toml` still declares the room, and joins report the problem.
 - `--in <room>` and `TT_ROOM` name a room explicitly (by id, path, `root`, short name, or path suffix) for join, wait, standby, take, chat, reads, notes, messages, and handoffs. They never create a room.
-- `tt up` pins every launched pane to one room id with `TT_ROOM` (and `tt chat --in`) while panes keep the caller's directory, so launching from a subdirectory or a linked worktree works. A new room is opened only after preflight passes.
-
-- `tt chat` spans the rooms of one repository. The room bar lists other rooms with live agents, unread messages, or a past visit, with unread counts (`#api 2●`, or `1@` for messages addressed to you); duplicate names use the shortest unique path (`web/api`). The console joins listed rooms as an observer, so agents there can address the operator, and such messages appear inline (`#api › codex → you: …`). `/rooms` lists them, and `/go <room>` or Alt+←/→ switches, keeping a draft per room. Chat leaves every room it joined when it exits.
-
-### Changed
-
-- `--force-new` is deprecated in favour of `tt room create`; it still creates a nested room and now warns.
-
-## [0.21.0] — 2026-10-15
-
-Full notes: [`docs/releases/0.21.0.md`](docs/releases/0.21.0.md).
-
-### Added
-
-- `tt up --agents claude,codex[,grok]` launches agents and a chat console in Herdr panes, and `--print` previews the exact Herdr commands first. An existing agent is skipped only when its Herdr session, pane process, and process start time match its room membership, including a parked agent whose room presence has lapsed while its process still runs; anything unproven is reported for inspection rather than relaunched. Launches are serialized per path, recorded around every side effect, never retry an uncertain start, and wait a bounded time for each agent to join. Codex starts with `--no-daemon` so its session and tools retain the new pane's identity ([#91](https://github.com/mostlydev/talking-stick/issues/91)).
+- `tt chat` spans the rooms of one repository. The room bar lists other rooms with live agents, unread messages, or a past visit, with unread counts (`#api 2●`, or `1@` for messages addressed to you); duplicate names use the shortest unique path (`web/api`). The console joins listed rooms as an observer, so agents there can address the operator, and such messages appear inline (`#api › codex → you: …`). `/rooms` lists them; `/go <room>` (with Tab completion) or Alt+←/→ switches, keeping a draft per room, and `/go <dir>` opens a directory's room even if nobody has joined it yet. Chat leaves every room it joined when it exits.
+- `tt up --agents claude,codex[,grok]` launches agents and a chat console in Herdr panes, and `--print` previews the exact Herdr commands first. Every pane is pinned to one room id with `TT_ROOM` (and `tt chat --in`) while it keeps the caller's directory, so launching from a subdirectory or a linked worktree works; a new room is opened only after preflight passes. An existing agent is skipped only when its Herdr session, pane process, and process start time match its room membership, including a parked agent whose room presence has lapsed while its process still runs; anything unproven is reported for inspection rather than relaunched. Launches are serialized per room, recorded around every side effect, never retry an uncertain start, and wait a bounded time for each agent to join. Codex starts with `--no-daemon` so its session and tools retain the new pane's identity ([#91](https://github.com/mostlydev/talking-stick/issues/91)).
 
 ### Changed
 
 - In `tt chat`, Escape clears a nonempty draft in one press, including an open suggestion list. On an empty draft it requests a message-free interrupt for active Codex turns through the local app-server, or through a verified Herdr pane for Codex launched with `--no-daemon`. A local Claude session uses a tool hook that stops the turn at its next tool call with `continue: false` (the pending tool is denied). Run `tt install claude` to add the hook. Pending interrupts appear briefly in the status bar without adding transcript lines; a held Escape key arms only once. Ctrl+C still only clears the draft.
+- `--force-new` is deprecated in favour of `tt room create`; it still creates a nested room and now warns.
 
 ### Fixed
 

@@ -631,9 +631,27 @@ export interface ChatMemberCompletion {
   status: string;
 }
 
-export function getChatCompletions(draft: ChatDraft, names: string[], kickMembers: ChatMemberCompletion[] = []): ChatCompletion[] {
+export interface ChatRoomCompletion {
+  /** What `/go` accepts: a unique short name or path suffix, or `root`. */
+  name: string;
+  description: string;
+}
+
+export function getChatCompletions(draft: ChatDraft, names: string[], kickMembers: ChatMemberCompletion[] = [],
+  rooms: ChatRoomCompletion[] = []): ChatCompletion[] {
   const before = draft.line.slice(0, draft.cursor);
   const after = draft.line.slice(draft.cursor);
+  const go = /^(\/go\s+)#?([^\s]*)$/i.exec(before);
+  if (go) {
+    const typed = go[2].toLowerCase();
+    const tail = after.replace(/^\S*/, "");
+    return rooms.filter((room) => room.name.toLowerCase().startsWith(typed) ||
+      room.name.toLowerCase().split("/").some((part) => part.startsWith(typed))).map((room) => {
+      const text = `${go[1]}${room.name}${/^\s/.test(tail) ? "" : " "}`;
+      return { label: `#${sanitizeChatText(room.name)}`, description: sanitizeChatText(room.description).replace(/\n/g, " "),
+        draft: { line: text + tail, cursor: text.length } };
+    });
+  }
   const command = /^\/([a-z]*)$/i.exec(before);
   if (command) {
     const tail = after.replace(/^[a-z]*/i, "");

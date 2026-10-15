@@ -22,7 +22,7 @@ For the introduction and quickstart, see [`README.md`](../README.md).
 tt whoami [--explain]                                     # show the resolved CLI identity
 tt list [path]                                            # list rooms
 tt room create [path] [--name NAME]                       # declare a room boundary (.talking-stick/room.toml)
-tt room list [path]                                       # rooms in this repository: root, declared, legacy
+tt room list [path]                                       # this repository's rooms, live agents in each, current marked
 tt room adopt [path] [--name NAME]                        # declare an existing nested room, keeping its id
 tt room remove [path]                                     # remove a declaration and delete its agent-free room
 tt join [path] [--in ROOM] [--force-new]                  # join the room for path (--force-new is deprecated)
@@ -313,7 +313,7 @@ it. Scrolling, selection, and copying stay with the terminal.
 | `/help`, `/help keys` | Show chat commands, or keyboard shortcuts |
 | `/older` | Print an earlier page of saved messages; in fullscreen, scroll into older history |
 | `/rooms` | List rooms in this repository with live agents, unread messages, or a past visit. Chat joins them as an observer so agents there can address you; those messages show inline as `#room › agent → you: …` |
-| `/go <room>` or Alt+←/→ | Switch the console to another room; drafts and memberships are kept until chat exits. `/go <dir>` (relative to the active repository's checkout) opens a directory's room even if nobody has joined it yet, e.g. a committed declaration; `#name` never falls back to a directory |
+| `/go <room>` (Tab completes) or Alt+←/→ | Switch the console to another room; drafts and memberships are kept until chat exits. `/go <dir>` (relative to the active repository's checkout) opens a directory's room even if nobody has joined it yet, e.g. a committed declaration; `#name` never falls back to a directory |
 | `/bottom` or Ctrl+End | Fullscreen: return to latest messages. Default mode: use the terminal's scroll-to-bottom shortcut |
 | `/quit`, `/exit`, or Ctrl+D on an empty draft | Exit and remove this console's membership |
 | Ctrl+C | Clear the draft without quitting |
