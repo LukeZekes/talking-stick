@@ -15,6 +15,8 @@ export interface ChatInputOptions {
   onQuit: () => void;
   onClear: () => void;
   onEmptyEscape?: () => void;
+  /** Alt+Left / Alt+Right: move to the previous or next room. */
+  onCycleRoom?: (direction: -1 | 1) => void;
   now?: () => number;
   complete: (draft: ChatDraft, index: number) => ChatDraft | null;
   completionCount?: (draft: ChatDraft) => number;
@@ -95,6 +97,8 @@ export class ChatInputController {
       (options.input as RawInput).setRawMode?.(true);
       options.input.on("data", this.onData);
       options.input.on("end", this.onEnd);
+      // A previous controller (before a room switch) paused the stream.
+      options.input.resume();
     } catch (error) {
       this.close();
       throw error;
@@ -127,6 +131,14 @@ export class ChatInputController {
     this.rl.line = "";
     this.rl.cursor = 0;
     this.options.onClear();
+    this.options.onChange();
+  }
+
+  /** Restore a saved draft, e.g. after returning to a room. */
+  setDraft(line: string): void {
+    if (this.closed) return;
+    this.rl.line = line;
+    this.rl.cursor = line.length;
     this.options.onChange();
   }
 
@@ -276,6 +288,8 @@ export class ChatInputController {
             this.options.onScroll("lines", sequence.endsWith("A") ? -1 : 1);
           } else if (sequence === "\u001b[1;5F" || sequence === "\u001b[4;5~") {
             this.options.onBottom();
+          } else if (sequence === "\u001b[1;3D" || sequence === "\u001b[1;3C") {
+            this.options.onCycleRoom?.(sequence.endsWith("D") ? -1 : 1);
           } else if (sequence !== PASTE_END) {
             this.writeKeys(sequence);
           }

@@ -29,6 +29,8 @@ export interface ChatCommandInfo {
 export const CHAT_COMMANDS: ChatCommandInfo[] = [
   { name: "quit", usage: "/quit", description: "leave the chat" },
   { name: "who", usage: "/who", description: "members and who has the stick" },
+  { name: "rooms", usage: "/rooms", description: "rooms in this repository with agents or unread messages" },
+  { name: "go", usage: "/go <room|dir>", description: "switch rooms (also Alt+←/→); a directory opens its room" },
   { name: "older", usage: "/older", description: "load an earlier page of saved messages" },
   { name: "kick", usage: "/kick <agent>", description: "remove a member; --force for a live agent" },
   {
@@ -68,6 +70,7 @@ export function formatChatHelp(width: number, color: boolean, keys = false, inli
     ["Alt+Enter", "Insert a new line"],
     ["Esc", "Clear text; interrupt agents when the draft is empty"],
     ["Ctrl+C", "Clear the draft"],
+    ["Alt+← / Alt+→", "Previous / next room in this repository"],
     ...(inline ? [
       ["Wheel / terminal scroll", "Browse messages; drag to select and copy"],
       ["/older", "Print an earlier page of saved messages"]
@@ -733,6 +736,8 @@ function commonPrefix(values: string[]): string {
 
 export interface ChatScreenInput {
   room_path?: string;
+  /** Other rooms in this repository, e.g. "#api 2● · #web", already painted. */
+  room_strip?: string;
   transcript: ChatTranscript;
   format: ChatFormatContext;
   status: Omit<ChatStatusInput, "columns">;
@@ -772,7 +777,7 @@ export function renderInlinePanel(input: ChatScreenInput): ChatFrame {
     return truncateStyled(`${active ? "›" : " "} ${entry.label}  ${dim(input.format, entry.description)}`, width);
   });
   const rule = dim(input.format, "─".repeat(width));
-  const title = input.room_path ? roomHeader(input.room_path, Math.max(1, width - 4), input.format) : "";
+  const title = input.room_path ? roomTitle(input, Math.max(1, width - 4)) : "";
   const roomBar = title
     ? truncateStyled(`${dim(input.format, "─ ")}${title}${dim(input.format, " " + "─".repeat(Math.max(0, width - textWidth(title) - 3)))}`, width)
     : rule;
@@ -823,6 +828,15 @@ export function chatWheelRegion(
   // rows are the lower separator and footer.
   if (row > transcriptEnd + 1 && row <= input.rows - 2) return "prompt";
   return null;
+}
+
+// The active room's path, shortened from the left, then the strip of other
+// rooms when there is room for both.
+function roomTitle(input: Pick<ChatScreenInput, "room_path" | "room_strip" | "format">, width: number): string {
+  const strip = input.room_strip ?? "";
+  const stripWidth = strip ? textWidth(strip) + 3 : 0;
+  if (!strip || width - stripWidth < 16) return roomHeader(input.room_path!, width, input.format);
+  return `${roomHeader(input.room_path!, width - stripWidth, input.format)}${dim(input.format, " │ ")}${strip}`;
 }
 
 function roomHeader(path: string, width: number, context: ChatFormatContext): string {
@@ -886,7 +900,7 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
     const overlay = [...(transcriptHeight > 1 ? [""] : []), ...menuRows];
     transcript.splice(transcript.length - overlay.length, overlay.length, ...overlay);
   }
-  const header = roomHeaderRows(input) ? [roomHeader(input.room_path!, width, context)] : [];
+  const header = roomHeaderRows(input) ? [roomTitle({ ...input, format: context }, width)] : [];
   const lines = [...header, ...transcript, ...fixed]
     .slice(-height)
     .map((line) => truncateStyled(line, width));

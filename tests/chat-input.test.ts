@@ -281,3 +281,27 @@ test("wheel reports retain pointer row across split input without mutating the d
     editor.scrollPrompt(-1);
   } finally { editor.close(); }
 });
+
+test("Alt+Left/Right asks to switch rooms without sending, and a draft can be restored", () => {
+  const input = new PassThrough();
+  const submitted: string[] = [];
+  const cycles: number[] = [];
+  const editor = new ChatInputController({
+    input, columns: 80,
+    onChange: () => {}, onSubmit: (line) => submitted.push(line), onScroll: () => {}, onBottom: () => {},
+    onQuit: () => {}, onClear: () => {}, complete: () => null,
+    onCycleRoom: (direction) => cycles.push(direction)
+  });
+  try {
+    input.write("draft for api");
+    input.write("\u001b[1;3C");
+    input.write("\u001b[1;3D");
+    expect(cycles).toEqual([1, -1]);
+    expect(editor.draft.line).toBe("draft for api");
+    expect(submitted).toEqual([]);
+    editor.setDraft("restored draft");
+    expect(editor.draft).toEqual({ line: "restored draft", cursor: "restored draft".length });
+  } finally {
+    editor.close();
+  }
+});

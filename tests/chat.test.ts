@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -23,7 +24,8 @@ import {
   resolveChatRecipients,
   sanitizeChatText
 } from "../src/cli/chat-format.js";
-import { chatInlineEnabled, chatTerminalCapable, createChatIdentity, runChatSession } from "../src/cli/chat.js";
+import { chatInlineEnabled, chatTerminalCapable, createChatIdentity, runChatConsole, runChatSession, uniqueRoomNames } from "../src/cli/chat.js";
+import { formatRoomStrip } from "../src/cli/chat-format.js";
 import { parseCommand } from "../src/cli/parser.js";
 
 const cleanups: Array<() => void> = [];
@@ -691,6 +693,201 @@ describe("tt chat session", () => {
         (member) => member.agent_id
       )
     ).toEqual(["codex:aa"]);
+  });
+
+  test("room activity counts unread and directed messages and ignores consoles", () => {
+    const { root, service } = setupService();
+    const room = service.joinPath({ agent_id: "codex:aa", context_path: root });
+    service.joinPath({ agent_id: "human:op", context_path: root, process_metadata: { session_kind: "human_chat" } });
+    const start = service.globalEventSeq();
+    service.sendMessage({ agent_id: "codex:aa", room_id: room.room_id, body: "to all" });
+    service.sendMessage({ agent_id: "codex:aa", room_id: room.room_id, body: "to op", to_agent_id: "human:op" });
+    service.sendMessage({ agent_id: "human:op", room_id: room.room_id, body: "mine" });
+    service.joinPath({ agent_id: "grok:bb", context_path: root });
+    service.sendMessage({ agent_id: "codex:aa", room_id: room.room_id, body: "to both", to_agent_ids: ["human:op", "grok:bb"] });
+    expect(service.summarizeRoomActivity({ agent_id: "human:op", rooms: [{ room_id: room.room_id, after_event_seq: start }] }))
+      .toEqual([expect.objectContaining({ unread_messages: 3, unread_directed: 2 })]);
+    expect(service.getDirectedMessages({ room_id: room.room_id, agent_id: "human:op", after_event_seq: start })
+      .map((event) => (event.payload as { body: string }).body)).toEqual(["to op", "to both"]);
+    expect(formatRoomStrip([
+      { name: "web", unread: 0, directed: 0 }, { name: "api", unread: 3, directed: 1 }, { name: "docs", unread: 2, directed: 0 }
+    ], { color: false, name_of: (id: string) => id } as never)).toBe("#api 1@ · #docs 2● · #web");
+  });
+
+  test("an explicit room declared only on a worktree branch keeps the repository's strip", async () => {
+    const { root, service } = setupService();
+    const main = path.join(root, "main");
+    fs.mkdirSync(main);
+    const git = (...args: string[]) => execFileSync("git", ["-C", main, ...args], { stdio: "ignore" });
+    execFileSync("git", ["init", "-q", "-b", "main", main]);
+    git("config", "user.name", "Test"); git("config", "user.email", "t@example.com");
+    fs.writeFileSync(path.join(main, "README"), "x\n");
+    git("add", "-A"); git("commit", "-q", "-m", "init");
+    const wt = path.join(root, "wt");
+    git("worktree", "add", "-q", "-b", "feat", wt);
+    fs.mkdirSync(path.join(wt, "pkg", ".talking-stick"), { recursive: true });
+    fs.writeFileSync(path.join(wt, "pkg", ".talking-stick", "room.toml"), "");
+    const rootRoom = service.joinPath({ agent_id: "claude:root", context_path: main });
+    const pkgRoom = service.joinPath({ agent_id: "codex:pkg", context_path: path.join(wt, "pkg") });
+    expect(pkgRoom.canonical_path).toBe(path.join(main, "pkg"));
+    expect(fs.existsSync(path.join(main, "pkg"))).toBe(false);
+
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let transcript = "";
+    output.on("data", (chunk) => { transcript += chunk.toString(); });
+    const run = runChatConsole({
+      runtime: { commands: new TalkingStickCommands(service), close: () => {} },
+      identity: observerIdentity(), context_path: wt, room_id: pkgRoom.room_id, input, output,
+      terminal: false, color: false, history: 10, show_turn_events: false, poll_ms: 5
+    });
+    await until(() => transcript.includes("In the room: codex"));
+    input.write("/rooms\n");
+    await until(() => transcript.includes("#root"));
+    input.write("/quit\n");
+    await run;
+    expect(rootRoom.room_id).not.toBe(pkgRoom.room_id);
+  });
+
+  test("a nested Git repository below the console's repository is not in its strip", async () => {
+    const { root, service } = setupService();
+    const outer = path.join(root, "outer");
+    const inner = path.join(outer, "vendor", "inner");
+    fs.mkdirSync(inner, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main", outer]);
+    execFileSync("git", ["init", "-q", "-b", "main", inner]);
+    service.joinPath({ agent_id: "claude:outer", context_path: outer });
+    const innerRoom = service.joinPath({ agent_id: "codex:inner", context_path: inner });
+    expect(innerRoom.canonical_path).toBe(inner);
+
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let transcript = "";
+    output.on("data", (chunk) => { transcript += chunk.toString(); });
+    const run = runChatConsole({
+      runtime: { commands: new TalkingStickCommands(service), close: () => {} },
+      identity: observerIdentity(), context_path: outer, input, output,
+      terminal: false, color: false, history: 10, show_turn_events: false, poll_ms: 5
+    });
+    await until(() => transcript.includes("In the room: claude"));
+    input.write("/rooms\n");
+    await until(() => transcript.includes("Switch with /go") || transcript.includes("No other rooms"));
+    expect(transcript).not.toContain("#inner");
+    input.write("/quit\n");
+    await run;
+  });
+
+  test("a room chosen from another repository brings that repository's strip, and /go stays inside it", async () => {
+    const { root, service } = setupService();
+    const here = path.join(root, "here");
+    const other = path.join(root, "other");
+    for (const repo of [here, other]) {
+      fs.mkdirSync(path.join(repo, "api"), { recursive: true });
+      execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    }
+    fs.mkdirSync(path.join(other, "api", ".talking-stick"));
+    fs.writeFileSync(path.join(other, "api", ".talking-stick", "room.toml"), "");
+    service.joinPath({ agent_id: "claude:here", context_path: here });
+    const otherRoot = service.joinPath({ agent_id: "codex:other", context_path: other });
+    service.joinPath({ agent_id: "grok:api", context_path: path.join(other, "api") });
+
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let transcript = "";
+    output.on("data", (chunk) => { transcript += chunk.toString(); });
+    const run = runChatConsole({
+      runtime: { commands: new TalkingStickCommands(service), close: () => {} },
+      identity: observerIdentity(), context_path: here, room_id: otherRoot.room_id, input, output,
+      terminal: false, color: false, history: 10, show_turn_events: false, poll_ms: 5
+    });
+    await until(() => transcript.includes("In the room: codex"));
+    input.write("/rooms\n");
+    await until(() => transcript.includes("#api"));
+    expect(transcript).not.toContain(here);
+    input.write(`/go ${here}\n`);
+    await until(() => transcript.includes("belongs to another repository"));
+    // A relative directory resolves in the active room's repository, not the caller's.
+    fs.mkdirSync(path.join(other, "docs", ".talking-stick"), { recursive: true });
+    fs.writeFileSync(path.join(other, "docs", ".talking-stick", "room.toml"), "");
+    fs.mkdirSync(path.join(here, "docs"), { recursive: true });
+    input.write("/go docs\n");
+    await until(() => service.listRooms({}).rooms.some((room) => room.canonical_path === path.join(other, "docs")));
+    expect(service.listRooms({}).rooms.some((room) => room.canonical_path === path.join(here, "docs"))).toBe(false);
+    input.write("/quit\n");
+    await run;
+  });
+
+  test("strip names fall back to the shortest unique path suffix", () => {
+    const names = uniqueRoomNames([
+      { room_id: "r", canonical_path: "/repo" },
+      { room_id: "a", canonical_path: "/repo/web/api" },
+      { room_id: "b", canonical_path: "/repo/svc/api" },
+      { room_id: "d", canonical_path: "/repo/docs" }
+    ], "/repo");
+    expect([...names.values()]).toEqual(["root", "web/api", "svc/api", "docs"]);
+  });
+
+  test("switches rooms with /go, keeps memberships until exit, and lists rooms with agents", async () => {
+    const { root, service } = setupService();
+    const api = path.join(root, "api");
+    fs.mkdirSync(path.join(api, ".talking-stick"), { recursive: true });
+    fs.writeFileSync(path.join(api, ".talking-stick", "room.toml"), 'name = "api"\n');
+    const rootRoom = service.joinPath({ agent_id: "claude:root", context_path: root });
+    const apiRoom = service.joinPath({ agent_id: "codex:api", context_path: api });
+    expect(apiRoom.room_id).not.toBe(rootRoom.room_id);
+
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let transcript = "";
+    output.on("data", (chunk) => { transcript += chunk.toString(); });
+    const identity = observerIdentity();
+    const consoleRun = runChatConsole({
+      runtime: { commands: new TalkingStickCommands(service), close: () => {} },
+      identity, context_path: root, input, output,
+      terminal: false, color: false, history: 10, show_turn_events: false, poll_ms: 5
+    });
+    await until(() => transcript.includes("In the room: claude"));
+    service.sendMessage({ agent_id: "codex:api", room_id: apiRoom.room_id, body: "api note" });
+    // Listed rooms are joined as an observer, so an agent there can address
+    // the operator; that message appears inline in the current room.
+    const members = (roomId: string) => service.getRoomState({ room_id: roomId }).members.map((member) => member.agent_id);
+    await until(() => members(apiRoom.room_id).includes(identity.agent_id));
+    service.sendMessage({ agent_id: "codex:api", room_id: apiRoom.room_id, body: "ping op", to_agent_id: identity.agent_id });
+    await until(() => transcript.includes("#api › codex → you: ping op"));
+
+    input.write("/rooms\n");
+    await until(() => transcript.includes("#api"));
+    expect(transcript).toContain("Switch with /go <room>");
+
+    input.write("/go api\n");
+    await until(() => transcript.includes("In the room: codex"));
+    expect(transcript).toContain("api note");
+    input.write("hello api\n");
+    await until(() => service.getRecentRoomEvents({ room_id: apiRoom.room_id, limit: 10 })
+      .some((event) => (event.payload as { body?: string } | null)?.body === "hello api"));
+
+    expect(members(rootRoom.room_id)).toContain(identity.agent_id);
+
+    // A committed declaration nobody has joined here has no room yet; /go by
+    // directory opens it.
+    const docs = path.join(root, "docs");
+    fs.mkdirSync(path.join(docs, ".talking-stick"), { recursive: true });
+    fs.writeFileSync(path.join(docs, ".talking-stick", "room.toml"), "");
+    input.write("/go #docs\n");
+    await until(() => transcript.includes("No open room matches #docs"));
+    input.write("/go docs\n");
+    await until(() => service.listRooms({}).rooms.some((room) => room.canonical_path === docs));
+    await until(() => members(service.listRooms({}).rooms.find((room) => room.canonical_path === docs)!.room_id).includes(identity.agent_id));
+
+    input.write("/go root\n");
+    await until(() => transcript.split("In the room: claude").length > 2);
+    // The visit to #api already showed "ping op"; switching away must not replay it inline.
+    await new Promise((resolve) => setTimeout(resolve, 2_300));
+    expect(transcript.split("#api › codex → you: ping op").length).toBe(2);
+    input.write("/quit\n");
+    await consoleRun;
+    expect(members(rootRoom.room_id)).not.toContain(identity.agent_id);
+    expect(members(apiRoom.room_id)).not.toContain(identity.agent_id);
   });
 
   test("shows recent history, streams agent messages, sends, and detaches on /quit", async () => {

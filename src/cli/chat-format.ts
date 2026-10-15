@@ -532,3 +532,24 @@ export function formatDuration(now: Date, sinceIso: string): string {
   if (hours < 48) return `${hours}h`;
   return `${Math.floor(hours / 24)}d`;
 }
+
+export interface RoomStripEntry {
+  name: string;
+  unread: number;
+  /** Unread messages addressed to this console. */
+  directed: number;
+}
+
+// Other rooms in the repository, most urgent first: `#api 1@ · #web 2● · #docs`.
+// `@` counts messages addressed to you; `●` counts other unread messages.
+export function formatRoomStrip(entries: readonly RoomStripEntry[], context: ChatFormatContext): string {
+  return [...entries]
+    .sort((left, right) => right.directed - left.directed || right.unread - left.unread || left.name.localeCompare(right.name))
+    .map((entry) => {
+      const name = `#${sanitizeChatText(entry.name).replace(/\s+/g, "-")}`;
+      if (entry.directed > 0) return paint(context, "1;33", `${name} ${entry.directed}@`);
+      if (entry.unread > 0) return paint(context, "1", `${name} ${entry.unread}●`);
+      return paint(context, "2", name);
+    })
+    .join(paint(context, "2", " · "));
+}

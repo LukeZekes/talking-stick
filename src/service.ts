@@ -3565,6 +3565,58 @@ export class TalkingStickService {
   }
 
   /**
+   * Messages addressed to agentId (directly or as one of several recipients)
+   * after a seq, oldest first. Read-only: no presence, turn, or receipt effect.
+   */
+  getDirectedMessages(input: { room_id: string; agent_id: string; after_event_seq: number; limit?: number }): RoomEvent[] {
+    const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
+    return this.db.prepare<[string, number, string, string, number], RoomEventRow>(
+      `SELECT * FROM room_events
+       WHERE room_id = ? AND event_seq > ? AND event_type = 'message_sent'
+         AND (to_agent_id = ? OR EXISTS (
+           SELECT 1 FROM json_each(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END, '$.recipients') WHERE value = ?))
+       ORDER BY event_seq ASC LIMIT ?`
+    ).all(input.room_id, input.after_event_seq, input.agent_id, input.agent_id, limit).map((row) => this.mapEvent(row));
+  }
+
+  /** Highest event seq in any room; event_seq is one global sequence. */
+  globalEventSeq(): number {
+    return this.db.prepare<[], { seq: number | null }>("SELECT MAX(event_seq) AS seq FROM room_events").get()?.seq ?? 0;
+  }
+
+  /**
+   * Cheap per-room activity for a console's room strip: messages after the
+   * console's last-seen seq, how many were addressed to it, and how many
+   * non-observer members the room has. Read-only; never touches presence.
+   */
+  summarizeRoomActivity(input: { agent_id: string; rooms: Array<{ room_id: string; after_event_seq: number }> }): Array<{
+    room_id: string; latest_event_seq: number; unread_messages: number; unread_directed: number; agent_members: number;
+  }> {
+    const latest = this.db.prepare<[string], { seq: number | null }>("SELECT MAX(event_seq) AS seq FROM room_events WHERE room_id = ?");
+    // Same recipient predicate as getDirectedMessages, so the @ count and the
+    // inline messages always agree.
+    const unread = this.db.prepare<[string, string, string, number, string], { total: number; directed: number | null }>(
+      `SELECT COUNT(*) AS total, SUM(CASE WHEN to_agent_id = ? OR EXISTS (
+         SELECT 1 FROM json_each(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END, '$.recipients')
+         WHERE value = ?) THEN 1 ELSE 0 END) AS directed
+       FROM room_events WHERE room_id = ? AND event_seq > ? AND event_type = 'message_sent'
+       AND (from_agent_id IS NULL OR from_agent_id != ?)`);
+    // Live agents only: an ended member must not keep a room in the strip.
+    const liveAgents = (roomId: string) => this.getMembers(roomId).filter((member) =>
+      !isObserverMember(member) && this.getMemberProcessLiveness(member) !== "gone").length;
+    return input.rooms.map(({ room_id, after_event_seq }) => {
+      const counts = unread.get(input.agent_id, input.agent_id, room_id, after_event_seq, input.agent_id);
+      return {
+        room_id,
+        latest_event_seq: latest.get(room_id)?.seq ?? 0,
+        unread_messages: counts?.total ?? 0,
+        unread_directed: counts?.directed ?? 0,
+        agent_members: liveAgents(room_id)
+      };
+    });
+  }
+
+  /**
    * Open (find or create) the room a path resolves to, without joining it, so
    * a declared room can be selected by name before any agent has joined.
    */
