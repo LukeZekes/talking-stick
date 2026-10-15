@@ -182,7 +182,7 @@ keystrokes are typed and no model polls while idle.
 | Harness | Transport | Registered from |
 | --- | --- | --- |
 | Claude Code (v2.1.224+, macOS/Linux) | The session's inbox socket | `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN` |
-| Codex (tested with 0.154.0) | `codex queue --thread <id>` | `CODEX_THREAD_ID` |
+| Codex (tested with 0.157.1) | `codex queue --thread <id>`; start the stored submission through the local app server when the thread has no active turn | `CODEX_THREAD_ID` |
 | Any harness in cmux | `cmux send` plus Enter, only for parked standby or an explicit interrupt | `cmux identify` |
 
 Grok Build receives events through active-turn hooks while its session is running, which is not an
@@ -214,10 +214,12 @@ OpenCode, and Antigravity wake only through cmux.
   thread. A timeout or unconfirmed write stops there, so an agent is never woken twice.
 - `tt msg send` reports `delivery_status` plus `delivery_transport` and `delivery_state`.
   `delivery_state` is `queued` when the transport submitted the prompt (the socket write flushed, or
-  `codex queue` exited 0; Claude may still hold or refuse it per its inbound settings), `ambiguous`
+  `codex queue` exited 0; Claude may still hold or refuse it per its inbound settings), `woken`
+  when Codex accepted a queued submission as a new turn, `ambiguous`
   when a timeout or cut-off write left it unknown, and `failed` when every eligible transport
   definitely failed. A definite failure releases the batch so a later sender can retry. Neither
-  harness confirms that a turn started.
+  Claude does not confirm that a turn started; a Codex `woken` result confirms turn creation,
+  not that the agent read or acted on the message.
 - A message coalesced behind an earlier wake reports `delivery_status: pending` without reusing that
   wake's `delivery_state`. This does not imply a new wake was submitted.
 - `tt standby` reports `wake_transports`, such as `["claude_inbox"]`, and `can_self_wake`. Its
@@ -225,8 +227,9 @@ OpenCode, and Antigravity wake only through cmux.
   `can_self_wake: true` means native wake is active.
 - `tt health` shows a `Wake:` line with the last delivery status and a fixed error code.
 - Limits: same machine and OS user only. Claude's `crossSessionInbound: refuse` setting drops the
-  prompt silently. A Codex thread that isn't loaded or was interrupted keeps the queued message but
-  doesn't start a turn.
+  prompt silently. Codex needs a live local harness process for the app-server start attempt;
+  unavailable or unloaded threads keep the queued message. The start call is an experimental
+  Codex 0.157.1 API, so unsupported versions retain queue-only behavior.
 - API users: service writes queue wakes, and `TalkingStickCommands.flushWakes()` or
   `sendMessageAndWake()` delivers them asynchronously.
 
@@ -278,7 +281,7 @@ it. Scrolling, selection, and copying stay with the terminal.
 | `/bottom` or Ctrl+End | Fullscreen: return to latest messages. Default mode: use the terminal's scroll-to-bottom shortcut |
 | `/quit`, `/exit`, or Ctrl+D on an empty draft | Exit and remove this console's membership |
 | Ctrl+C | Clear the draft without quitting |
-| Escape | Close the suggestion list; press again to clear the draft |
+| Escape | Clear a nonempty draft, including an open suggestion list. On an empty draft, request a message-free interrupt of a local active Codex turn, or stop a local Claude session at its next tool call. A repeat within one second is ignored |
 | `//text` | Send a message beginning with `/` |
 
 ### Delivery marks
@@ -294,8 +297,17 @@ not proof the model has acted.
 ### Display and navigation
 
 Typing `/`, `@`, or `!@` shows suggestions above the room bar. Up/Down choose, Tab or Enter accept,
-and Enter sends once the word is complete. Escape
-closes the list first and clears the draft on a second press; Ctrl+C clears the draft. Neither quits.
+and Enter sends once the word is complete. Escape clears a nonempty draft in one press, even while
+suggestions are open. On an empty draft it attempts a message-free interrupt: Codex uses the local
+app-server's active-turn cancellation. For a local Claude session, chat leaves a flag that the
+installed interrupt hook (added by `tt install claude`) reads before and after each tool call: it
+denies the pending tool and ends the turn with `continue: false`. Claude cannot be stopped mid-reply
+or inside a running tool, and a flag no tool call claims within 60 seconds expires. The status bar
+shows `claude stopping` while that flag is pending and briefly shows `codex interrupted` after an
+accepted cancellation. Idle and unsupported peers show no indicator. When neither path is available,
+the transient hint says `nothing to interrupt`. No interrupt result is added to the transcript, room,
+or harness prompt. Holding Escape keeps sliding a one-second guard, so it arms only once until
+released. Ctrl+C clears the draft. Neither quits.
 Alt+Enter (or Shift+Enter where supported) adds a new line. With suggestions closed, Up/Down move
 through multiline drafts or recall single-line prompt history; Ctrl+P/Ctrl+N also recall prompts.
 Pasted multiline text stays in the draft until Enter. The conversation remains in terminal scrollback

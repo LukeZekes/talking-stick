@@ -66,7 +66,7 @@ export function formatChatHelp(width: number, color: boolean, keys = false, inli
     ["↑ / ↓", "Recall prompts; choose suggestions or edit draft lines"],
     ["Ctrl+P / Ctrl+N", "Recall previous / next submitted prompt"],
     ["Alt+Enter", "Insert a new line"],
-    ["Esc", "Dismiss suggestions; press again to clear"],
+    ["Esc", "Clear text; interrupt agents when the draft is empty"],
     ["Ctrl+C", "Clear the draft"],
     ...(inline ? [
       ["Wheel / terminal scroll", "Browse messages; drag to select and copy"],
@@ -912,7 +912,7 @@ function renderFooter(input: ChatScreenInput, width: number): string {
         : "scrolled · ctrl+end";
     suffix = context.color ? `\u001b[1;33m${label}\u001b[0m` : label;
   } else if ((input.completions?.length ?? 0) > 0) {
-    suffix = dim(context, "↑↓ choose · Tab accept · Esc dismiss");
+    suffix = dim(context, "↑↓ choose · Tab accept · Esc clear");
   } else if (input.hint) {
     suffix = dim(context, input.hint);
   } else if (input.draft.line.length === 0) {

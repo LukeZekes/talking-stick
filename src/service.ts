@@ -2506,8 +2506,12 @@ export class TalkingStickService {
         result = delivery?.delivered ? { outcome: "queued" } :
           { outcome: delivery?.definite_failure || !delivery ? "failed" : "ambiguous", error: "cmux_wake_failed" };
       } else {
+        const member = this.getMember(roomId, agentId);
         result = this.nativeWakeTransport ? await this.nativeWakeTransport.deliver({
-          transport: endpoint.transport, address: endpoint.address, secret: endpoint.secret, text, interrupt, steer: steer && endpoint.transport === "claude_inbox"
+          transport: endpoint.transport, address: endpoint.address, secret: endpoint.secret, text, interrupt,
+          steer: steer && endpoint.transport === "claude_inbox",
+          start_queued: endpoint.transport === "codex_queue" &&
+            !!member && this.getMemberProcessLiveness(member) === "alive"
         }) : { outcome: "failed", error: "native_wake_unavailable" };
       }
     } catch {

@@ -314,6 +314,19 @@ export function buildClaudeStopGuardHook(): Record<string, unknown> {
 }
 
 export function mergeSessionHooks(existing: string | null, harness: string, remove = false): string | null {
+  const marker = `talking-stick-lifecycle-${harness}`;
+  const lifecycle = mergeMarkedHooks(existing, marker, ["SessionStart", "SessionEnd"],
+    `: ${marker}; if command -v tt >/dev/null 2>&1; then tt session-hook ${harness} >/dev/null 2>/dev/null || true; fi`, remove);
+  if (harness !== "claude" || lifecycle === null) return lifecycle;
+  // Tool-boundary interrupts from tt chat. A shell glob keeps the common case
+  // (no pending flag) free of a node process on every tool call.
+  const interrupt = `talking-stick-interrupt-${harness}`;
+  const flags = `\${TALKING_STICK_DATA_DIR:-\${XDG_DATA_HOME:-$HOME/.local/share}/talking-stick}/interrupts`;
+  return mergeMarkedHooks(lifecycle, interrupt, ["PreToolUse", "PostToolUse", "Stop", "UserPromptSubmit"],
+    `: ${interrupt}; set -- "${flags}"/${harness}-*; if [ -e "$1" ] && command -v tt >/dev/null 2>&1; then tt interrupt-hook ${harness} 2>/dev/null || true; fi`, remove);
+}
+
+function mergeMarkedHooks(existing: string | null, marker: string, events: string[], command: string, remove: boolean): string | null {
   try {
     const isRecord = (value: unknown): value is Record<string, unknown> =>
       value !== null && typeof value === "object" && !Array.isArray(value);
@@ -321,16 +334,14 @@ export function mergeSessionHooks(existing: string | null, harness: string, remo
     if (!isRecord(settings)) return null;
     if (settings.hooks !== undefined && !isRecord(settings.hooks)) return null;
     const hooks: Record<string, unknown> = { ...(settings.hooks as Record<string, unknown> | undefined) };
-    const marker = `talking-stick-lifecycle-${harness}`;
-    for (const event of ["SessionStart", "SessionEnd"]) {
+    for (const event of events) {
       if (hooks[event] !== undefined && !Array.isArray(hooks[event])) return null;
       const entries: unknown[] = ((hooks[event] ?? []) as unknown[]).flatMap((entry: unknown) => {
         if (!isRecord(entry) || !Array.isArray(entry.hooks)) return [entry];
         const remaining = entry.hooks.filter((hook: unknown) => !isRecord(hook) || typeof hook.command !== "string" || !hook.command.includes(marker));
         return remaining.length ? [{ ...entry, hooks: remaining }] : [];
       });
-      if (!remove) entries.push({ hooks: [{ type: "command", timeout: 5,
-        command: `: ${marker}; if command -v tt >/dev/null 2>&1; then tt session-hook ${harness} >/dev/null 2>/dev/null || true; fi` }] });
+      if (!remove) entries.push({ hooks: [{ type: "command", timeout: 5, command }] });
       if (entries.length) hooks[event] = entries;
       else delete hooks[event];
     }
@@ -351,7 +362,7 @@ export function planSessionHooks(harness: HarnessId, operation: "install" | "uni
     : path.join(configDir, ...(harness === "grok" ? ["hooks", "talking-stick-lifecycle.json"] : ["hooks.json"]));
   const name = harness === "claude-code" ? "claude" : harness;
   return [{ kind: "file-patch", harness, filePath, operation, dedupeKey: `${filePath}:lifecycle`,
-    description: `${operation} session lifecycle hooks in ${filePath}${harness === "codex" && operation === "install" ? " (review and trust in /hooks)" : ""}`,
+    description: `${operation} session lifecycle${harness === "claude-code" ? " and interrupt" : ""} hooks in ${filePath}${harness === "codex" && operation === "install" ? " (review and trust in /hooks)" : ""}`,
     inspect: () => {
       const existing = resolved.hooks.readFile(filePath);
       const next = mergeSessionHooks(existing, name, operation === "uninstall");

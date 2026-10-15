@@ -3,7 +3,11 @@ import { describe, expect, test, vi } from "vitest";
 import { ChatInputController } from "../src/cli/chat-input.js";
 import { completeChatInput, getChatCompletions } from "../src/cli/chat-view.js";
 
-function setup(menu = false, wheel?: (row: number, direction: number) => void) {
+function setup(
+  menu = false,
+  wheel?: (row: number, direction: number) => void,
+  extra: { onEmptyEscape?: () => void; now?: () => number } = {}
+) {
   const input = Object.assign(new PassThrough(), {
     isRaw: false,
     setRawMode: vi.fn()
@@ -22,6 +26,8 @@ function setup(menu = false, wheel?: (row: number, direction: number) => void) {
     onBottom: bottom,
     onChange: vi.fn(),
     onClear: vi.fn(),
+    onEmptyEscape: extra.onEmptyEscape,
+    now: extra.now,
     completionCount: menu ? (draft) => getChatCompletions(draft, ["codex", "claude"]).length : undefined,
     complete: (draft, index) => menu ? getChatCompletions(draft, ["codex", "claude"])[index]?.draft ?? null : completeChatInput(draft, ["codex", "claude"])
   });
@@ -29,14 +35,38 @@ function setup(menu = false, wheel?: (row: number, direction: number) => void) {
 }
 
 describe("full-screen chat input", () => {
-  test("Ctrl+C and Escape clear without quitting, even on an empty draft", async () => {
-    const { editor, input, quit } = setup();
+  test("Ctrl+C clears and empty Escape interrupts once without quitting", async () => {
+    let now = 0;
+    const onEmptyEscape = vi.fn();
+    const { editor, input, quit } = setup(false, undefined, { onEmptyEscape, now: () => now });
     try {
-      input.write("draft\u0003\u0003");
+      input.write("draft\u0003");
       expect(editor.draft.line).toBe("");
+      expect(onEmptyEscape).not.toHaveBeenCalled();
+      input.write("\u0003");
+      expect(quit).not.toHaveBeenCalled();
+      expect(onEmptyEscape).not.toHaveBeenCalled();
       input.write("another\u001b");
       await new Promise((resolve) => setTimeout(resolve, 80));
       expect(editor.draft).toEqual({ line: "", cursor: 0 });
+      expect(onEmptyEscape).not.toHaveBeenCalled();
+      input.write("\u001b");
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(onEmptyEscape).toHaveBeenCalledOnce();
+      input.write("\u001b");
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(onEmptyEscape).toHaveBeenCalledOnce();
+      now = 900;
+      input.write("\u001b");
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      now = 1000;
+      input.write("\u001b");
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(onEmptyEscape).toHaveBeenCalledOnce();
+      now = 2000;
+      input.write("\u001b");
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(onEmptyEscape).toHaveBeenCalledTimes(2);
       expect(quit).not.toHaveBeenCalled();
       input.write("\u0004");
       expect(quit).toHaveBeenCalledOnce();
@@ -45,6 +75,35 @@ describe("full-screen chat input", () => {
     }
     expect(input.setRawMode.mock.calls).toEqual([[true], [false]]);
     expect(input.listenerCount("data")).toBe(0);
+  });
+
+  test("empty Escape dismisses suggestions before interrupting", async () => {
+    const onEmptyEscape = vi.fn();
+    const input = Object.assign(new PassThrough(), { isRaw: false, setRawMode: vi.fn() });
+    const editor = new ChatInputController({
+      input,
+      columns: 40,
+      onSubmit: vi.fn(),
+      onQuit: vi.fn(),
+      onScroll: vi.fn(),
+      onBottom: vi.fn(),
+      onChange: vi.fn(),
+      onClear: vi.fn(),
+      onEmptyEscape,
+      completionCount: () => 1,
+      complete: () => null
+    });
+    try {
+      input.write("\u001b");
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(editor.completionVisible).toBe(false);
+      expect(onEmptyEscape).not.toHaveBeenCalled();
+      input.write("\u001b");
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(onEmptyEscape).toHaveBeenCalledOnce();
+    } finally {
+      editor.close();
+    }
   });
 
   test("split mouse and navigation reports never enter the draft", () => {
@@ -123,7 +182,7 @@ describe("full-screen chat input", () => {
     } finally { editor.close(); }
   });
 
-  test("menu selection, Enter acceptance, Escape dismissal, and multiline editing cooperate", async () => {
+  test("menu selection, Enter acceptance, and Escape clears a nonempty draft", async () => {
     const { editor, input, submit } = setup(true);
     try {
       input.write("@c\u001b[B\t");
@@ -137,14 +196,11 @@ describe("full-screen chat input", () => {
       expect(submit).toHaveBeenLastCalledWith("/help ");
       input.write("line one\u001b\r@c\u001b[B");
       expect(editor.completionIndex).toBe(1);
-      const before = editor.draft.line;
+      expect(editor.draft.line).toContain("@c");
       input.write("\u001b");
       await new Promise((resolve) => setTimeout(resolve, 80));
-      expect(editor.draft.line).toBe(before);
+      expect(editor.draft).toEqual({ line: "", cursor: 0 });
       expect(editor.completionVisible).toBe(false);
-      input.write("\u001b[A");
-      expect(editor.draft.cursor).toBe(2);
-      expect(editor.draft.line).toBe(before);
     } finally { editor.close(); }
   });
 
