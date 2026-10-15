@@ -3564,6 +3564,38 @@ export class TalkingStickService {
     });
   }
 
+  /** Highest event seq in any room; event_seq is one global sequence. */
+  globalEventSeq(): number {
+    return this.db.prepare<[], { seq: number | null }>("SELECT MAX(event_seq) AS seq FROM room_events").get()?.seq ?? 0;
+  }
+
+  /**
+   * Cheap per-room activity for a console's room strip: messages after the
+   * console's last-seen seq, how many were addressed to it, and how many
+   * non-observer members the room has. Read-only; never touches presence.
+   */
+  summarizeRoomActivity(input: { agent_id: string; rooms: Array<{ room_id: string; after_event_seq: number }> }): Array<{
+    room_id: string; latest_event_seq: number; unread_messages: number; unread_directed: number; agent_members: number;
+  }> {
+    const latest = this.db.prepare<[string], { seq: number | null }>("SELECT MAX(event_seq) AS seq FROM room_events WHERE room_id = ?");
+    const unread = this.db.prepare<[string, string, number, string], { total: number; directed: number | null }>(
+      `SELECT COUNT(*) AS total, SUM(CASE WHEN to_agent_id = ? THEN 1 ELSE 0 END) AS directed
+       FROM room_events WHERE room_id = ? AND event_seq > ? AND event_type = 'message_sent'
+       AND (from_agent_id IS NULL OR from_agent_id != ?)`);
+    const agents = this.db.prepare<[string, string], { count: number }>(
+      "SELECT COUNT(*) AS count FROM room_members WHERE room_id = ? AND session_kind != ?");
+    return input.rooms.map(({ room_id, after_event_seq }) => {
+      const counts = unread.get(input.agent_id, room_id, after_event_seq, input.agent_id);
+      return {
+        room_id,
+        latest_event_seq: latest.get(room_id)?.seq ?? 0,
+        unread_messages: counts?.total ?? 0,
+        unread_directed: counts?.directed ?? 0,
+        agent_members: agents.get(room_id, HUMAN_CHAT_SESSION_KIND)?.count ?? 0
+      };
+    });
+  }
+
   /**
    * Open (find or create) the room a path resolves to, without joining it, so
    * a declared room can be selected by name before any agent has joined.

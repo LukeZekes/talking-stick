@@ -312,6 +312,8 @@ it. Scrolling, selection, and copying stay with the terminal.
 | `/events` | Toggle turn and handoff events, hidden by default |
 | `/help`, `/help keys` | Show chat commands, or keyboard shortcuts |
 | `/older` | Print an earlier page of saved messages; in fullscreen, scroll into older history |
+| `/rooms` | List rooms in this repository that have agents (or that this console visited) |
+| `/go <room>` or Alt+←/→ | Switch the console to another room; drafts and memberships are kept until chat exits |
 | `/bottom` or Ctrl+End | Fullscreen: return to latest messages. Default mode: use the terminal's scroll-to-bottom shortcut |
 | `/quit`, `/exit`, or Ctrl+D on an empty draft | Exit and remove this console's membership |
 | Ctrl+C | Clear the draft without quitting |

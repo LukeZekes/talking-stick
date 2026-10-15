@@ -5,7 +5,8 @@ import { planChatInterrupts } from "./chat-interrupt.js";
 import { interruptCodexThread } from "./codex-interrupt.js";
 import { interruptCodexHerdr } from "./codex-herdr-interrupt.js";
 import { ChatInputController } from "./chat-input.js";
-import { resolveRoomSelector, selectedRoom } from "./room-selector.js";
+import { resolveRoomSelector, roomShortName, selectedRoom } from "./room-selector.js";
+import { isWithinOrSame } from "../path-resolution.js";
 import { resolveChatKick } from "./chat-kick.js";
 import {
   ChatTranscript,
@@ -32,10 +33,12 @@ import {
   HUMAN_CHAT_SESSION_KIND,
   type EventType,
   type MessageDelivery,
+  type PathRoom,
   type RoomEvent,
   type RoomMember
 } from "../types.js";
 import {
+  formatRoomStrip,
   buildNameResolver,
   formatChatEvent,
   chatSectionLabel,
@@ -61,6 +64,7 @@ const HISTORY_SCAN_EVENTS = 500;
 const DEFAULT_POLL_MS = 250;
 const PRESENCE_REFRESH_MS = 30_000;
 const STATUS_REFRESH_MS = 10_000;
+const STRIP_REFRESH_MS = 2_000;
 const RECEIPT_POLL_MS = 1_000;
 const RECEIPT_BATCH = 200;
 const MAX_AWAITED_RECEIPTS = 1_000;
@@ -84,12 +88,30 @@ const CONVERSATION_EVENTS: EventType[] = [
   "close"
 ];
 
+// Shared across room switches within one `tt chat` process.
+export interface ChatConsoleState {
+  /** Coordination root whose rooms the strip lists. */
+  anchor: string;
+  /** Rooms this console has joined; it stays a member until chat exits. */
+  visited: Set<string>;
+  /** Highest event seq viewed per room; unread counts start after it. */
+  last_seen: Map<string, number>;
+  /** Unread counting for never-viewed rooms starts at the console's start. */
+  start_seq: number;
+  /** Unsent draft per room, restored on return. */
+  drafts: Map<string, string>;
+}
+
+export type ChatSessionExit = { kind: "quit" } | { kind: "switch"; room: PathRoom };
+
 export interface ChatSessionOptions {
   runtime: Runtime;
   identity: DerivedIdentity;
   context_path: string;
   /** Join exactly this room instead of resolving context_path. */
   room_id?: string;
+  /** Multi-room state; without it chat stays in one room. */
+  console?: ChatConsoleState;
   input: Readable;
   output: Writable;
   terminal: boolean;
@@ -151,7 +173,7 @@ export async function handleChatCommand(
   const explicit = positional?.startsWith("#")
     ? resolveRoomSelector(runtime.commands.listRooms({}).rooms, positional)
     : selectedRoom(runtime, parsed);
-  await runChatSession({
+  await runChatConsole({
     runtime,
     identity,
     context_path: explicit?.canonical_path ?? positional ?? process.cwd(),
@@ -165,6 +187,31 @@ export async function handleChatCommand(
     mouse: hasOption(parsed, "mouse") && !hasOption(parsed, "no-mouse"),
     inline: chatInlineEnabled(parsed)
   });
+}
+
+// One console across room switches: `/go` or Alt+←/→ ends the current room's
+// session and opens the next with the same identity, drafts, and unread state.
+export async function runChatConsole(options: Omit<ChatSessionOptions, "console">): Promise<void> {
+  const consoleState: ChatConsoleState = {
+    anchor: "",
+    visited: new Set(),
+    last_seen: new Map(),
+    start_seq: options.runtime.commands.globalEventSeq(),
+    drafts: new Map()
+  };
+  let target: { context_path: string; room_id?: string } = { context_path: options.context_path, room_id: options.room_id };
+  try {
+    for (;;) {
+      const exit = await runChatSession({ ...options, ...target, console: consoleState });
+      if (exit.kind !== "switch") break;
+      target = { context_path: exit.room.canonical_path, room_id: exit.room.room_id };
+    }
+  } finally {
+    // Switching keeps memberships so agents can still reply; leave them now.
+    for (const roomId of consoleState.visited) {
+      try { options.runtime.commands.leaveRoom(options.identity, { room_id: roomId }); } catch { /* already gone */ }
+    }
+  }
 }
 
 export function createChatIdentity(agentId?: string): DerivedIdentity {
@@ -184,7 +231,7 @@ export function createChatIdentity(agentId?: string): DerivedIdentity {
 // room event as chat lines while reading messages from the input.
 export async function runChatSession(
   options: ChatSessionOptions
-): Promise<void> {
+): Promise<ChatSessionExit> {
   const { runtime, identity, output, terminal } = options;
   const fullscreen = terminal && options.inline !== true;
   const inline = terminal && !fullscreen;
@@ -194,6 +241,44 @@ export async function runChatSession(
     room_id: options.room_id
   });
   const roomId = joined.room_id;
+  const consoleState = options.console;
+  consoleState?.visited.add(roomId);
+  // The repository of the first room this console opened bounds its strip.
+  if (consoleState && !consoleState.anchor) consoleState.anchor = joined.workspace_root;
+  let switchTarget: PathRoom | null = null;
+  let viewedSeq = 0;
+  let roomStrip = "";
+  let stripOrder: PathRoom[] = [];
+  let lastStripRefresh = 0;
+  // Other rooms in this repository that have agents or that this console has
+  // visited. A console's own membership never keeps a room listed.
+  const refreshStrip = (): boolean => {
+    if (!consoleState) return false;
+    lastStripRefresh = Date.now();
+    const rooms = runtime.commands.listRooms({}).rooms.filter((room) =>
+      room.state !== "closed" && room.room_id !== roomId && isWithinOrSame(room.canonical_path, consoleState.anchor));
+    const activity = new Map(runtime.commands.summarizeRoomActivity(selfId, rooms.map((room) => ({
+      room_id: room.room_id,
+      after_event_seq: consoleState.last_seen.get(room.room_id) ?? consoleState.start_seq
+    }))).map((entry) => [entry.room_id, entry]));
+    const listed = rooms.filter((room) =>
+      (activity.get(room.room_id)?.agent_members ?? 0) > 0 || consoleState.visited.has(room.room_id));
+    const nameFor = (room: PathRoom) => room.canonical_path === consoleState.anchor ? "root" : roomShortName(room);
+    stripOrder = listed;
+    const next = formatRoomStrip(listed.map((room) => ({
+      name: nameFor(room),
+      unread: activity.get(room.room_id)?.unread_messages ?? 0,
+      directed: activity.get(room.room_id)?.unread_directed ?? 0
+    })), formatContext());
+    const changed = next !== roomStrip;
+    roomStrip = next;
+    return changed;
+  };
+  const switchTo = (room: PathRoom) => {
+    if (room.room_id === roomId) { print(`Already in ${sanitizeChatText(room.canonical_path)}.`); return; }
+    switchTarget = room;
+    stop();
+  };
 
   // Agents seen leaving, so addressing one explains why it can't be reached.
   const departedAgents = new Set<string>();
@@ -315,7 +400,7 @@ export async function runChatSession(
     if (!inline || closed) return;
     const draft = editor?.draft ?? { line: "", cursor: 0 };
     const frame = renderInlinePanel({
-      room_path: joined.canonical_path, transcript, format: formatContext(),
+      room_path: joined.canonical_path, room_strip: roomStrip, transcript, format: formatContext(),
       status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
         interrupt_statuses: interruptStatuses() },
       draft, hint: currentHint(),
@@ -352,6 +437,7 @@ export async function runChatSession(
       try {
         const frame = renderChatScreen({
           room_path: joined.canonical_path,
+          room_strip: roomStrip,
           transcript,
           format: formatContext(),
           status: {
@@ -476,7 +562,7 @@ export async function runChatSession(
       inlineFrame = null;
       editor?.resize(dimensions().columns - 1);
       const draft = editor?.draft ?? { line: "", cursor: 0 };
-      const panel = renderInlinePanel({ room_path: joined.canonical_path, transcript, format: formatContext(),
+      const panel = renderInlinePanel({ room_path: joined.canonical_path, room_strip: roomStrip, transcript, format: formatContext(),
         status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
           interrupt_statuses: interruptStatuses() },
         draft, hint: currentHint(), completions: editor?.completionVisible ? completionsFor(draft) : [],
@@ -701,6 +787,26 @@ export async function runChatSession(
         refreshMembers();
         print(describeRoom());
         return;
+      case "rooms": {
+        if (!consoleState) { print("This console shows one room."); return; }
+        refreshStrip();
+        const current = `* ${sanitizeChatText(joined.canonical_path)} (here)`;
+        print([current, ...stripOrder.map((room) =>
+          `  #${sanitizeChatText(room.canonical_path === consoleState.anchor ? "root" : roomShortName(room))}  ${sanitizeChatText(room.canonical_path)}`),
+          stripOrder.length ? "Switch with /go <room> or Alt+←/→." : "No other rooms with agents in this repository."].join("\n"));
+        redraw();
+        return;
+      }
+      case "go": {
+        if (!consoleState) { print("This console shows one room."); return; }
+        if (!args.trim()) { print("Usage: /go <room>, e.g. /go api, /go root"); return; }
+        try {
+          switchTo(resolveRoomSelector(runtime.commands.listRooms({}).rooms, args.trim(), consoleState.anchor));
+        } catch (error) {
+          print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`);
+        }
+        return;
+      }
       case "kick": {
         refreshMembers();
         const { target, force, reason } = resolveChatKick(args, members, selfId);
@@ -826,6 +932,15 @@ export async function runChatSession(
     }
   };
 
+  const onCycleRoom = (direction: -1 | 1) => {
+    if (!consoleState) return;
+    refreshStrip();
+    const ring = [joined.canonical_path, ...stripOrder.map((room) => room.canonical_path)].sort();
+    if (ring.length < 2) { print("No other rooms with agents in this repository."); return; }
+    const next = ring[(ring.indexOf(joined.canonical_path) + direction + ring.length) % ring.length];
+    const room = stripOrder.find((candidate) => candidate.canonical_path === next);
+    if (room) switchTo(room);
+  };
   const onEmptyEscape = () => {
     void (async () => {
       try {
@@ -915,6 +1030,7 @@ export async function runChatSession(
           hint = "type /quit to exit";
         },
         onEmptyEscape,
+        onCycleRoom,
         onQuit: stop,
         onBottom: () => {
           transcript.scrollToBottom();
@@ -966,6 +1082,7 @@ export async function runChatSession(
           hint = "type /quit to exit";
         },
         onEmptyEscape,
+        onCycleRoom,
         onQuit: stop,
         // Scrollback belongs to the terminal in this mode.
         onBottom: () => {},
@@ -1033,6 +1150,10 @@ export async function runChatSession(
     redraw();
 
     let cursor = head;
+    viewedSeq = head;
+    const savedDraft = consoleState?.drafts.get(roomId);
+    if (savedDraft) editor?.setDraft(savedDraft);
+    if (refreshStrip()) redraw();
     let busyAttempts = 0;
     while (!closed) {
       try {
@@ -1064,6 +1185,7 @@ export async function runChatSession(
         ) {
           refreshMembers();
         }
+        if (consoleState && Date.now() - lastStripRefresh >= STRIP_REFRESH_MS && refreshStrip()) redraw();
         hydrateReceipts(result.events);
         for (const event of result.events) {
           if (OWNERSHIP_EVENTS.includes(event.event_type)) {
@@ -1076,6 +1198,7 @@ export async function runChatSession(
           }
         }
         cursor = result.cursor_event_seq;
+        viewedSeq = cursor;
         if (!closed) checkReceipts();
         const interruptChanged = (interruptIndicators.size > 0 || interruptHint !== null) &&
           interruptSignature() !== lastInterruptSignature;
@@ -1122,12 +1245,21 @@ export async function runChatSession(
     } catch {
       // Pending wakes remain durable; cleanup must not replace the real error.
     }
-    try {
-      runtime.commands.leaveRoom(identity, { room_id: roomId });
-    } catch {
-      // The room may already be gone; leaving is best-effort on exit.
+    if (consoleState) {
+      consoleState.last_seen.set(roomId, Math.max(viewedSeq, consoleState.last_seen.get(roomId) ?? 0));
+      if (editor) consoleState.drafts.set(roomId, editor.draft.line);
+    }
+    // A switching console stays a member so agents here can still reply to it;
+    // the caller leaves every visited room when chat exits.
+    if (!switchTarget) {
+      try {
+        runtime.commands.leaveRoom(identity, { room_id: roomId });
+      } catch {
+        // The room may already be gone; leaving is best-effort on exit.
+      }
     }
   }
+  return switchTarget ? { kind: "switch", room: switchTarget } : { kind: "quit" };
 }
 
 

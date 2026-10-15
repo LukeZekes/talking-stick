@@ -160,6 +160,14 @@ export class TalkingStickCommands {
     return this.service.rekeyRoomPath(input);
   }
 
+  globalEventSeq(): number {
+    return this.service.globalEventSeq();
+  }
+
+  summarizeRoomActivity(agentId: string, rooms: Array<{ room_id: string; after_event_seq: number }>) {
+    return this.service.summarizeRoomActivity({ agent_id: agentId, rooms });
+  }
+
   openRoom(input: { context_path: string }): PathRoom {
     return this.service.openRoom(input);
   }

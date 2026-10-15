@@ -23,7 +23,8 @@ import {
   resolveChatRecipients,
   sanitizeChatText
 } from "../src/cli/chat-format.js";
-import { chatInlineEnabled, chatTerminalCapable, createChatIdentity, runChatSession } from "../src/cli/chat.js";
+import { chatInlineEnabled, chatTerminalCapable, createChatIdentity, runChatConsole, runChatSession } from "../src/cli/chat.js";
+import { formatRoomStrip } from "../src/cli/chat-format.js";
 import { parseCommand } from "../src/cli/parser.js";
 
 const cleanups: Array<() => void> = [];
@@ -691,6 +692,65 @@ describe("tt chat session", () => {
         (member) => member.agent_id
       )
     ).toEqual(["codex:aa"]);
+  });
+
+  test("room activity counts unread and directed messages and ignores consoles", () => {
+    const { root, service } = setupService();
+    const room = service.joinPath({ agent_id: "codex:aa", context_path: root });
+    service.joinPath({ agent_id: "human:op", context_path: root, process_metadata: { session_kind: "human_chat" } });
+    const start = service.globalEventSeq();
+    service.sendMessage({ agent_id: "codex:aa", room_id: room.room_id, body: "to all" });
+    service.sendMessage({ agent_id: "codex:aa", room_id: room.room_id, body: "to op", to_agent_id: "human:op" });
+    service.sendMessage({ agent_id: "human:op", room_id: room.room_id, body: "mine" });
+    expect(service.summarizeRoomActivity({ agent_id: "human:op", rooms: [{ room_id: room.room_id, after_event_seq: start }] }))
+      .toEqual([expect.objectContaining({ unread_messages: 2, unread_directed: 1, agent_members: 1 })]);
+    expect(formatRoomStrip([
+      { name: "web", unread: 0, directed: 0 }, { name: "api", unread: 3, directed: 1 }, { name: "docs", unread: 2, directed: 0 }
+    ], { color: false, name_of: (id) => id } as never)).toBe("#api 1@ · #docs 2● · #web");
+  });
+
+  test("switches rooms with /go, keeps memberships until exit, and lists rooms with agents", async () => {
+    const { root, service } = setupService();
+    const api = path.join(root, "api");
+    fs.mkdirSync(path.join(api, ".talking-stick"), { recursive: true });
+    fs.writeFileSync(path.join(api, ".talking-stick", "room.toml"), 'name = "api"\n');
+    const rootRoom = service.joinPath({ agent_id: "claude:root", context_path: root });
+    const apiRoom = service.joinPath({ agent_id: "codex:api", context_path: api });
+    expect(apiRoom.room_id).not.toBe(rootRoom.room_id);
+
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let transcript = "";
+    output.on("data", (chunk) => { transcript += chunk.toString(); });
+    const identity = observerIdentity();
+    const consoleRun = runChatConsole({
+      runtime: { commands: new TalkingStickCommands(service), close: () => {} },
+      identity, context_path: root, input, output,
+      terminal: false, color: false, history: 10, show_turn_events: false, poll_ms: 5
+    });
+    await until(() => transcript.includes("In the room: claude"));
+    service.sendMessage({ agent_id: "codex:api", room_id: apiRoom.room_id, body: "api note" });
+
+    input.write("/rooms\n");
+    await until(() => transcript.includes("#api"));
+    expect(transcript).toContain("Switch with /go <room>");
+
+    input.write("/go api\n");
+    await until(() => transcript.includes("In the room: codex"));
+    expect(transcript).toContain("api note");
+    input.write("hello api\n");
+    await until(() => service.getRecentRoomEvents({ room_id: apiRoom.room_id, limit: 10 })
+      .some((event) => (event.payload as { body?: string } | null)?.body === "hello api"));
+
+    const members = (roomId: string) => service.getRoomState({ room_id: roomId }).members.map((member) => member.agent_id);
+    expect(members(rootRoom.room_id)).toContain(identity.agent_id);
+
+    input.write("/go root\n");
+    await until(() => transcript.split("In the room: claude").length > 2);
+    input.write("/quit\n");
+    await consoleRun;
+    expect(members(rootRoom.room_id)).not.toContain(identity.agent_id);
+    expect(members(apiRoom.room_id)).not.toContain(identity.agent_id);
   });
 
   test("shows recent history, streams agent messages, sends, and detaches on /quit", async () => {
