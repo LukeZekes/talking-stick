@@ -3593,15 +3593,19 @@ export class TalkingStickService {
     room_id: string; latest_event_seq: number; unread_messages: number; unread_directed: number; agent_members: number;
   }> {
     const latest = this.db.prepare<[string], { seq: number | null }>("SELECT MAX(event_seq) AS seq FROM room_events WHERE room_id = ?");
-    const unread = this.db.prepare<[string, string, number, string], { total: number; directed: number | null }>(
-      `SELECT COUNT(*) AS total, SUM(CASE WHEN to_agent_id = ? THEN 1 ELSE 0 END) AS directed
+    // Same recipient predicate as getDirectedMessages, so the @ count and the
+    // inline messages always agree.
+    const unread = this.db.prepare<[string, string, string, number, string], { total: number; directed: number | null }>(
+      `SELECT COUNT(*) AS total, SUM(CASE WHEN to_agent_id = ? OR EXISTS (
+         SELECT 1 FROM json_each(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END, '$.recipients')
+         WHERE value = ?) THEN 1 ELSE 0 END) AS directed
        FROM room_events WHERE room_id = ? AND event_seq > ? AND event_type = 'message_sent'
        AND (from_agent_id IS NULL OR from_agent_id != ?)`);
     // Live agents only: an ended member must not keep a room in the strip.
     const liveAgents = (roomId: string) => this.getMembers(roomId).filter((member) =>
       !isObserverMember(member) && this.getMemberProcessLiveness(member) !== "gone").length;
     return input.rooms.map(({ room_id, after_event_seq }) => {
-      const counts = unread.get(input.agent_id, room_id, after_event_seq, input.agent_id);
+      const counts = unread.get(input.agent_id, input.agent_id, room_id, after_event_seq, input.agent_id);
       return {
         room_id,
         latest_event_seq: latest.get(room_id)?.seq ?? 0,

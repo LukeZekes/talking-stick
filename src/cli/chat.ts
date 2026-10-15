@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -7,7 +8,7 @@ import { interruptCodexThread } from "./codex-interrupt.js";
 import { interruptCodexHerdr } from "./codex-herdr-interrupt.js";
 import { ChatInputController } from "./chat-input.js";
 import { resolveRoomSelector, roomShortName, selectedRoom } from "./room-selector.js";
-import { isWithinOrSame } from "../path-resolution.js";
+import { isWithinOrSame, resolveContextPath } from "../path-resolution.js";
 import { resolveChatKick } from "./chat-kick.js";
 import {
   ChatTranscript,
@@ -257,7 +258,13 @@ export async function runChatSession(
   consoleState?.visited.add(roomId);
   consoleState?.subscribed.delete(roomId);
   // The repository of the first room this console opened bounds its strip.
-  if (consoleState && !consoleState.anchor) consoleState.anchor = joined.workspace_root;
+  // A room chosen with --in from another repository brings its own anchor; a
+  // keyed path absent on disk falls back to the caller's repository.
+  if (consoleState && !consoleState.anchor) {
+    consoleState.anchor = fs.existsSync(joined.canonical_path)
+      ? resolveContextPath(joined.canonical_path).workspace_root
+      : joined.workspace_root;
+  }
   let switchTarget: PathRoom | null = null;
   let viewedSeq = 0;
   let roomStrip = "";
@@ -272,7 +279,8 @@ export async function runChatSession(
     if (!consoleState) return false;
     lastStripRefresh = Date.now();
     const rooms = runtime.commands.listRooms({}).rooms.filter((room) =>
-      room.state !== "closed" && room.room_id !== roomId && isWithinOrSame(room.canonical_path, consoleState.anchor));
+      room.state !== "closed" && room.room_id !== roomId && isWithinOrSame(room.canonical_path, consoleState.anchor) &&
+      !insideNestedRepository(room.canonical_path, consoleState.anchor));
     const activity = new Map(runtime.commands.summarizeRoomActivity(selfId, rooms.map((room) => ({
       room_id: room.room_id,
       after_event_seq: consoleState.last_seen.get(room.room_id) ?? consoleState.start_seq
@@ -296,8 +304,9 @@ export async function runChatSession(
     }
     roomNames = uniqueRoomNames([joined, ...listed], consoleState.anchor);
     for (const room of listed) {
-      const after = consoleState.directed_seen.get(room.room_id) ??
-        consoleState.last_seen.get(room.room_id) ?? consoleState.start_seq;
+      // A visit already showed everything up to last_seen; never replay it.
+      const after = Math.max(consoleState.directed_seen.get(room.room_id) ?? 0,
+        consoleState.last_seen.get(room.room_id) ?? 0, consoleState.start_seq);
       const directed = runtime.commands.getDirectedMessages({ room_id: room.room_id, agent_id: selfId, after_event_seq: after });
       for (const event of directed) {
         const body = (event.payload as { body?: unknown } | null)?.body;
@@ -842,7 +851,10 @@ export async function runChatSession(
         if (!consoleState) { print("This console shows one room."); return; }
         if (!args.trim()) { print("Usage: /go <room>, e.g. /go api, /go root"); return; }
         try {
-          switchTo(resolveRoomSelector(runtime.commands.listRooms({}).rooms, args.trim(), consoleState.anchor));
+          // /go stays inside this console's repository.
+          const local = runtime.commands.listRooms({}).rooms.filter((room) =>
+            isWithinOrSame(room.canonical_path, consoleState.anchor) && !insideNestedRepository(room.canonical_path, consoleState.anchor));
+          switchTo(resolveRoomSelector(local, args.trim(), consoleState.anchor));
         } catch (error) {
           print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`);
         }
@@ -1303,6 +1315,19 @@ export async function runChatSession(
   return switchTarget ? { kind: "switch", room: switchTarget } : { kind: "quit" };
 }
 
+
+// A nested Git repository below the anchor has its own rooms. Paths that do
+// not exist here (keyed under the main checkout) are kept.
+function insideNestedRepository(roomPath: string, anchor: string): boolean {
+  let current = roomPath;
+  while (current !== anchor && isWithinOrSame(current, anchor)) {
+    if (fs.existsSync(path.join(current, ".git"))) return true;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return false;
+}
 
 // Short names for the strip: `root` for the repository room, else the
 // declared name or basename, lengthened to the shortest unique path suffix
