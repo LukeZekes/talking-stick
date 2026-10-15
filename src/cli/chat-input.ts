@@ -58,6 +58,11 @@ export class ChatInputController {
   // While set, keys drive a modal panel (the /roles editor) and never reach
   // readline: nothing typed in a modal can become chat text.
   private modal: ((key: ChatModalKey) => void) | null = null;
+  // A terminal may deliver ESC and the rest of an arrow sequence separately.
+  private modalPending = "";
+  // Pasted text is never a modal command: swallow it until the paste ends.
+  private modalPaste = false;
+  private modalEscapeTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly options: ChatInputOptions) {
     this.sink = Object.assign(
@@ -143,6 +148,9 @@ export class ChatInputController {
   setModal(handler: ((key: ChatModalKey) => void) | null): void {
     this.modal = handler;
     this.pending = "";
+    this.modalPending = "";
+    if (this.modalEscapeTimer) clearTimeout(this.modalEscapeTimer);
+    this.modalEscapeTimer = null;
   }
 
   get modalActive(): boolean {
@@ -156,9 +164,44 @@ export class ChatInputController {
       [" ", "space"], ["\r", "enter"], ["\n", "enter"], ["d", "default"], ["D", "default"],
       ["k", "up"], ["j", "down"], ["h", "left"], ["l", "right"], ["\u0003", "escape"]
     ];
-    let rest = text;
+    if (this.modalEscapeTimer) clearTimeout(this.modalEscapeTimer);
+    this.modalEscapeTimer = null;
+    let rest = this.modalPending + text;
+    this.modalPending = "";
     while (rest && this.modal) {
-      if (rest === "\u001b") { this.modal("escape"); return; }
+      if (this.modalPaste) {
+        const end = rest.indexOf(PASTE_END);
+        if (end < 0) {
+          // Keep the longest suffix that could begin a split PASTE_END.
+          let keep = Math.min(PASTE_END.length - 1, rest.length);
+          while (keep > 0 && !PASTE_END.startsWith(rest.slice(-keep))) keep--;
+          this.modalPending = keep > 0 ? rest.slice(-keep) : "";
+          return;
+        }
+        rest = rest.slice(end + PASTE_END.length);
+        this.modalPaste = false;
+        continue;
+      }
+      if (rest.startsWith(PASTE_START)) {
+        rest = rest.slice(PASTE_START.length);
+        this.modalPaste = true;
+        continue;
+      }
+      // An incomplete escape sequence (a lone ESC, or the start of an arrow or
+      // paste marker) may be completed by the next chunk; wait briefly.
+      if (rest.startsWith("\u001b") && !/^\u001b(?:\[[0-?]*[ -/]*[@-~]|O.|[^[O])/.test(rest)) {
+        this.modalPending = rest;
+        this.modalEscapeTimer = setTimeout(() => {
+          this.modalEscapeTimer = null;
+          const pending = this.modalPending;
+          this.modalPending = "";
+          if (pending === "\u001b" && this.modal) {
+            this.modal("escape");
+            this.options.onChange();
+          }
+        }, 50);
+        return;
+      }
       const match = keys.find(([sequence]) => rest.startsWith(sequence));
       if (match) {
         rest = rest.slice(match[0].length);
@@ -187,6 +230,7 @@ export class ChatInputController {
     if (this.closed) return;
     this.closed = true;
     if (this.escapeTimer) clearTimeout(this.escapeTimer);
+    if (this.modalEscapeTimer) clearTimeout(this.modalEscapeTimer);
     this.options.input.off("data", this.onData);
     this.options.input.off("end", this.onEnd);
     this.options.input.pause();

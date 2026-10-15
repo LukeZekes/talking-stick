@@ -352,7 +352,9 @@ export async function runChatSession(
     return runtime.commands.openRoom({ context_path: directory });
   };
   let rolesPanel: RolesEditorState | null = null;
-  const rolesPanelLines = () => rolesPanel ? renderRolesEditor(rolesPanel, formatContext()) : undefined;
+  const rolesPanelLines = () => rolesPanel
+    ? renderRolesEditor(rolesPanel, formatContext(), Math.max(4, dimensions().rows - 6))
+    : undefined;
   const closeRolesPanel = () => {
     rolesPanel = null;
     editor?.setModal(null);
