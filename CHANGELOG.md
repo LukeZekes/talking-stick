@@ -17,7 +17,7 @@ Full notes: [`docs/releases/0.21.0.md`](docs/releases/0.21.0.md).
 
 ### Added
 
-- `tt up --agents claude,codex[,grok]` launches agents and a chat console in Herdr panes, and `--print` previews the exact Herdr commands first. An existing agent is skipped only when its Herdr session, pane process, and process start time match its room membership, including a parked agent whose room presence has lapsed while its process still runs; anything unproven is reported for inspection rather than relaunched. Launches are serialized per path, recorded around every side effect, never retry an uncertain start, and wait a bounded time for each agent to join ([#91](https://github.com/mostlydev/talking-stick/issues/91)).
+- `tt up --agents claude,codex[,grok]` launches agents and a chat console in Herdr panes, and `--print` previews the exact Herdr commands first. An existing agent is skipped only when its Herdr session, pane process, and process start time match its room membership, including a parked agent whose room presence has lapsed while its process still runs; anything unproven is reported for inspection rather than relaunched. Launches are serialized per path, recorded around every side effect, never retry an uncertain start, and wait a bounded time for each agent to join. Codex starts with `--no-daemon` so its session and tools retain the new pane's identity ([#91](https://github.com/mostlydev/talking-stick/issues/91)).
 
 ### Changed
 
@@ -25,6 +25,7 @@ Full notes: [`docs/releases/0.21.0.md`](docs/releases/0.21.0.md).
 
 ### Fixed
 
+- A queued Talking Stick wake for an idle Codex thread is started through the local app-server after an interrupted turn, using the stored submission without sending duplicate text.
 - Release preparation rebases local changelog links for generated release notes and rejects missing link targets before writing either file.
 - Read commands recover from cached IDs for deleted rooms, and session writes replace older entries for the same agent and path without carrying leases or cursors into the new room.
 - Installed lifecycle hooks retire an ended Claude, Codex, or Grok session by exact session and process identity, including its lease and wake endpoints. Old listeners cannot rejoin an ended session; a later resume permits it again. Claude `/clear` reports the old session immediately. Codex currently delays its end hook until thread teardown, so immediate Codex `/clear` cleanup remains unsupported.
