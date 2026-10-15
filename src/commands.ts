@@ -1,6 +1,7 @@
 import os from "node:os";
 import { detectNativeWakeEndpoints } from "./native-wake.js";
 import { TalkingStickService } from "./service.js";
+import type { RoleSubject, RoomRoleAssignment } from "./roles.js";
 import type {
   PathRoom,
   AddNoteResult,
@@ -162,6 +163,18 @@ export class TalkingStickCommands {
 
   getDirectedMessages(input: { room_id: string; agent_id: string; after_event_seq: number; limit?: number }): RoomEvent[] {
     return this.service.getDirectedMessages(input);
+  }
+
+  getRoomRoles(input: { room_id: string }) {
+    return this.service.getRoomRoles(input);
+  }
+
+  setRoomRoles(identity: DerivedIdentity, input: {
+    room_id: string;
+    changes: Array<{ subject: RoleSubject; roles: string[] | null }>;
+    notify: (state: { version: number; assignments: RoomRoleAssignment[] }) => { body: string; to_agent_ids: string[] };
+  }) {
+    return this.service.setRoomRoles({ ...input, agent_id: identity.agent_id, process_metadata: identity.process_metadata });
   }
 
   globalEventSeq(): number {

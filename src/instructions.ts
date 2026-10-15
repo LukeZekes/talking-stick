@@ -99,6 +99,12 @@ Default role: precise implementation. Peers: Claude — architecture, drafting, 
 Default role: fast implementation and cross-checks. Peers: Claude — architecture, drafting, and large-context synthesis; Codex — precise implementation. Reassign explicitly when the task warrants.
 `;
 
+// The bundled per-harness role paragraphs. A room's live role table replaces
+// exactly these lines; user and project text is never touched.
+export const BUNDLED_DEFAULT_ROLE_LINES: ReadonlySet<string> = new Set(
+  DEFAULT_INSTRUCTIONS_MARKDOWN.split("\n").filter((line) => line.startsWith("Default role:"))
+);
+
 export const EDITABLE_INSTRUCTIONS_TEMPLATE = `# Local Talking Stick instructions
 
 <!-- Add only local overrides here. Bundled coordination instructions are loaded automatically. -->

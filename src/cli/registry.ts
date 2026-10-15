@@ -2,6 +2,7 @@ import { runGrokInboxHookCommand } from "./grok-inbox-hook.js";
 import { runSessionHookCommand } from "./session-hook.js";
 import { runInterruptHookCommand } from "./interrupt-hook.js";
 import { handleRoomCommand } from "./room-admin.js";
+import { handleRolesCommand } from "./role-commands.js";
 import { deriveCliIdentity } from "./identity.js";
 import { printResult } from "./output.js";
 import { runGuardCommand } from "./guardian.js";
@@ -147,12 +148,12 @@ export const COMMAND_REGISTRY: CommandEntry[] = [
   },
   {
     name: "instructions",
-    needsRuntime: false,
+    needsRuntime: true,
     startupMaintenance: true,
     internal: false,
     usage: "tt instructions [show|edit|update|reset] [--harness NAME] [--scope SCOPE] [--replace]",
     description: "Show, edit, safely update, or reset collaboration instructions.",
-    handler: ({ parsed }) => handleInstructionsCommand(parsed)
+    handler: ({ runtime, parsed }) => handleInstructionsCommand(parsed, runtime)
   },
   {
     name: "whoami",
@@ -171,6 +172,15 @@ export const COMMAND_REGISTRY: CommandEntry[] = [
     usage: "tt list [path]",
     description: "List rooms under a path.",
     handler: ({ runtime, parsed }) => handleListCommand(requireRuntime(runtime), parsed)
+  },
+  {
+    name: "roles",
+    needsRuntime: true,
+    startupMaintenance: true,
+    internal: false,
+    usage: "tt roles [show] | set <agent|harness> <roles|none|clear> | default <harness> <roles|none|clear> [--in ROOM]",
+    description: "Show or assign room roles; agents whose role changes are told.",
+    handler: ({ runtime, parsed }) => handleRolesCommand(requireRuntime(runtime), parsed)
   },
   {
     name: "room",
