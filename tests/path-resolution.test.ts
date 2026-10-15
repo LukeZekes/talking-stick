@@ -181,7 +181,7 @@ describe("path resolution", () => {
       .toBe(apiJoin.room_id);
   });
 
-  test("worktrees converge on one declared room and branches without it use the root", () => {
+  test("worktrees converge on one declared room and branches without it use the root", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "talking-stick-mono-wt-"));
     tempRoots.push(tempRoot);
     const repo = createRepo(tempRoot);
@@ -198,6 +198,17 @@ describe("path resolution", () => {
     const linkedApi = service.joinPath({ agent_id: "codex:linked", context_path: path.join(declared, "packages", "api", "src") });
     expect(linkedApi.room_id).toBe(mainApi.room_id);
     expect(linkedApi.canonical_path).toBe(path.join(realPath(repo), "packages", "api"));
+
+    // A legacy room created exactly at the worktree's declaration directory
+    // keeps its id and lease on the next ordinary join.
+    const wtApi = path.join(declared, "packages", "api");
+    const legacy = service.joinPath({ agent_id: "claude:wt-legacy", context_path: wtApi, force_new: true });
+    expect(legacy.room_id).not.toBe(mainApi.room_id);
+    const grant = await service.waitForTurn({ agent_id: "claude:wt-legacy", room_id: legacy.room_id, max_wait_ms: 0, allow_solo_claim: true });
+    expect(grant.status).toBe("your_turn");
+    const rejoin = service.joinPath({ agent_id: "claude:wt-legacy", context_path: path.join(wtApi, "src") });
+    expect(rejoin.room_id).toBe(legacy.room_id);
+    expect(rejoin.room_state.owner).toBe("claude:wt-legacy");
 
     const plainApi = service.joinPath({ agent_id: "grok:plain", context_path: path.join(tempRoot, "plain", "packages", "api") });
     expect(plainApi.room_id).not.toBe(mainApi.room_id);

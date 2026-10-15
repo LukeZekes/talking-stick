@@ -379,11 +379,13 @@ export class TalkingStickService {
     this.purgeExpiredIdleRooms(now);
 
     return withImmediateTransaction(this.db, () => {
-      const roomSelection = this.findOrCreateRoomForJoin(
-        resolved,
-        input.force_new === true,
-        timestamp
-      );
+      const roomSelection = input.room_id
+        ? this.selectExplicitRoom(input.room_id)
+        : this.findOrCreateRoomForJoin(
+            resolved,
+            input.force_new === true,
+            timestamp
+          );
       const existingMember = this.getMember(
         roomSelection.room.room_id,
         input.agent_id
@@ -3518,6 +3520,15 @@ export class TalkingStickService {
     };
   }
 
+  // An explicit selector never creates a room: a typo must not open a new one.
+  private selectExplicitRoom(roomId: string): { room: PathRoomRow; joinedExistingRoom: boolean } {
+    const room = this.db.prepare<[string], PathRoomRow>("SELECT * FROM path_rooms WHERE room_id = ?").get(roomId);
+    if (!room || room.state === "closed") {
+      throw new ProtocolError("room_not_found", `No open room ${roomId}. Use \`tt room list\` to see rooms.`);
+    }
+    return { room, joinedExistingRoom: true };
+  }
+
   private findOrCreateRoomForJoin(
     resolved: ResolvedContextPath,
     forceNew: boolean,
@@ -3545,9 +3556,12 @@ export class TalkingStickService {
       return {
         room: this.createRoom(resolved.canonical_context_path, timestamp),
         joinedExistingRoom: false,
-        warning: existingAncestor
-          ? `Created nested room inside ${existingAncestor.canonical_path}`
-          : undefined
+        warning: joinWarnings(
+          existingAncestor
+            ? `Created nested room inside ${existingAncestor.canonical_path}`
+            : undefined,
+          "--force-new is deprecated: it creates an unnamed room that only this machine's database knows. Use `tt room create` to declare a room instead."
+        )
       };
     }
 

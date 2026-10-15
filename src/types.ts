@@ -176,6 +176,8 @@ export interface RoomEvent {
 export interface JoinPathInput {
   agent_id: AgentId;
   context_path: string;
+  /** Join exactly this existing room instead of resolving context_path. */
+  room_id?: string;
   force_new?: boolean;
   process_metadata?: ProcessMetadata;
 }

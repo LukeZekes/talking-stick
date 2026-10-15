@@ -77,7 +77,9 @@ export function roomCandidatePaths(resolved: ResolvedContextPath): string[] {
     if (samePath(parent, current)) break;
     current = parent;
   }
-  if (!resolved.declaration && !samePath(stop, resolved.room_path)) {
+  // In a linked worktree the declaration directory (or checkout root) is not
+  // the keyed room path; a legacy room created exactly there still wins.
+  if (!samePath(stop, resolved.room_path)) {
     candidates.push(stop);
   }
   candidates.push(resolved.room_path);
