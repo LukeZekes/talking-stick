@@ -65,7 +65,7 @@ export function handleJoinCommand(
   const identity = deriveCliIdentity(parsed);
   const explicit = selectedRoom(runtime, parsed);
   const joined = runtime.commands.joinPath(identity, {
-    context_path: explicit?.canonical_path ?? contextPath,
+    context_path: contextPath,
     room_id: explicit?.room_id,
     force_new: parsed.options.has("force-new")
   });

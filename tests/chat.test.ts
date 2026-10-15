@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -23,7 +24,7 @@ import {
   resolveChatRecipients,
   sanitizeChatText
 } from "../src/cli/chat-format.js";
-import { chatInlineEnabled, chatTerminalCapable, createChatIdentity, runChatConsole, runChatSession } from "../src/cli/chat.js";
+import { chatInlineEnabled, chatTerminalCapable, createChatIdentity, runChatConsole, runChatSession, uniqueRoomNames } from "../src/cli/chat.js";
 import { formatRoomStrip } from "../src/cli/chat-format.js";
 import { parseCommand } from "../src/cli/parser.js";
 
@@ -709,6 +710,51 @@ describe("tt chat session", () => {
     ], { color: false, name_of: (id: string) => id } as never)).toBe("#api 1@ · #docs 2● · #web");
   });
 
+  test("an explicit room declared only on a worktree branch keeps the repository's strip", async () => {
+    const { root, service } = setupService();
+    const main = path.join(root, "main");
+    fs.mkdirSync(main);
+    const git = (...args: string[]) => execFileSync("git", ["-C", main, ...args], { stdio: "ignore" });
+    execFileSync("git", ["init", "-q", "-b", "main", main]);
+    git("config", "user.name", "Test"); git("config", "user.email", "t@example.com");
+    fs.writeFileSync(path.join(main, "README"), "x\n");
+    git("add", "-A"); git("commit", "-q", "-m", "init");
+    const wt = path.join(root, "wt");
+    git("worktree", "add", "-q", "-b", "feat", wt);
+    fs.mkdirSync(path.join(wt, "pkg", ".talking-stick"), { recursive: true });
+    fs.writeFileSync(path.join(wt, "pkg", ".talking-stick", "room.toml"), "");
+    const rootRoom = service.joinPath({ agent_id: "claude:root", context_path: main });
+    const pkgRoom = service.joinPath({ agent_id: "codex:pkg", context_path: path.join(wt, "pkg") });
+    expect(pkgRoom.canonical_path).toBe(path.join(main, "pkg"));
+    expect(fs.existsSync(path.join(main, "pkg"))).toBe(false);
+
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let transcript = "";
+    output.on("data", (chunk) => { transcript += chunk.toString(); });
+    const run = runChatConsole({
+      runtime: { commands: new TalkingStickCommands(service), close: () => {} },
+      identity: observerIdentity(), context_path: wt, room_id: pkgRoom.room_id, input, output,
+      terminal: false, color: false, history: 10, show_turn_events: false, poll_ms: 5
+    });
+    await until(() => transcript.includes("In the room: codex"));
+    input.write("/rooms\n");
+    await until(() => transcript.includes("#root"));
+    input.write("/quit\n");
+    await run;
+    expect(rootRoom.room_id).not.toBe(pkgRoom.room_id);
+  });
+
+  test("strip names fall back to the shortest unique path suffix", () => {
+    const names = uniqueRoomNames([
+      { room_id: "r", canonical_path: "/repo" },
+      { room_id: "a", canonical_path: "/repo/web/api" },
+      { room_id: "b", canonical_path: "/repo/svc/api" },
+      { room_id: "d", canonical_path: "/repo/docs" }
+    ], "/repo");
+    expect([...names.values()]).toEqual(["root", "web/api", "svc/api", "docs"]);
+  });
+
   test("switches rooms with /go, keeps memberships until exit, and lists rooms with agents", async () => {
     const { root, service } = setupService();
     const api = path.join(root, "api");
@@ -730,6 +776,12 @@ describe("tt chat session", () => {
     });
     await until(() => transcript.includes("In the room: claude"));
     service.sendMessage({ agent_id: "codex:api", room_id: apiRoom.room_id, body: "api note" });
+    // Listed rooms are joined as an observer, so an agent there can address
+    // the operator; that message appears inline in the current room.
+    const members = (roomId: string) => service.getRoomState({ room_id: roomId }).members.map((member) => member.agent_id);
+    await until(() => members(apiRoom.room_id).includes(identity.agent_id));
+    service.sendMessage({ agent_id: "codex:api", room_id: apiRoom.room_id, body: "ping op", to_agent_id: identity.agent_id });
+    await until(() => transcript.includes("#api › codex → you: ping op"));
 
     input.write("/rooms\n");
     await until(() => transcript.includes("#api"));
@@ -742,7 +794,6 @@ describe("tt chat session", () => {
     await until(() => service.getRecentRoomEvents({ room_id: apiRoom.room_id, limit: 10 })
       .some((event) => (event.payload as { body?: string } | null)?.body === "hello api"));
 
-    const members = (roomId: string) => service.getRoomState({ room_id: roomId }).members.map((member) => member.agent_id);
     expect(members(rootRoom.room_id)).toContain(identity.agent_id);
 
     input.write("/go root\n");

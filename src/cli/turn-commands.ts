@@ -61,7 +61,7 @@ export async function handleWaitCommand(
   const identity = deriveCliIdentity(parsed);
   const explicit = selectedRoom(runtime, parsed);
   const joined = runtime.commands.joinPath(identity, {
-    context_path: explicit?.canonical_path ?? contextPath,
+    context_path: contextPath,
     room_id: explicit?.room_id
   });
   upsertSessionFromJoin(identity, joined);
@@ -313,7 +313,7 @@ export function handleStandbyCommand(
   const identity = deriveCliIdentity(parsed);
   const explicit = selectedRoom(runtime, parsed);
   const joined = runtime.commands.joinPath(identity, {
-    context_path: explicit?.canonical_path ?? contextPath,
+    context_path: contextPath,
     room_id: explicit?.room_id
   });
   upsertSessionFromJoin(identity, joined);
@@ -397,7 +397,7 @@ export async function handleTakeCommand(
   const operatorOverride = shouldUseOperatorOverride(parsed);
   const explicit = selectedRoom(runtime, parsed);
   const joined = runtime.commands.joinPath(identity, {
-    context_path: explicit?.canonical_path ?? contextPath,
+    context_path: contextPath,
     room_id: explicit?.room_id
   });
   upsertSessionFromJoin(identity, joined);

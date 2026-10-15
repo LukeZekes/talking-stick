@@ -3564,6 +3564,21 @@ export class TalkingStickService {
     });
   }
 
+  /**
+   * Messages addressed to agentId (directly or as one of several recipients)
+   * after a seq, oldest first. Read-only: no presence, turn, or receipt effect.
+   */
+  getDirectedMessages(input: { room_id: string; agent_id: string; after_event_seq: number; limit?: number }): RoomEvent[] {
+    const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
+    return this.db.prepare<[string, number, string, string, number], RoomEventRow>(
+      `SELECT * FROM room_events
+       WHERE room_id = ? AND event_seq > ? AND event_type = 'message_sent'
+         AND (to_agent_id = ? OR EXISTS (
+           SELECT 1 FROM json_each(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END, '$.recipients') WHERE value = ?))
+       ORDER BY event_seq ASC LIMIT ?`
+    ).all(input.room_id, input.after_event_seq, input.agent_id, input.agent_id, limit).map((row) => this.mapEvent(row));
+  }
+
   /** Highest event seq in any room; event_seq is one global sequence. */
   globalEventSeq(): number {
     return this.db.prepare<[], { seq: number | null }>("SELECT MAX(event_seq) AS seq FROM room_events").get()?.seq ?? 0;
@@ -3582,8 +3597,9 @@ export class TalkingStickService {
       `SELECT COUNT(*) AS total, SUM(CASE WHEN to_agent_id = ? THEN 1 ELSE 0 END) AS directed
        FROM room_events WHERE room_id = ? AND event_seq > ? AND event_type = 'message_sent'
        AND (from_agent_id IS NULL OR from_agent_id != ?)`);
-    const agents = this.db.prepare<[string, string], { count: number }>(
-      "SELECT COUNT(*) AS count FROM room_members WHERE room_id = ? AND session_kind != ?");
+    // Live agents only: an ended member must not keep a room in the strip.
+    const liveAgents = (roomId: string) => this.getMembers(roomId).filter((member) =>
+      !isObserverMember(member) && this.getMemberProcessLiveness(member) !== "gone").length;
     return input.rooms.map(({ room_id, after_event_seq }) => {
       const counts = unread.get(input.agent_id, room_id, after_event_seq, input.agent_id);
       return {
@@ -3591,7 +3607,7 @@ export class TalkingStickService {
         latest_event_seq: latest.get(room_id)?.seq ?? 0,
         unread_messages: counts?.total ?? 0,
         unread_directed: counts?.directed ?? 0,
-        agent_members: agents.get(room_id, HUMAN_CHAT_SESSION_KIND)?.count ?? 0
+        agent_members: liveAgents(room_id)
       };
     });
   }

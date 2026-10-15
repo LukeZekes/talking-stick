@@ -160,6 +160,10 @@ export class TalkingStickCommands {
     return this.service.rekeyRoomPath(input);
   }
 
+  getDirectedMessages(input: { room_id: string; agent_id: string; after_event_seq: number; limit?: number }): RoomEvent[] {
+    return this.service.getDirectedMessages(input);
+  }
+
   globalEventSeq(): number {
     return this.service.globalEventSeq();
   }

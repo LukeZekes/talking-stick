@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import readline from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 import { planChatInterrupts } from "./chat-interrupt.js";
@@ -100,6 +101,13 @@ export interface ChatConsoleState {
   start_seq: number;
   /** Unsent draft per room, restored on return. */
   drafts: Map<string, string>;
+  /**
+   * Rooms joined as an observer only because they are listed, so agents there
+   * can address the operator. Left again once a room drops off the strip.
+   */
+  subscribed: Set<string>;
+  /** Highest seq of messages addressed to this console already shown inline. */
+  directed_seen: Map<string, number>;
 }
 
 export type ChatSessionExit = { kind: "quit" } | { kind: "switch"; room: PathRoom };
@@ -176,7 +184,9 @@ export async function handleChatCommand(
   await runChatConsole({
     runtime,
     identity,
-    context_path: explicit?.canonical_path ?? positional ?? process.cwd(),
+    // The caller's checkout stays the context even for an explicit room: a
+    // room keyed under the main checkout may not exist in this worktree.
+    context_path: positional && !positional.startsWith("#") ? positional : process.cwd(),
     room_id: explicit?.room_id,
     input: process.stdin,
     output: process.stdout,
@@ -197,18 +207,20 @@ export async function runChatConsole(options: Omit<ChatSessionOptions, "console"
     visited: new Set(),
     last_seen: new Map(),
     start_seq: options.runtime.commands.globalEventSeq(),
-    drafts: new Map()
+    drafts: new Map(),
+    subscribed: new Set(),
+    directed_seen: new Map()
   };
   let target: { context_path: string; room_id?: string } = { context_path: options.context_path, room_id: options.room_id };
   try {
     for (;;) {
       const exit = await runChatSession({ ...options, ...target, console: consoleState });
       if (exit.kind !== "switch") break;
-      target = { context_path: exit.room.canonical_path, room_id: exit.room.room_id };
+      target = { context_path: options.context_path, room_id: exit.room.room_id };
     }
   } finally {
     // Switching keeps memberships so agents can still reply; leave them now.
-    for (const roomId of consoleState.visited) {
+    for (const roomId of new Set([...consoleState.visited, ...consoleState.subscribed])) {
       try { options.runtime.commands.leaveRoom(options.identity, { room_id: roomId }); } catch { /* already gone */ }
     }
   }
@@ -243,15 +255,19 @@ export async function runChatSession(
   const roomId = joined.room_id;
   const consoleState = options.console;
   consoleState?.visited.add(roomId);
+  consoleState?.subscribed.delete(roomId);
   // The repository of the first room this console opened bounds its strip.
   if (consoleState && !consoleState.anchor) consoleState.anchor = joined.workspace_root;
   let switchTarget: PathRoom | null = null;
   let viewedSeq = 0;
   let roomStrip = "";
   let stripOrder: PathRoom[] = [];
+  let roomNames = new Map<string, string>();
   let lastStripRefresh = 0;
-  // Other rooms in this repository that have agents or that this console has
-  // visited. A console's own membership never keeps a room listed.
+  // Other rooms in this repository that have live agents, unread messages, or
+  // a past visit. The console joins listed rooms as an observer so agents there
+  // can reply to it, and shows messages addressed to it inline. Its own
+  // membership never keeps a room listed.
   const refreshStrip = (): boolean => {
     if (!consoleState) return false;
     lastStripRefresh = Date.now();
@@ -261,12 +277,37 @@ export async function runChatSession(
       room_id: room.room_id,
       after_event_seq: consoleState.last_seen.get(room.room_id) ?? consoleState.start_seq
     }))).map((entry) => [entry.room_id, entry]));
-    const listed = rooms.filter((room) =>
-      (activity.get(room.room_id)?.agent_members ?? 0) > 0 || consoleState.visited.has(room.room_id));
-    const nameFor = (room: PathRoom) => room.canonical_path === consoleState.anchor ? "root" : roomShortName(room);
+    const listed = rooms.filter((room) => {
+      const entry = activity.get(room.room_id);
+      return (entry?.agent_members ?? 0) > 0 || (entry?.unread_messages ?? 0) > 0 || consoleState.visited.has(room.room_id);
+    });
+    const listedIds = new Set(listed.map((room) => room.room_id));
+    for (const id of [...consoleState.subscribed]) {
+      if (listedIds.has(id) || consoleState.visited.has(id)) continue;
+      try { runtime.commands.leaveRoom(identity, { room_id: id }); } catch { /* already gone */ }
+      consoleState.subscribed.delete(id);
+    }
+    for (const room of listed) {
+      if (consoleState.visited.has(room.room_id) || consoleState.subscribed.has(room.room_id)) continue;
+      try {
+        runtime.commands.joinPath(identity, { context_path: options.context_path, room_id: room.room_id });
+        consoleState.subscribed.add(room.room_id);
+      } catch { /* the room closed between list and join */ }
+    }
+    roomNames = uniqueRoomNames([joined, ...listed], consoleState.anchor);
+    for (const room of listed) {
+      const after = consoleState.directed_seen.get(room.room_id) ??
+        consoleState.last_seen.get(room.room_id) ?? consoleState.start_seq;
+      const directed = runtime.commands.getDirectedMessages({ room_id: room.room_id, agent_id: selfId, after_event_seq: after });
+      for (const event of directed) {
+        const body = (event.payload as { body?: unknown } | null)?.body;
+        print(`#${sanitizeChatText(roomNames.get(room.room_id) ?? "room")} › ${sanitizeChatText(nameOf(event.from_agent_id ?? "system"))} → you: ${sanitizeChatText(typeof body === "string" ? body : "")}`);
+      }
+      if (directed.length) consoleState.directed_seen.set(room.room_id, directed[directed.length - 1].event_seq);
+    }
     stripOrder = listed;
     const next = formatRoomStrip(listed.map((room) => ({
-      name: nameFor(room),
+      name: roomNames.get(room.room_id) ?? roomShortName(room),
       unread: activity.get(room.room_id)?.unread_messages ?? 0,
       directed: activity.get(room.room_id)?.unread_directed ?? 0
     })), formatContext());
@@ -792,7 +833,7 @@ export async function runChatSession(
         refreshStrip();
         const current = `* ${sanitizeChatText(joined.canonical_path)} (here)`;
         print([current, ...stripOrder.map((room) =>
-          `  #${sanitizeChatText(room.canonical_path === consoleState.anchor ? "root" : roomShortName(room))}  ${sanitizeChatText(room.canonical_path)}`),
+          `  #${sanitizeChatText(roomNames.get(room.room_id) ?? roomShortName(room))}  ${sanitizeChatText(room.canonical_path)}`),
           stripOrder.length ? "Switch with /go <room> or Alt+←/→." : "No other rooms with agents in this repository."].join("\n"));
         redraw();
         return;
@@ -1262,6 +1303,29 @@ export async function runChatSession(
   return switchTarget ? { kind: "switch", room: switchTarget } : { kind: "quit" };
 }
 
+
+// Short names for the strip: `root` for the repository room, else the
+// declared name or basename, lengthened to the shortest unique path suffix
+// when two rooms share it (`web/api`, `svc/api`).
+export function uniqueRoomNames(rooms: ReadonlyArray<Pick<PathRoom, "room_id" | "canonical_path">>, anchor: string): Map<string, string> {
+  const names = new Map<string, string>();
+  const base = (room: Pick<PathRoom, "canonical_path">) => room.canonical_path === anchor ? "root" : roomShortName(room);
+  const counts = new Map<string, number>();
+  for (const room of rooms) counts.set(base(room), (counts.get(base(room)) ?? 0) + 1);
+  for (const room of rooms) {
+    let name = base(room);
+    if ((counts.get(name) ?? 0) > 1 && name !== "root") {
+      const parts = path.relative(anchor, room.canonical_path).split(path.sep);
+      for (let take = 2; take <= parts.length; take++) {
+        name = parts.slice(-take).join("/");
+        const suffix = name;
+        if (rooms.filter((other) => other.canonical_path.endsWith(`${path.sep}${suffix.split("/").join(path.sep)}`)).length === 1) break;
+      }
+    }
+    names.set(room.room_id, name);
+  }
+  return names;
+}
 
 function isRoomGone(error: unknown): boolean {
   return error instanceof ProtocolError && error.code === "room_not_found";

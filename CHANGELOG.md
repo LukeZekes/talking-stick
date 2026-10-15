@@ -21,7 +21,7 @@ changes will be called out under **Breaking changes**.
 - `--in <room>` and `TT_ROOM` name a room explicitly (by id, path, `root`, short name, or path suffix) for join, wait, standby, take, chat, reads, notes, messages, and handoffs. They never create a room.
 - `tt up` pins every launched pane to one room id with `TT_ROOM` (and `tt chat --in`) while panes keep the caller's directory, so launching from a subdirectory or a linked worktree works. A new room is opened only after preflight passes.
 
-- `tt chat` spans the rooms of one repository. The room bar lists other rooms with agents, with unread counts (`#api 2●`, or `1@` for messages addressed to you). `/rooms` lists them, and `/go <room>` or Alt+←/→ switches. The console stays a member of rooms it visited, so agents can still reply, keeps a draft per room, and leaves every visited room when chat exits.
+- `tt chat` spans the rooms of one repository. The room bar lists other rooms with live agents, unread messages, or a past visit, with unread counts (`#api 2●`, or `1@` for messages addressed to you); duplicate names use the shortest unique path (`web/api`). The console joins listed rooms as an observer, so agents there can address the operator, and such messages appear inline (`#api › codex → you: …`). `/rooms` lists them, and `/go <room>` or Alt+←/→ switches, keeping a draft per room. Chat leaves every room it joined when it exits.
 
 ### Changed
 
