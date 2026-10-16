@@ -4,6 +4,7 @@ import {
   type RoomEvent,
   type RoomMember
 } from "../types.js";
+import { highlightChatBody } from "./chat-highlight.js";
 
 export type ChatInput =
   | { kind: "empty" }
@@ -265,16 +266,19 @@ function formatCurrentChatEvent(event: RoomEvent, context: ChatFormatContext): s
       return icon ? `${formatChatAgent(context, id)} ${icon}` : formatChatAgent(context, id);
     };
     const route = to
-      ? ` → ${named(to)}`
+      ? ` ${paint(context, "2", "→")} ${named(to)}`
       : recipients.length > 0
-        ? ` → ${recipients.map(named).join(", ")}`
+        ? ` ${paint(context, "2", "→")} ${recipients.map(named).join(", ")}`
         : "";
     const marker =
       event.payload?.delivery_hint === "interrupt"
         ? ` ${paint(context, "1;31", "‼ interrupt")}`
         : "";
     const header = `${sender}${route}${marker}  ${paint(context, "2", time)}`;
-    return [header, ...body.split("\n").map((line) => `  ${line}`)].join("\n");
+    const styled = context.color
+      ? highlightChatBody(body, { paint: (code, text) => paint(context, code, text), agent_color: agentColor })
+      : body;
+    return [header, ...styled.split("\n").map((line) => `  ${line}`)].join("\n");
   }
 
   const system = describeSystemEvent(event, context);
