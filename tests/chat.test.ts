@@ -890,6 +890,41 @@ describe("tt chat session", () => {
     expect(members(apiRoom.room_id)).not.toContain(identity.agent_id);
   });
 
+  test("inline /go picker and room keys switch into an open room without agents", async () => {
+    const { root, service } = setupService();
+    const api = path.join(root, "api");
+    fs.mkdirSync(path.join(api, ".talking-stick"), { recursive: true });
+    fs.writeFileSync(path.join(api, ".talking-stick", "room.toml"), 'name = "api"\n');
+    service.joinPath({ agent_id: "claude:root", context_path: root });
+    const apiRoom = service.openRoom({ context_path: api });
+    const input = new PassThrough();
+    const output = Object.assign(new PassThrough(), { columns: 80, rows: 16 });
+    let text = "";
+    output.on("data", (chunk) => { text += chunk.toString(); });
+    const identity = observerIdentity();
+    const session = runChatConsole({
+      runtime: { commands: new TalkingStickCommands(service), close() {} }, identity,
+      context_path: root, input, output, terminal: true, inline: true,
+      color: false, history: 0, show_turn_events: false, poll_ms: 5
+    });
+    try {
+      await until(() => text.includes("Type to message the room"));
+      input.write("/go");
+      await until(() => text.includes("#api"));
+      input.write("\r");
+      await until(() => text.includes("In the room: no agents yet"));
+      expect(service.getRoomState({ room_id: apiRoom.room_id }).members.map((member) => member.agent_id))
+        .toContain(identity.agent_id);
+      input.write("\u001b[5;5~"); // Ctrl+PageUp, works when Alt+Arrow is captured by the terminal.
+      await until(() => text.split("In the room: claude").length > 2);
+      input.write("\u001bf"); // macOS Option+Right encoding.
+      await until(() => text.split("In the room: no agents yet").length > 2);
+    } finally {
+      input.write("/quit\r");
+      await session;
+    }
+  });
+
   test("shows recent history, streams agent messages, sends, and detaches on /quit", async () => {
     const { root, service } = setupService();
     const joined = service.joinPath({
@@ -1603,9 +1638,9 @@ test("inline incoming messages erase from the actual draft cursor and restore pa
     out = "";
     service.sendMessage({ agent_id: "codex:aa", room_id: joined.room_id, body: "incoming-during-edit" });
     await until(() => out.includes("incoming-during-edit"));
-    // With no suggestions, only the room bar is above the first draft row.
-    // Move back only to the panel start, never into the transcript.
-    expect(out.startsWith("\r\u001b[1A\u001b[J")).toBe(true);
+    // The reserved suggestion rows are above the room bar. Move back only
+    // to that fixed panel start, never into the transcript.
+    expect(out.startsWith("\r\u001b[4A\u001b[J")).toBe(true);
     expect(out).toContain("first");
     expect(out).toContain("second");
   } finally {
@@ -1671,7 +1706,7 @@ test("inline terminal retains history, bars and draft across incoming messages a
     input.write("/h");
     await flush();
     expect(text()).toContain("› /help");
-    expect(vt.buffer.active.baseY).toBe(beforeMenu + 1);
+    expect(vt.buffer.active.baseY).toBe(beforeMenu);
     input.write("\u0003" + "Ω".repeat(37));
     await flush();
     for (const cols of [20, 80, 40]) {

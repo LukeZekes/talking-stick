@@ -268,13 +268,17 @@ export class ChatInputController {
       this.escapeTimer = setTimeout(() => {
         this.escapeTimer = null;
         // Never leak an incomplete mouse/control report into the draft.
-        if (this.pending === "\u001b") {
+        if (this.pending === "\u001b" || this.pending === "\u001b\u001b") {
           // A typed draft wins over the suggestion list: one Esc clears `@c`.
-          if (this.draft.line.length > 0) this.clear();
-          else if (this.completionVisible) {
-            this.completionDismissed = true;
-            this.options.onChange();
-          } else this.requestEmptyEscape();
+          // Two presses buffered together must still act as two presses.
+          const presses = this.pending.length;
+          for (let press = 0; press < presses; press++) {
+            if (this.draft.line.length > 0) this.clear();
+            else if (this.completionVisible) {
+              this.completionDismissed = true;
+              this.options.onChange();
+            } else this.requestEmptyEscape();
+          }
         }
         this.pending = "";
       }, 50);
@@ -346,6 +350,15 @@ export class ChatInputController {
       }
       if (this.pending[0] === "\u001b") {
         if (this.pending.length === 1) return;
+        if (this.pending.startsWith("\u001b\u001b")) {
+          if (this.pending.length === 2 || this.pending === "\u001b\u001b[") return;
+          const metaArrow = /^\u001b\u001b\[([CD])/.exec(this.pending);
+          if (metaArrow) {
+            this.pending = this.pending.slice(metaArrow[0].length);
+            this.options.onCycleRoom?.(metaArrow[1] === "D" ? -1 : 1);
+            continue;
+          }
+        }
         if (this.pending[1] === "[") {
           const match = /^\u001b\[[0-?]*[ -/]*[@-~]/.exec(this.pending);
           if (!match) {
@@ -374,8 +387,12 @@ export class ChatInputController {
             this.options.onScroll("lines", sequence.endsWith("A") ? -1 : 1);
           } else if (sequence === "\u001b[1;5F" || sequence === "\u001b[4;5~") {
             this.options.onBottom();
-          } else if (sequence === "\u001b[1;3D" || sequence === "\u001b[1;3C") {
+          } else if (/^\u001b\[(?:1;)?(?:3|9)[CD]$/.test(sequence)) {
             this.options.onCycleRoom?.(sequence.endsWith("D") ? -1 : 1);
+          } else if (sequence === "\u001b[5;5~" || sequence === "\u001b[6;5~") {
+            // Ctrl+PageUp/PageDown is a fallback when a terminal or pane
+            // manager consumes Alt+Arrow before the chat sees it.
+            this.options.onCycleRoom?.(sequence === "\u001b[5;5~" ? -1 : 1);
           } else if (sequence !== PASTE_END) {
             this.writeKeys(sequence);
           }
@@ -388,6 +405,10 @@ export class ChatInputController {
           this.insertNewline();
         } else if (sequence === "\u001bOA" || sequence === "\u001bOB") {
           this.moveVertical(sequence.endsWith("A") ? -1 : 1, sequence);
+        } else if ((sequence === "\u001bb" || sequence === "\u001bf") && this.options.onCycleRoom && !this.draft.line) {
+          // macOS terminals commonly encode Option+Arrow as Meta-b/f. In a
+          // draft, keep readline's word-back/word-forward bindings.
+          this.options.onCycleRoom(sequence === "\u001bb" ? -1 : 1);
         } else this.writeKeys(sequence);
         this.pending = this.pending.slice(length);
         continue;
@@ -397,7 +418,13 @@ export class ChatInputController {
         const key = this.pending[0];
         this.pending = this.pending.slice(1);
         const completed = this.completionVisible ? this.options.complete(this.draft, this.completionIndex) : null;
-        if (completed && this.draft.line.trimEnd() !== completed.line.trimEnd()) {
+        if (completed && /^\/go(?:\s+#?[^\s]*)?$/i.test(this.draft.line)) {
+          // /go is a picker: the selected room opens with one Enter. Other
+          // completions still require a separate Enter before sending.
+          this.rl.line = completed.line.trimEnd();
+          this.rl.cursor = this.rl.line.length;
+          this.writeKeys(key);
+        } else if (completed && this.draft.line.trimEnd() !== completed.line.trimEnd()) {
           this.rl.line = completed.line;
           this.rl.cursor = completed.cursor;
           this.selectedCompletion = 0;

@@ -15,6 +15,10 @@ changes will be called out under **Breaking changes**.
 
 - Room roles. `/roles` in `tt chat` opens an editor: ↑↓ picks a member, ←→ a role, Space toggles, `d` saves the row as that harness's default, Enter applies, Esc cancels. `/roles set|default` and `tt roles show|set|default` do the same from text. Precedence is exact agent > harness in the room > user default (`<data>/roles.json`) > bundled. Only the operator assigns roles. Applying tells exactly the agents whose roles changed, in one transaction with the change, through normal message delivery (`[roles vN] …`). `tt instructions show` replaces the bundled role lines with the room's live role block. Roles never grant write authority; only the stick does.
 
+### Fixed
+
+- Inline chat keeps the room bar and prompt at a stable terminal position while command or mention suggestions open and close. `/go` now lists open rooms immediately; Up/Down selects one and a single Enter switches to it. Room cycling accepts more terminal Alt+Arrow encodings and Ctrl+PgUp/PgDn as a fallback, including rooms with no agents.
+
 ## [0.21.0] — 2026-10-15
 
 Full notes: [`docs/releases/0.21.0.md`](docs/releases/0.21.0.md).

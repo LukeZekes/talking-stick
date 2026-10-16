@@ -315,7 +315,7 @@ it. Scrolling, selection, and copying stay with the terminal.
 | `/older` | Print an earlier page of saved messages; in fullscreen, scroll into older history |
 | `/roles` | Edit roles: ↑↓ member, ←→ role, Space toggle, `d` save as harness default, Enter apply, Esc cancel. `/roles set <agent|harness> <roles|none|clear>` and `/roles default <harness> <roles|none|clear>` work as text |
 | `/rooms` | List rooms in this repository with live agents, unread messages, or a past visit. Chat joins them as an observer so agents there can address you; those messages show inline as `#room › agent → you: …` |
-| `/go <room>` (Tab completes open rooms) or Alt+←/→ | Switch the console to another room; drafts and memberships are kept until chat exits. `/go <dir>` (relative to the active repository's checkout) opens a directory's room even if nobody has joined it yet, e.g. a committed declaration; `#name` never falls back to a directory |
+| `/go` (↑↓ choose, Enter open; Tab fills) or Alt+←/→ | Switch to another open room, including one with no agents; Ctrl+PgUp/PgDn is a fallback when the terminal captures Alt+Arrow. Drafts and memberships are kept until chat exits. `/go <dir>` (relative to the active repository's checkout) opens a directory's room even if nobody has joined it yet, e.g. a committed declaration; `#name` never falls back to a directory |
 | `/bottom` or Ctrl+End | Fullscreen: return to latest messages. Default mode: use the terminal's scroll-to-bottom shortcut |
 | `/quit`, `/exit`, or Ctrl+D on an empty draft | Exit and remove this console's membership |
 | Ctrl+C | Clear the draft without quitting |
@@ -334,8 +334,11 @@ not proof the model has acted.
 
 ### Display and navigation
 
-Typing `/`, `@`, or `!@` shows suggestions above the room bar. Up/Down choose, Tab or Enter accept,
-and Enter sends once the word is complete. Escape clears a nonempty draft in one press, even while
+Typing `/`, `@`, or `!@` shows suggestions above the room bar. The inline console reserves space
+for the menu so opening and closing it does not move the room bar or prompt. Up/Down choose,
+Tab or Enter accept, and Enter sends once the word is complete. Typing `/go` shows open rooms;
+Up/Down then one Enter switches directly, while Tab fills the selected name for editing.
+Escape clears a nonempty draft in one press, even while
 suggestions are open. On an empty draft it attempts a message-free interrupt: Codex uses the local
 app-server's active-turn cancellation, or sends Escape to its Herdr pane when that pane's session
 and process match the room member. For a local Claude session, chat leaves a flag that the
