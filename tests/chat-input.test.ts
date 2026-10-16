@@ -106,6 +106,17 @@ describe("full-screen chat input", () => {
     }
   });
 
+  test("two Escape presses buffered together clear the draft then interrupt", async () => {
+    const onEmptyEscape = vi.fn();
+    const { editor, input } = setup(false, undefined, { onEmptyEscape });
+    try {
+      input.write("draft\u001b\u001b");
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(editor.draft.line).toBe("");
+      expect(onEmptyEscape).toHaveBeenCalledOnce();
+    } finally { editor.close(); }
+  });
+
   test("split mouse and navigation reports never enter the draft", () => {
     const { editor, input, scroll, bottom } = setup();
     try {
@@ -294,16 +305,56 @@ test("Alt+Left/Right asks to switch rooms without sending, and a draft can be re
   });
   try {
     input.write("draft for api");
-    input.write("\u001b[1;3C");
-    input.write("\u001b[1;3D");
-    expect(cycles).toEqual([1, -1]);
+    input.write("\u001b[1;3C\u001b[1;3D");
+    input.write("\u001b[1;9C\u001b[1;9D");
+    input.write("\u001b\u001b[C\u001b\u001b[D");
+    input.write("\u001b[6;5~\u001b[5;5~");
+    expect(cycles).toEqual([1, -1, 1, -1, 1, -1, 1, -1]);
     expect(editor.draft.line).toBe("draft for api");
     expect(submitted).toEqual([]);
+    input.write("\u001bb");
+    expect(editor.draft.cursor).toBe(10); // Meta-b keeps readline's word-back binding in a draft.
+    expect(cycles).toHaveLength(8);
     editor.setDraft("restored draft");
     expect(editor.draft).toEqual({ line: "restored draft", cursor: "restored draft".length });
+    editor.setDraft("");
+    input.write("\u001bf\u001bb");
+    expect(cycles.slice(-2)).toEqual([1, -1]);
+    input.write("\u001b");
+    input.write("\u001b[");
+    input.write("C");
+    expect(cycles.at(-1)).toBe(1);
   } finally {
     editor.close();
   }
+});
+
+test("/go is a keyboard picker: arrows choose a room and one Enter switches", () => {
+  const input = new PassThrough();
+  const submitted: string[] = [];
+  const rooms = [
+    { name: "api", description: "api · 1 agent" },
+    { name: "docs", description: "docs · 1 agent" },
+    { name: "web", description: "web · 1 agent" }
+  ];
+  const matches = (draft: { line: string; cursor: number }) => getChatCompletions(draft, [], [], rooms);
+  const editor = new ChatInputController({
+    input, columns: 80, onChange: () => {}, onSubmit: (line) => submitted.push(line),
+    onScroll: () => {}, onBottom: () => {}, onQuit: () => {}, onClear: () => {},
+    completionCount: (draft) => matches(draft).length,
+    complete: (draft, index) => matches(draft)[index]?.draft ?? null
+  });
+  try {
+    input.write("/go");
+    expect(matches(editor.draft).map((entry) => entry.label)).toEqual(["#api", "#docs", "#web"]);
+    input.write("\u001b[B\r");
+    expect(submitted).toEqual(["/go docs"]);
+    expect(editor.draft.line).toBe("");
+    input.write("/go #w");
+    expect(editor.draft.line).toBe("/go #w");
+    input.write("\r");
+    expect(submitted).toEqual(["/go docs", "/go web"]);
+  } finally { editor.close(); }
 });
 
 test("/go completes room names and path-suffix parts, keeping text after the cursor", () => {
@@ -314,9 +365,13 @@ test("/go completes room names and path-suffix parts, keeping text after the cur
     { name: "docs", description: "docs · 0 agents" }
   ];
   const offered = (line: string) => getChatCompletions({ line, cursor: line.length }, [], [], rooms).map((entry) => entry.label);
+  expect(offered("/go")).toEqual(["#root", "#svc/api", "#web/api", "#docs"]);
   expect(offered("/go ")).toEqual(["#root", "#svc/api", "#web/api", "#docs"]);
   expect(offered("/go a")).toEqual(["#svc/api", "#web/api"]);
   expect(offered("/go #we")).toEqual(["#web/api"]);
+  expect(getChatCompletions({ line: "/go api", cursor: 7 }, [], [], [
+    { name: "api-v2", description: "" }, { name: "api", description: "" }
+  ]).map((entry) => entry.label)).toEqual(["#api", "#api-v2"]);
   expect(offered("/go zz")).toEqual([]);
   const [first] = getChatCompletions({ line: "/go do", cursor: 6 }, [], [], rooms);
   expect(first.draft).toEqual({ line: "/go docs ", cursor: 9 });

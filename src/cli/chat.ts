@@ -273,6 +273,7 @@ export async function runChatSession(
   let viewedSeq = 0;
   let roomStrip = "";
   let stripOrder: PathRoom[] = [];
+  let cycleOrder: PathRoom[] = [];
   let roomNames = new Map<string, string>();
   // Every open room in this repository except the current one, for /go completion.
   let goRooms: ChatRoomCompletion[] = [];
@@ -327,6 +328,7 @@ export async function runChatSession(
       if (directed.length) consoleState.directed_seen.set(room.room_id, directed[directed.length - 1].event_seq);
     }
     stripOrder = listed;
+    cycleOrder = rooms;
     const next = formatRoomStrip(listed.map((room) => ({
       name: roomNames.get(room.room_id) ?? roomShortName(room),
       unread: activity.get(room.room_id)?.unread_messages ?? 0,
@@ -1093,10 +1095,10 @@ export async function runChatSession(
   const onCycleRoom = (direction: -1 | 1) => {
     if (!consoleState) return;
     refreshStrip();
-    const ring = [joined.canonical_path, ...stripOrder.map((room) => room.canonical_path)].sort();
-    if (ring.length < 2) { print("No other rooms with agents in this repository."); return; }
+    const ring = [joined.canonical_path, ...cycleOrder.map((room) => room.canonical_path)].sort();
+    if (ring.length < 2) { print("No other open rooms in this repository."); return; }
     const next = ring[(ring.indexOf(joined.canonical_path) + direction + ring.length) % ring.length];
-    const room = stripOrder.find((candidate) => candidate.canonical_path === next);
+    const room = cycleOrder.find((candidate) => candidate.canonical_path === next);
     if (room) switchTo(room);
   };
   const onEmptyEscape = () => {

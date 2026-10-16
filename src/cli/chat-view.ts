@@ -31,7 +31,7 @@ export const CHAT_COMMANDS: ChatCommandInfo[] = [
   { name: "who", usage: "/who", description: "members and who has the stick" },
   { name: "roles", usage: "/roles", description: "edit who does what in this room (Space toggles; d saves a default)" },
   { name: "rooms", usage: "/rooms", description: "rooms in this repository with agents or unread messages" },
-  { name: "go", usage: "/go <room|dir>", description: "switch rooms (Tab: open rooms; also Alt+←/→); a directory opens its room" },
+  { name: "go", usage: "/go <room|dir>", description: "choose an open room with ↑↓ Enter; a directory opens its room" },
   { name: "older", usage: "/older", description: "load an earlier page of saved messages" },
   { name: "kick", usage: "/kick <agent>", description: "remove a member; --force for a live agent" },
   {
@@ -64,14 +64,15 @@ export function formatChatHelp(width: number, color: boolean, keys = false, inli
   const accent = (text: string) => color ? `\u001b[1;38;5;147m${text}\u001b[0m` : text;
   const muted = (text: string) => color ? `\u001b[2m${text}\u001b[0m` : text;
   const entries: [string, string][] = keys ? [
-    ["Enter", "Send; accept an incomplete suggestion first"],
+    ["Enter", "Send; in /go, open the selected room"],
     ["Tab", "Accept the selected suggestion"],
     ["↑ / ↓", "Recall prompts; choose suggestions or edit draft lines"],
     ["Ctrl+P / Ctrl+N", "Recall previous / next submitted prompt"],
     ["Alt+Enter", "Insert a new line"],
     ["Esc", "Clear text; interrupt agents when the draft is empty"],
     ["Ctrl+C", "Clear the draft"],
-    ["Alt+← / Alt+→", "Previous / next room in this repository"],
+    ["Alt+← / Alt+→", "Previous / next open room in this repository"],
+    ["Ctrl+PgUp / PgDn", "Room-switch fallback if the terminal captures Alt+Arrow"],
     ...(inline ? [
       ["Wheel / terminal scroll", "Browse messages; drag to select and copy"],
       ["/older", "Print an earlier page of saved messages"]
@@ -642,13 +643,15 @@ export function getChatCompletions(draft: ChatDraft, names: string[], kickMember
   rooms: ChatRoomCompletion[] = []): ChatCompletion[] {
   const before = draft.line.slice(0, draft.cursor);
   const after = draft.line.slice(draft.cursor);
-  const go = /^(\/go\s+)#?([^\s]*)$/i.exec(before);
+  const go = /^(\/go)(?:\s+#?([^\s]*))?$/i.exec(before);
   if (go) {
-    const typed = go[2].toLowerCase();
+    const typed = (go[2] ?? "").toLowerCase();
     const tail = after.replace(/^\S*/, "");
-    return rooms.filter((room) => room.name.toLowerCase().startsWith(typed) ||
-      room.name.toLowerCase().split("/").some((part) => part.startsWith(typed))).map((room) => {
-      const text = `${go[1]}${room.name}${/^\s/.test(tail) ? "" : " "}`;
+    const matched = rooms.filter((room) => room.name.toLowerCase().startsWith(typed) ||
+      room.name.toLowerCase().split("/").some((part) => part.startsWith(typed)));
+    if (typed) matched.sort((left, right) => Number(right.name.toLowerCase() === typed) - Number(left.name.toLowerCase() === typed));
+    return matched.map((room) => {
+      const text = `/go ${room.name}${/^\s/.test(tail) ? "" : " "}`;
       return { label: `#${sanitizeChatText(room.name)}`, description: sanitizeChatText(room.description).replace(/\n/g, " "),
         draft: { line: text + tail, cursor: text.length } };
     });
@@ -789,16 +792,23 @@ export function renderInlinePanel(input: ChatScreenInput): ChatFrame {
   }
   const matches = input.completions ?? [];
   const panel = input.panel ?? null;
-  const menuCapacity = panel ? Math.min(panel.length, Math.max(0, height - 4)) : Math.min(matches.length, 3, Math.max(0, height - 4));
+  // In the normal terminal screen the menu occupies real terminal rows.
+  // Reserve its maximum height even when closed, so suggestions never move
+  // the room bar and prompt or scroll the console while someone types.
+  const menuCapacity = panel ? Math.min(panel.length, Math.max(0, height - 4)) : Math.min(MAX_MENU_ROWS, Math.max(0, height - 4));
   const topRows = menuCapacity + 1;
   const composerCapacity = Math.max(1, Math.min(MAX_COMPOSER_ROWS, height - topRows - 2));
   const composer = layoutComposer(input.draft, width, composerCapacity);
   const selected = Math.max(0, Math.min(input.completion_index ?? 0, matches.length - 1));
   const first = Math.max(0, selected - menuCapacity + 1);
+  const visible = matches.slice(first, first + menuCapacity);
+  const emptyRows = menuCapacity - visible.length;
   const menu = panel ? panel.slice(-menuCapacity).map((line) => truncateStyled(line, width)) : Array.from({ length: menuCapacity }, (_, row) => {
-    const entry = matches[first + row];
+    if (row < emptyRows) return "";
+    const index = first + row - emptyRows;
+    const entry = matches[index];
     if (!entry) return "";
-    const active = first + row === selected;
+    const active = index === selected;
     return truncateStyled(`${active ? "›" : " "} ${entry.label}  ${dim(input.format, entry.description)}`, width);
   });
   const rule = dim(input.format, "─".repeat(width));
@@ -953,7 +963,9 @@ function renderFooter(input: ChatScreenInput, width: number): string {
         : "scrolled · ctrl+end";
     suffix = context.color ? `\u001b[1;33m${label}\u001b[0m` : label;
   } else if ((input.completions?.length ?? 0) > 0) {
-    suffix = dim(context, "↑↓ choose · Tab accept · Esc clear");
+    suffix = dim(context, /^\/go(?:\s|$)/i.test(input.draft.line)
+      ? "↑↓ choose · Enter open · Tab fill"
+      : "↑↓ choose · Tab accept · Esc clear");
   } else if (input.hint) {
     suffix = dim(context, input.hint);
   } else if (input.draft.line.length === 0) {

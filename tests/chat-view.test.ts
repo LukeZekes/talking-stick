@@ -26,7 +26,7 @@ const context = {
   show_turn_events: false
 };
 
-test("inline panels fit narrow and short terminals without reserving unused menu rows", () => {
+test("inline panels fit narrow and short terminals with a stable suggestion area", () => {
   for (const columns of [1, 4, 8, 20, 40, 80]) {
     for (const rows of [2, 4, 5, 6, 7, 12, 24]) {
       const input = { room_path: "/a/long/workspace", transcript: new ChatTranscript(), format: context,
@@ -45,16 +45,33 @@ test("inline panels fit narrow and short terminals without reserving unused menu
   expect(inlineCursorRow({ lines: ["x".repeat(79), "draft"], cursor: { row: 1, col: 3 } }, 40)).toBe(2);
 });
 
+test("inline suggestions do not move the room bar or prompt", () => {
+  const base = {
+    room_path: "/workspace", transcript: new ChatTranscript(), format: context,
+    status: { members: [], owner: null, owner_since: null, reserved_for: null, now: new Date() },
+    draft: { line: "", cursor: 0 }, hint: null, columns: 80, rows: 16
+  };
+  const closed = renderInlinePanel({ ...base, completions: [] });
+  const open = renderInlinePanel({ ...base, draft: { line: "/", cursor: 1 },
+    completions: getChatCompletions({ line: "/", cursor: 1 }, []) });
+  expect(open.lines.length).toBe(closed.lines.length);
+  expect(open.cursor.row).toBe(closed.cursor.row);
+  expect(open.lines.findIndex((line) => line.includes("Room ·")))
+    .toBe(closed.lines.findIndex((line) => line.includes("Room ·")));
+  expect(open.lines.join("\n")).toContain("/quit");
+});
+
 test("inline room bar sits directly above the prompt with separation from chat", () => {
   const frame = renderInlinePanel({
     room_path: "/workspace", transcript: new ChatTranscript(), format: context,
     status: { members: [], owner: null, owner_since: null, reserved_for: null, now: new Date() },
     draft: { line: "", cursor: 0 }, hint: null, columns: 80, rows: 24
   });
-  expect(frame.lines).toHaveLength(4);
-  expect(frame.lines[0]).toContain("─ Room · /workspace ─");
-  expect(frame.lines[1]).toBe("> ");
-  expect(frame.cursor.row).toBe(1);
+  expect(frame.lines).toHaveLength(7);
+  expect(frame.lines.slice(0, 3)).toEqual(["", "", ""]);
+  expect(frame.lines[3]).toContain("─ Room · /workspace ─");
+  expect(frame.lines[4]).toBe("> ");
+  expect(frame.cursor.row).toBe(4);
 });
 
 let seq = 0;
