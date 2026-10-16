@@ -1,7 +1,8 @@
 // Light markdown-aware styling for chat message bodies. Agents write
 // markdown-ish text; giving code, emphasis, references, and structure their own
 // intensity and hue makes a dense transcript scannable. Input must already be
-// sanitized: this module only adds SGR codes, never removes them.
+// sanitized: this module only adds SGR codes and never changes the text, so
+// copying from the terminal returns the original message.
 
 export type Paint = (code: string, text: string) => string;
 
@@ -63,7 +64,7 @@ function highlightLine(line: string, options: HighlightOptions): string {
 
   const heading = /^(\s*)(#{1,6})(\s+)(.*)$/.exec(line);
   if (heading) {
-    return `${heading[1]}${paint(MUTED, heading[2])}${heading[3]}${paint("1", stripEmphasis(heading[4]))}`;
+    return `${heading[1]}${paint(MUTED, heading[2])}${heading[3]}${boldWithMarkers(heading[4], paint)}`;
   }
 
   const quote = /^(\s*)(>+)(\s?)(.*)$/.exec(line);
@@ -89,7 +90,10 @@ function highlightInline(text: string, options: HighlightOptions): string {
       return `${paint(MUTED, "`")}${paint(CODE, match.slice(1, -1))}${paint(MUTED, "`")}`;
     }
     if (groups.url) return paint(URL_STYLE, match);
-    if (groups.bold) return paint("1", match.slice(2, -2));
+    if (groups.bold) {
+      const marker = match.slice(0, 2);
+      return `${paint(MUTED, marker)}${paint("1", match.slice(2, -2))}${paint(MUTED, marker)}`;
+    }
     if (groups.agent) {
       return paint(`38;5;${options.agent_color(match.replace(/^@/, ""))}`, match);
     }
@@ -99,6 +103,11 @@ function highlightInline(text: string, options: HighlightOptions): string {
   });
 }
 
-function stripEmphasis(text: string): string {
-  return text.replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, (_m, a, b) => a ?? b);
+// Headings are bold throughout; emphasis markers inside stay visible but dim
+// so copied text keeps its Markdown.
+function boldWithMarkers(text: string, paint: Paint): string {
+  return text
+    .split(/(\*\*|__)/)
+    .map((part) => (part === "**" || part === "__" ? paint(MUTED, part) : part.length > 0 ? paint("1", part) : part))
+    .join("");
 }
