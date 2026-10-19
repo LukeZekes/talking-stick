@@ -69,6 +69,7 @@ export function rolesEditorKey(state: RolesEditorState, key: ChatModalKey): { st
   const rowCount = state.rows.length;
   const next = { ...state, notice: null as string | null };
   switch (key) {
+    case "yes": case "no": return { state: next, action: { kind: "none" } };
     case "up": return { state: { ...next, row: rowCount ? (state.row - 1 + rowCount) % rowCount : 0 }, action: { kind: "none" } };
     case "down": return { state: { ...next, row: rowCount ? (state.row + 1) % rowCount : 0 }, action: { kind: "none" } };
     case "left": return { state: { ...next, col: (state.col - 1 + state.columns.length) % state.columns.length }, action: { kind: "none" } };

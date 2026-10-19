@@ -616,3 +616,11 @@ Override with `TALKING_STICK_DATA_DIR` if you want to keep per-project state.
 Run `tt chat --fullscreen --mouse` to right-click a visible member in the bottom status bar. The menu identifies the exact session; use ↑↓ and Enter to choose Message or Remove, and Escape to cancel. Removal asks for confirmation and leaves the harness running. `/members` opens the same picker in fullscreen or inline mode, including members that do not fit in the status bar.
 
 In Herdr, choose **Send right-clicks to pane** from its pane menu, or run `herdr pane input --current --right-click pane` in the chat pane before starting chat. Right-click the pane frame to reach Herdr's menu. Alternatively configure `ui.right_click_passthrough_modifier = "ctrl"` and use Ctrl-right-click. Mouse capture remains opt-in; inline mode retains native selection.
+
+### Directory tree
+
+`/rooms` or **Ctrl+T** opens the repository's directory tree. Use ↑↓ to select, → to expand or enter a child, ← to collapse or return to the parent, and Enter to open that directory's resolved room. Escape closes the tree and keeps your draft. `/go` and Alt+←/→ still work.
+
+A room row shows `● N` agents, unread messages, and `*` for the current room. Collapsed folders show the total agents below them. The footer identifies the room a plain folder resolves to. Press `n` on a folder without its own room, then `y` to declare and open one (`n` or Escape cancels). This writes `.talking-stick/room.toml`, the same as `tt room create`.
+
+Folders load lazily and are cached while the tree is open. Empty and untracked folders are included; hidden or Git-ignored folders are omitted unless they have a known room or a room declaration. Nested Git repositories are excluded. Room counts refresh while the tree stays open.

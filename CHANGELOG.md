@@ -13,6 +13,8 @@ changes will be called out under **Breaking changes**.
 
 ### Added
 
+- `/rooms` and Ctrl+T open a directory tree with live room member counts, unread counts, and collapsed descendant totals. Arrow keys navigate, Enter opens the selected directory’s room, and `n` offers to create a room boundary after confirmation.
+
 - Chat member actions: `/members` opens a keyboard picker in inline or fullscreen chat. With `--fullscreen --mouse`, right-click a visible member in the status bar to message or remove that exact session. Removal requires confirmation and leaves the harness running. Herdr can forward right-clicks with its pane input routing or configured modifier.
 
 - Room roles. `/roles` in `tt chat` opens an editor: ↑↓ picks a member, ←→ a role, Space toggles, `d` saves the row as that harness's default, Enter applies, Esc cancels. `/roles set|default` and `tt roles show|set|default` do the same from text. Precedence is exact agent > harness in the room > user default (`<data>/roles.json`) > bundled. Only the operator assigns roles. Applying tells exactly the agents whose roles changed, in one transaction with the change, through normal message delivery (`[roles vN] …`). `tt instructions show` replaces the bundled role lines with the room's live role block. Roles never grant write authority; only the stick does.

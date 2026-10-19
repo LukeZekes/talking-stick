@@ -37,13 +37,12 @@ function writeDeclaration(directory: string, name: string | undefined): string {
   return file;
 }
 
-function createRoom(runtime: Runtime, parsed: ParsedCommand, target: string | undefined): void {
-  const directory = resolveContextPath(target ?? process.cwd()).canonical_context_path;
+export function createDeclaredRoom(runtime: Runtime, target: string, name?: string): { room: PathRoom; file: string } {
+  const directory = resolveContextPath(target).canonical_context_path;
   if (!fs.statSync(directory, { throwIfNoEntry: false })?.isDirectory()) {
     throw new Error(`${directory} is not a directory.`);
   }
-  const file = writeDeclaration(directory, getStringOption(parsed, "name"));
-  const resolved = resolveContextPath(directory);
+  const file = writeDeclaration(directory, name);
   // Open the row now so `--in <name>` and `tt up --in` work before any join.
   let room: PathRoom;
   try {
@@ -53,6 +52,13 @@ function createRoom(runtime: Runtime, parsed: ParsedCommand, target: string | un
     try { fs.rmdirSync(path.dirname(file)); } catch { /* .talking-stick holds other files */ }
     throw error;
   }
+  return { room, file };
+}
+
+function createRoom(runtime: Runtime, parsed: ParsedCommand, target: string | undefined): void {
+  const directory = resolveContextPath(target ?? process.cwd()).canonical_context_path;
+  const { room, file } = createDeclaredRoom(runtime, directory, getStringOption(parsed, "name"));
+  const resolved = resolveContextPath(directory);
   const result = { status: "created", declaration: file, room_id: room.room_id, room_path: resolved.room_path,
     rel_path: resolved.declaration?.rel_path ?? "", name: resolved.declaration?.name ?? path.basename(directory) };
   printResult(parsed, result, () => [

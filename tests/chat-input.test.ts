@@ -6,7 +6,7 @@ import { completeChatInput, getChatCompletions } from "../src/cli/chat-view.js";
 function setup(
   menu = false,
   wheel?: (row: number, direction: number) => void,
-  extra: { onRightClick?: (column: number, row: number) => void; onEmptyEscape?: () => void; now?: () => number } = {}
+  extra: { onRoomTree?: () => void; onRightClick?: (column: number, row: number) => void; onEmptyEscape?: () => void; now?: () => number } = {}
 ) {
   const input = Object.assign(new PassThrough(), {
     isRaw: false,
@@ -24,6 +24,7 @@ function setup(
     onScroll: scroll,
     onWheel: wheel,
     onRightClick: extra.onRightClick,
+    onRoomTree: extra.onRoomTree,
     onBottom: bottom,
     onChange: vi.fn(),
     onClear: vi.fn(),
@@ -388,5 +389,18 @@ test("right-click reports retain coordinates and modifiers without entering the 
     input.write("24M\u001b[<18;20;24M\u001b[<2;12;24m\u001b[<0;1;1M");
     expect(click.mock.calls).toEqual([[12, 24], [20, 24]]);
     expect(editor.draft.line).toBe("");
+  } finally { editor.close(); }
+});
+
+
+test("Ctrl+T opens the room picker without changing a draft or treating paste as a shortcut", () => {
+  const open = vi.fn();
+  const { editor, input } = setup(false, undefined, { onRoomTree: open });
+  try {
+    input.write("draft\u0014");
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(editor.draft.line).toBe("draft");
+    input.write("\u001b[200~pasted\u0014text\u001b[201~");
+    expect(open).toHaveBeenCalledTimes(1);
   } finally { editor.close(); }
 });

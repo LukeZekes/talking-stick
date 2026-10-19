@@ -17,6 +17,7 @@ export interface ChatInputOptions {
   onClear: () => void;
   onEmptyEscape?: () => void;
   /** Alt+Left / Alt+Right: move to the previous or next room. */
+  onRoomTree?: () => void;
   onCycleRoom?: (direction: -1 | 1) => void;
   now?: () => number;
   complete: (draft: ChatDraft, index: number) => ChatDraft | null;
@@ -37,7 +38,7 @@ const PASTE_START = "\u001b[200~";
 const PASTE_END = "\u001b[201~";
 const MAX_PASTE_LENGTH = 65_536;
 
-export type ChatModalKey = "up" | "down" | "left" | "right" | "space" | "enter" | "escape" | "default";
+export type ChatModalKey = "up" | "down" | "left" | "right" | "space" | "enter" | "escape" | "default" | "yes" | "no";
 
 // Readline edits a private buffer; it never writes to the physical terminal.
 // Terminal-only controls are consumed before readline's keypress decoder.
@@ -162,7 +163,7 @@ export class ChatInputController {
     const keys: Array<[string, ChatModalKey]> = [
       ["\u001b[A", "up"], ["\u001bOA", "up"], ["\u001b[B", "down"], ["\u001bOB", "down"],
       ["\u001b[C", "right"], ["\u001bOC", "right"], ["\u001b[D", "left"], ["\u001bOD", "left"],
-      [" ", "space"], ["\r", "enter"], ["\n", "enter"], ["d", "default"], ["D", "default"],
+      [" ", "space"], ["\r", "enter"], ["\n", "enter"], ["d", "default"], ["D", "default"], ["y", "yes"], ["Y", "yes"], ["n", "no"], ["N", "no"],
       ["k", "up"], ["j", "down"], ["h", "left"], ["l", "right"], ["\u0003", "escape"]
     ];
     if (this.modalEscapeTimer) clearTimeout(this.modalEscapeTimer);
@@ -349,6 +350,14 @@ export class ChatInputController {
         this.paste = "";
         continue;
       }
+      if (this.pending[0] === "\u0014") {
+        const rest = this.pending.slice(1);
+        this.pending = "";
+        this.options.onRoomTree?.();
+        if (this.modal) this.feedModal(rest);
+        else this.pending = rest;
+        continue;
+      }
       if (this.pending[0] === "\u001b") {
         if (this.pending.length === 1) return;
         if (this.pending.startsWith("\u001b\u001b")) {
@@ -447,7 +456,7 @@ export class ChatInputController {
         this.pending = this.pending.slice(1);
         continue;
       }
-      const next = this.pending.search(/[\u001b\t\r\n]/);
+      const next = this.pending.search(/[\u001b\u0014\t\r\n]/);
       const length = next < 0 ? this.pending.length : next;
       const text = this.pending.slice(0, length);
       this.pending = this.pending.slice(length);
