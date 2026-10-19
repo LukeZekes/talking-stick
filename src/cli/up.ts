@@ -3,6 +3,7 @@ import { createSystemHerdrRunner, readHerdrContext, type HerdrRunner } from "../
 import { createSystemStartTimeReader, type StartTimeReader } from "../launch-identity.js";
 import { acquireLaunchLock, readLaunchRecord, launchRecordPath } from "../launch-record.js";
 import fs from "node:fs";
+import { chatTerminalCapable, handleChatCommand } from "./chat.js";
 import { resolveContextPath } from "../path-resolution.js";
 import {
   DEFAULT_JOIN_TIMEOUT_MS,
@@ -11,19 +12,20 @@ import {
 } from "../workspace-launch-run.js";
 import {
   parseLaunchAgents,
+  installedLaunchAgents,
   planWorkspaceLaunch,
   type LaunchTopology,
   type WorkspaceLaunchPlan
 } from "../workspace-launch.js";
-import { deriveCliIdentity } from "./identity.js";
+import { deriveCliIdentity, isKnownHarnessCliEnv } from "./identity.js";
 import { printResult } from "./output.js";
-import { getStringOption, hasOption, parseWaitTimeout, type ParsedCommand } from "./parser.js";
+import { getStringOption, hasOption, parseCommand, parseWaitTimeout, type ParsedCommand } from "./parser.js";
 import type { Runtime } from "./runtime.js";
 import { selectedRoom } from "./room-selector.js";
 import { pickDeepestRoom } from "./session.js";
 
 export const UP_USAGE =
-  "tt up --agents claude,codex[,grok] [--path DIR] [--new-tab | --new-workspace] [--print] [--forget] [--timeout 120s] [--json]";
+  "tt up [--agents claude,codex,grok,opencode,antigravity] [--path DIR] [--new-tab | --new-workspace] [--print] [--forget] [--timeout 120s] [--json]";
 
 export interface UpCommandOptions {
   env?: NodeJS.ProcessEnv;
@@ -32,6 +34,9 @@ export interface UpCommandOptions {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   homeDir?: string;
+  stdinIsTTY?: boolean;
+  stdoutIsTTY?: boolean;
+  startLocalChat?: (runtime: Runtime, contextPath: string, roomId: string) => Promise<void>;
 }
 
 export async function handleUpCommand(
@@ -40,7 +45,13 @@ export async function handleUpCommand(
   options: UpCommandOptions = {}
 ): Promise<void> {
   const env = options.env ?? process.env;
-  const agents = parseLaunchAgents(getStringOption(parsed, "agents"));
+  const requestedAgents = getStringOption(parsed, "agents");
+  const agents = requestedAgents === undefined
+    ? installedLaunchAgents(env, options.homeDir)
+    : parseLaunchAgents(requestedAgents);
+  if (agents.length === 0) {
+    throw new Error("No default chat agents with both an executable on PATH and an installed Talking Stick skill were found. Install Claude or Codex, or use --agents for an experimental launcher.");
+  }
   const topology = parseTopology(parsed);
   const joinTimeoutMs = parseWaitTimeout(parsed) ?? DEFAULT_JOIN_TIMEOUT_MS;
   const contextPath = getStringOption(parsed, "path") ?? process.cwd();
@@ -62,22 +73,32 @@ export async function handleUpCommand(
   // A preview takes no lock; a launch plans under the lock so a concurrent
   // launcher cannot act on the same stale view of the room and record.
   const release = preview ? () => {} : acquireLaunchLock(dataDir, roomKey);
+  let localChatRoomId: string | null = null;
   try {
     const forget = hasOption(parsed, "forget");
     const record = forget ? null : readLaunchRecord(dataDir, roomKey);
-    const planFor = (roomId: string | null) => planWorkspaceLaunch({
-      agents,
-      context_path: contextPath,
-      topology,
-      herdr: readHerdrContext(env),
-      runner,
-      room: roomWithMembers(runtime, parsed, roomId),
-      pin_room_id: roomId,
-      readStartTime,
-      record,
-      env,
-      homeDir: options.homeDir
-    });
+    const planFor = (roomId: string | null) => {
+      const plan = planWorkspaceLaunch({
+        agents,
+        context_path: contextPath,
+        topology,
+        herdr: readHerdrContext(env),
+        runner,
+        room: roomWithMembers(runtime, parsed, roomId),
+        pin_room_id: roomId,
+        readStartTime,
+        record,
+        env,
+        homeDir: options.homeDir
+      });
+      if (requestedAgents === undefined) {
+        const optional = installedLaunchAgents(env, options.homeDir, true).filter((agent) => !agents.includes(agent));
+        if (optional.length > 0) {
+          plan.checks.push({ name: "experimental launchers", status: "uncertain", detail: `${optional.join(", ")} are installed but require explicit --agents.` });
+        }
+      }
+      return plan;
+    };
     let targetRoomId = resolvedRoom?.room_id ?? null;
     let plan = planFor(targetRoomId);
     // A room that does not exist yet is opened only under the lock, after the
@@ -105,10 +126,26 @@ export async function handleUpCommand(
       now: options.now,
       onProgress: (message) => { process.stderr.write(`[tt up] ${message}\n`); }
     });
+    if (result.chat.state === "ready" && targetRoomId) {
+      const canAttachChat = !hasOption(parsed, "json") && !isKnownHarnessCliEnv(env) &&
+        chatTerminalCapable({ isTTY: options.stdinIsTTY ?? process.stdin.isTTY },
+          { isTTY: options.stdoutIsTTY ?? process.stdout.isTTY }, env);
+      if (!canAttachChat) {
+        result.next_steps.push(`Run tt chat --in ${targetRoomId} in this pane to open the console.`);
+      } else {
+        localChatRoomId = targetRoomId;
+      }
+    }
     printResult(parsed, result, () => renderResult(plan, result));
     if (result.status !== "launched" && result.status !== "nothing_to_do") process.exitCode = 1;
   } finally {
     release();
+  }
+  // The invoking pane becomes chat only after the launch lock has been
+  // released. This same process stays attached to the caller's terminal.
+  if (localChatRoomId) {
+    if (options.startLocalChat) await options.startLocalChat(runtime, contextPath, localChatRoomId);
+    else await handleChatCommand(runtime, parseCommand(["chat", contextPath, "--in", localChatRoomId]));
   }
 }
 
@@ -139,7 +176,7 @@ export function renderPlan(plan: WorkspaceLaunchPlan): string {
     const remedy = check.remedy ? ` (fix: ${check.remedy})` : "";
     lines.push(`  ${check.status.padEnd(9)} ${check.name}: ${check.detail}${remedy}`);
   }
-  lines.push("", `Chat console: ${plan.chat.action}${plan.chat.reason ? ` — ${plan.chat.reason}` : ""}`, "", "Agents:");
+  lines.push("", `Chat console: ${plan.chat.action}${plan.topology === "here" && plan.chat.action === "launch" ? " in the caller pane after agent startup" : plan.chat.reason ? ` — ${plan.chat.reason}` : ""}`, "", "Agents:");
   for (const agent of plan.agents) {
     const experimental = agent.experimental ? " [experimental]" : "";
     const outcome = agent.action === "launch"

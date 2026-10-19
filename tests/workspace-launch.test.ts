@@ -6,6 +6,7 @@ import { parseCommand } from "../src/cli/parser.js";
 import { preferredSplitDirection } from "../src/herdr.js";
 import type { RoomMember } from "../src/types.js";
 import {
+  installedLaunchAgents,
   parseLaunchAgents,
   planWorkspaceLaunch,
   type PlanWorkspaceLaunchInput
@@ -56,6 +57,15 @@ function member(agentId: string, harness: string | null, status = "active"): Roo
 }
 
 describe("tt up planning", () => {
+  test("defaults to launchers with both a binary and an installed skill", () => {
+    const { base, home } = fixture({ executables: ["tt", "claude", "codex", "grok", "opencode", "agy"] });
+    expect(installedLaunchAgents(base.env, home)).toEqual(["claude", "codex"]);
+    expect(installedLaunchAgents(base.env, home, true)).toEqual(["claude", "codex", "grok", "opencode", "antigravity"]);
+    const noSkill = fixture({ executables: ["tt", "codex"], skills: [] });
+    expect(installedLaunchAgents(noSkill.base.env, noSkill.home)).toEqual([]);
+    const claudeOnly = fixture({ executables: ["tt", "claude", "codex"], skills: ["claude"] });
+    expect(installedLaunchAgents(claudeOnly.base.env, claudeOnly.home)).toEqual(["claude"]);
+  });
   test("parses an explicit, unique, supported agent list", () => {
     expect(parseLaunchAgents("claude, codex")).toEqual(["claude", "codex"]);
     expect(() => parseLaunchAgents(undefined)).toThrow(/--agents is required/);
@@ -70,7 +80,7 @@ describe("tt up planning", () => {
     expect(parseCommand(["up", "--new-workspace", "extra"]).positionals).toEqual(["extra"]);
   });
 
-  test("previews a current-tab launch using only read-only Herdr calls", () => {
+  test("previews a current-tab launch with chat in the caller and agents beside it", () => {
     const { base, calls, repo, home } = fixture();
     const plan = planWorkspaceLaunch(base);
 
@@ -86,11 +96,20 @@ describe("tt up planning", () => {
     expect(plan.agents[0].prompt).toMatch(/Do not claim the stick/);
     expect(plan.steps.map((step) => step.argv)).toEqual([
       ["herdr", "pane", "split", "--pane", "w1:p1", "--direction", "right", "--cwd", repo, "--env", "TT_ROOM=<room-id>", "--no-focus"],
-      ["herdr", "pane", "run", "<chat-pane>", "tt chat --in <room-id>"],
-      ["herdr", "pane", "split", "--pane", "<chat-pane>", "--direction", "down", "--cwd", repo, "--env", "TT_ROOM=<room-id>", "--no-focus"],
       ["herdr", "agent", "start", plan.agents[0].herdr_name, "--kind", "claude", "--pane", "<claude-pane>", "--timeout", "60000", "--", plan.agents[0].prompt],
-      ["herdr", "pane", "split", "--pane", "<claude-pane>", "--direction", "down", "--cwd", repo, "--env", "TT_ROOM=<room-id>", "--no-focus"],
+      ["herdr", "pane", "split", "--pane", "<claude-pane>", "--direction", "down", "--ratio", "0.5", "--cwd", repo, "--env", "TT_ROOM=<room-id>", "--no-focus"],
       ["herdr", "agent", "start", plan.agents[1].herdr_name, "--kind", "codex", "--pane", "<codex-pane>", "--timeout", "60000", "--", "--no-daemon", plan.agents[1].prompt]
+    ]);
+  });
+
+  test("three agents share the side column evenly", () => {
+    const { base } = fixture({ executables: ["tt", "claude", "codex", "grok"] });
+    const plan = planWorkspaceLaunch({ ...base, agents: ["claude", "codex", "grok"] });
+    const splits = plan.steps.filter((step) => step.kind === "split");
+    expect(splits.map((step) => [step.argv[6], step.argv[7], step.argv[8]])).toEqual([
+      ["right", "--cwd", base.context_path],
+      ["down", "--ratio", String(1 / 3)],
+      ["down", "--ratio", "0.5"]
     ]);
   });
 
@@ -119,7 +138,19 @@ describe("tt up planning", () => {
     expect(plan.steps.at(-1)?.argv).not.toContain("--single");
   });
 
-  test("requires identity confirmation for active agent candidates and skips a live chat console", () => {
+  test.each([
+    ["opencode", "opencode", "--prompt"],
+    ["antigravity", "agy", "--prompt-interactive"]
+  ] as const)("%s starts its interactive TUI with a bootstrap prompt", (agent, kind, promptFlag) => {
+    const { base } = fixture({ executables: ["tt", "opencode", "agy"] });
+    const plan = planWorkspaceLaunch({ ...base, agents: [agent] });
+    expect(plan.status).toBe("ready");
+    const start = plan.steps.find((step) => step.kind === "start")!;
+    expect(start.argv).toContain(kind);
+    expect(start.argv.slice(-3)).toEqual(["--", promptFlag, plan.agents[0].prompt]);
+  });
+
+  test("requires identity confirmation for active agent candidates and opens chat in the caller", () => {
     const { base, repo } = fixture();
     const plan = planWorkspaceLaunch({
       ...base,
@@ -132,15 +163,15 @@ describe("tt up planning", () => {
         ]
       }
     });
-    expect(plan.chat).toMatchObject({ action: "skip" });
+    expect(plan.chat).toMatchObject({ action: "launch" });
     expect(plan.agents.map((agent) => agent.action)).toEqual(["inspect", "launch"]);
     expect(plan.status).toBe("needs_confirmation");
     expect(plan.agents[0].reason).toContain("no Herdr pane reports its session");
-    // Codex takes the fresh split directly; no chat command is run.
+    // Codex takes a fresh split beside the caller; no chat command is run.
     expect(plan.steps.map((step) => step.argv.slice(0, 3).join(" "))).toEqual([
       "herdr pane split", "herdr agent start"
     ]);
-    expect(plan.steps[1].argv).toContain("<anchor-pane>");
+    expect(plan.steps[1].argv).toContain("<codex-pane>");
     expect(plan.steps[0].argv).toContain(repo);
   });
 
@@ -154,13 +185,13 @@ describe("tt up planning", () => {
     expect(plan.steps).toEqual([]);
   });
 
-  test("unconfirmed chat liveness cannot be presented as a reusable console", () => {
+  test("an unconfirmed chat elsewhere does not stop chat opening in the caller", () => {
     const { base } = fixture();
     const plan = planWorkspaceLaunch({ ...base, room: { room_id: "room-1", members: [
       { ...member("human:op:chat:1", null), process_liveness: "unknown" }
     ] } });
-    expect(plan.chat.action).toBe("inspect");
-    expect(plan.status).toBe("needs_confirmation");
+    expect(plan.chat.action).toBe("launch");
+    expect(plan.status).toBe("ready");
     expect(plan.steps.some((step) => step.argv[2] === "run")).toBe(false);
   });
 

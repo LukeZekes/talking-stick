@@ -123,23 +123,32 @@ tt release / tt pass     hand off with structured status and next action
 tt assign <agent>        hand off to someone specific
 tt take                  claim when the holder is gone or stuck
 tt chat                  operator console
-tt up --agents claude,codex --print   preview a Herdr room setup
+tt up --print            preview a Herdr room setup
 tt msg send / tt notes   message live processes, or leave durable notes
 tt state / tt health     room state and a concise safety check
 ```
 
 Full flags and semantics: [`docs/reference.md`](docs/reference.md#command-reference).
 
-Inside Herdr, experimental `tt up --agents claude,codex --new-tab` opens a chat
-console and fresh agent panes, loads the installed skill with an initial prompt,
-and verifies exact-room joins. Preview with `--print` first. Omit `--new-tab` to
-split the caller's tab, or use `--new-workspace` for a separate workspace.
+Inside Herdr, experimental `tt up` starts every verified default launcher whose
+executable and Talking Stick skill are installed (Claude and Codex). Grok,
+OpenCode, and Antigravity have experimental adapters available through explicit
+`--agents`. The invoking pane becomes chat, with
+agent panes stacked evenly in a column to its right. Use `--agents claude,codex`
+to choose agents, `--print` to preview, `--new-tab` to create a separate tab,
+or `--new-workspace` for a separate workspace. Each agent receives the skill
+bootstrap prompt and its exact-room join is verified.
 Launch progress goes to stderr, including the created tab/workspace destination
 and the bounded join wait; JSON results stay on stdout. An explicitly requested
 new tab/workspace is shown after startup calls; current-tab splits keep focus.
+With `--json`, redirected input/output, or a harness CLI environment, the
+result reports chat as ready and prints a `tt chat --in` next step instead of
+entering the interactive console.
 New tabs/workspaces created for agents get their own chat console even if another
-console is in the room. Repeated launches reuse the recorded console only after
-verifying its pane. If agents already exist but their layout lacks a console,
+console is in the room. Repeated launches in the current pane open chat there
+again without duplicating confirmed agent panes. New tabs/workspaces reuse a
+recorded console only after verifying its pane. If agents already exist but
+their layout lacks a console,
 the command requests inspection instead of creating a separate console-only tab.
 Verified members are reused; uncertain launches require inspection and are never
 blindly retried. After checking old panes and confirming exited agents, `--forget`
