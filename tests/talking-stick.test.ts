@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -5043,3 +5043,88 @@ declare module "vitest" {
     toThrowProtocolError(expectedCode: string): void;
   }
 }
+
+describe("one room per repository for agents", () => {
+  function createRepoWithRooms(tempRoot: string): { repo: string; api: string; web: string; other: string } {
+    const repo = path.join(tempRoot, "shop");
+    const other = path.join(tempRoot, "other");
+    for (const dir of [repo, other]) {
+      fs.mkdirSync(dir, { recursive: true });
+      execFileSync("git", ["init", "-q", dir]);
+    }
+    for (const name of ["api", "web"]) {
+      fs.mkdirSync(path.join(repo, name, ".talking-stick"), { recursive: true });
+      fs.writeFileSync(path.join(repo, name, ".talking-stick", "room.toml"), `name = "${name}"\n`);
+    }
+    const real = (dir: string) => fs.realpathSync.native(dir);
+    return { repo: real(repo), api: real(path.join(repo, "api")), web: real(path.join(repo, "web")), other: real(other) };
+  }
+
+  test("joining a child or sibling room leaves the agent's other rooms in that repository", () => {
+    const harness = createHarness();
+    const { repo, api, web, other } = createRepoWithRooms(harness.tempRoot);
+    const root = harness.service.joinPath({ agent_id: "codex:move", context_path: repo });
+    harness.service.joinPath({ agent_id: "claude:stay", context_path: repo });
+    const elsewhere = harness.service.joinPath({ agent_id: "codex:move", context_path: other });
+
+    const child = harness.service.joinPath({ agent_id: "codex:move", context_path: api });
+    expect(child.warning).toContain(`Left ${repo}`);
+    const rootState = harness.service.getRoomState({ room_id: root.room_id, agent_id: "claude:stay" });
+    expect(rootState.members.map((member) => member.agent_id)).toEqual(["claude:stay"]);
+    const [leave] = harness.service.getRecentRoomEvents({ room_id: root.room_id, limit: 1, event_types: ["leave"] });
+    expect(leave).toMatchObject({ from_agent_id: "codex:move", reason: `moved to ${api}` });
+    // Another repository's room is a separate conversation and is kept.
+    expect(harness.service.getRoomState({ room_id: elsewhere.room_id, agent_id: "codex:move" }).members
+      .map((member) => member.agent_id)).toContain("codex:move");
+
+    const sibling = harness.service.joinPath({ agent_id: "codex:move", context_path: web });
+    expect(sibling.warning).toContain(`Left ${api}`);
+    expect(harness.service.getRoomState({ room_id: child.room_id, agent_id: "claude:stay" }).members
+      .map((member) => member.agent_id)).not.toContain("codex:move");
+  });
+
+  test("an agent holding the turn cannot move out of its room, and consoles never move", async () => {
+    const harness = createHarness();
+    const { repo, api } = createRepoWithRooms(harness.tempRoot);
+    const root = harness.service.joinPath({ agent_id: "codex:hold", context_path: repo });
+    asYourTurn(await harness.service.waitForTurn({ agent_id: "codex:hold", room_id: root.room_id, max_wait_ms: 0 }));
+
+    expect(() => harness.service.joinPath({ agent_id: "codex:hold", context_path: api }))
+      .toThrow(expect.objectContaining({ code: "holds_turn_elsewhere" }));
+    expect(harness.service.getRoomState({ room_id: root.room_id, agent_id: "codex:hold" }).room.owner).toBe("codex:hold");
+
+    harness.service.joinPath({ agent_id: "human:op:chat:1", context_path: repo,
+      process_metadata: { session_kind: "human_chat", display_name: "chat" } });
+    const console = harness.service.joinPath({ agent_id: "human:op:chat:1", context_path: api,
+      process_metadata: { session_kind: "human_chat", display_name: "chat" } });
+    expect(console.warning ?? "").not.toContain("Left");
+    expect(harness.service.getRoomState({ room_id: root.room_id, agent_id: "codex:hold" }).members
+      .map((member) => member.agent_id)).toContain("human:op:chat:1");
+  });
+
+  test("a join through a linked worktree moves membership out of rooms keyed under the main checkout", async () => {
+    const harness = createHarness();
+    const repo = path.join(harness.tempRoot, "main");
+    const linked = path.join(harness.tempRoot, "linked");
+    fs.mkdirSync(path.join(repo, "api", ".talking-stick"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "api", ".talking-stick", "room.toml"), 'name = "api"\n');
+    execFileSync("git", ["init", "-q", repo]);
+    execFileSync("git", ["-C", repo, "add", "."]);
+    execFileSync("git", ["-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "fixture"]);
+    execFileSync("git", ["-C", repo, "worktree", "add", "-qb", "linked", linked]);
+
+    const root = harness.service.joinPath({ agent_id: "codex:move", context_path: repo });
+    harness.service.joinPath({ agent_id: "claude:stay", context_path: repo });
+    harness.service.joinPath({ agent_id: "codex:move", context_path: path.join(linked, "api") });
+    expect(harness.service.getRoomState({ room_id: root.room_id, agent_id: "claude:stay" }).members
+      .map((member) => member.agent_id)).toEqual(["claude:stay"]);
+
+    // Holding the turn in the main-checkout room blocks a move made from the worktree.
+    const back = harness.service.joinPath({ agent_id: "claude:stay", context_path: path.join(linked, "api") });
+    harness.service.joinPath({ agent_id: "claude:hold", context_path: repo });
+    asYourTurn(await harness.service.waitForTurn({ agent_id: "claude:hold", room_id: root.room_id, max_wait_ms: 0 }));
+    expect(() => harness.service.joinPath({ agent_id: "claude:hold", context_path: path.join(linked, "api") }))
+      .toThrow(expect.objectContaining({ code: "holds_turn_elsewhere" }));
+    expect(back.room_id).not.toBe(root.room_id);
+  });
+});

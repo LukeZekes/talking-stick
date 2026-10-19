@@ -3392,7 +3392,10 @@ describe("tt room", () => {
     expect(listed.rooms.map((room: { name: string; kind: string }) => [room.name, room.kind]).sort())
       .toEqual([["api", "declared"], ["root", "root"]]);
     const apiListing = listed.rooms.find((room: { name: string }) => room.name === "api");
-    expect(apiListing.agents.sort()).toEqual(["claude:rooms", "codex:rooms"]);
+    // codex joined #api, then root through TT_ROOM: an agent is in one room
+    // per repository, so it moved out of #api.
+    expect(apiListing.agents.sort()).toEqual(["claude:rooms"]);
+    expect(listed.rooms.find((room: { name: string }) => room.name === "root").agents).toEqual(["codex:rooms"]);
     expect(JSON.parse(await captureStdout(["room", "list", path.join(api, "src"), "--json"])).rooms
       .find((room: { current: boolean }) => room.current).name).toBe("api");
     // A room selected in another repository lists that repository.
@@ -3422,10 +3425,10 @@ describe("tt room", () => {
 
     await expect(captureStdout(["room", "remove", api, "--json"])).rejects.toThrow(/still has members/);
     expect(fs.existsSync(path.join(api, ".talking-stick", "room.toml"))).toBe(true);
+    // codex already moved to root, so claude is the last agent in #api.
     process.env.TT_HARNESS_AGENT_ID = "claude:rooms";
     await captureStdout(["leave", "--in", "api", "--json"]);
     process.env.TT_HARNESS_AGENT_ID = "codex:rooms";
-    await captureStdout(["leave", "--in", "api", "--json"]);
     const removed = JSON.parse(await captureStdout(["room", "remove", path.join(api, "src"), "--json"]));
     // The last agent leaving already deleted the room; remove retires it otherwise.
     expect(removed.status).toBe("removed");

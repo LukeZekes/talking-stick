@@ -3,6 +3,7 @@ import os from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { RoleSubject, RoomRoleAssignment } from "./roles.js";
 import {
+  insideNestedRepository,
   isWithinOrSame,
   resolveContextPath,
   roomCandidatePaths,
@@ -394,6 +395,18 @@ export class TalkingStickService {
       const hadOtherMembers = this.getMembers(
         roomSelection.room.room_id
       ).some((member) => member.agent_id !== input.agent_id);
+      // An agent takes part in one conversation per repository: joining a
+      // child or sibling room moves it out of the others. Consoles observe
+      // many rooms and are never moved.
+      const movedFrom =
+        input.process_metadata?.session_kind === HUMAN_CHAT_SESSION_KIND
+          ? []
+          : this.leaveOtherRepositoryRooms(
+              roomSelection.room,
+              input.agent_id,
+              input.room_id || !resolved.checkout_root ? null : resolved.workspace_root,
+              timestamp
+            );
 
       this.upsertMember(
         roomSelection.room.room_id,
@@ -426,6 +439,9 @@ export class TalkingStickService {
       }
       const warning = joinWarnings(
         roomSelection.warning,
+        movedFrom.length > 0
+          ? `Left ${movedFrom.join(", ")}: an agent is in one room per repository.`
+          : undefined,
         input.room_id ? undefined : resolved.declaration?.problem,
         supersededAgentIds.length > 0
           ? `Superseded previous harness session(s): ${supersededAgentIds.join(", ")}.`
@@ -456,6 +472,52 @@ export class TalkingStickService {
         handoff_template: handoffTemplate()
       };
     });
+  }
+
+  // Removes the agent from every other room in the target room's repository
+  // and returns their paths. Refuses while it holds or is reserved the turn in
+  // one of them, so a move never strands a lease. Runs inside joinPath's
+  // transaction.
+  private leaveOtherRepositoryRooms(
+    target: PathRoomRow,
+    agentId: AgentId,
+    coordinationRoot: string | null,
+    timestamp: string
+  ): string[] {
+    // Rooms are keyed under the main checkout, so a linked worktree compares
+    // against its coordination root rather than its own checkout path.
+    const repositoryRoot = coordinationRoot ?? coordinationRootOf(target.canonical_path);
+    if (!repositoryRoot) return [];
+    const others = this.db.prepare<[string, string], { room_id: string }>(
+      "SELECT room_id FROM room_members WHERE agent_id = ? AND room_id != ?"
+    ).all(agentId, target.room_id)
+      .map((row) => this.getRoomRow(row.room_id))
+      .filter((room): room is PathRoomRow => room !== undefined &&
+        isWithinOrSame(room.canonical_path, repositoryRoot) &&
+        !insideNestedRepository(room.canonical_path, repositoryRoot));
+    const holding = others.find((room) => room.owner === agentId || room.reserved_for === agentId);
+    if (holding) {
+      throw new ProtocolError(
+        "holds_turn_elsewhere",
+        `${agentId} holds or is next for the turn in ${holding.canonical_path}; release it there before joining ${target.canonical_path}.`,
+        { agent_id: agentId, current_owner: holding.owner, reserved_for: holding.reserved_for }
+      );
+    }
+    for (const room of others) {
+      this.db.prepare("DELETE FROM room_members WHERE room_id = ? AND agent_id = ?")
+        .run(room.room_id, agentId);
+      this.appendEvent({
+        room_id: room.room_id,
+        turn_id: room.turn_id,
+        event_type: "leave",
+        from_agent_id: agentId,
+        to_agent_id: null,
+        handoff: null,
+        reason: `moved to ${target.canonical_path}`,
+        created_at: timestamp
+      });
+    }
+    return others.map((room) => room.canonical_path);
   }
 
   /** A hook's exact session identity is evidence that PID liveness cannot give. */
@@ -5784,6 +5846,17 @@ function isProvisionalHarnessSessionId(sessionId: string): boolean {
 
 function isVerifiedHarnessSessionId(sessionId: string): boolean {
   return sessionId.startsWith("harness:");
+}
+
+// The Git coordination root (main checkout) for a room's path, or null when
+// the path is gone or outside any repository (then nothing is moved).
+function coordinationRootOf(canonicalPath: string): string | null {
+  try {
+    const resolved = resolveContextPath(canonicalPath);
+    return resolved.checkout_root ? resolved.workspace_root : null;
+  } catch {
+    return null;
+  }
 }
 
 function joinWarnings(
