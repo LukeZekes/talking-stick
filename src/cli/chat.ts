@@ -1225,6 +1225,12 @@ export async function runChatSession(
       // and the wheel. The same editor as full-screen mode handles bracketed
       // paste, multiline drafts, and completion; only the drawing differs.
       inlineActive = true;
+      // Start at the bottom row so the composer sits at the foot of the pane
+      // from the first frame and history grows upward above it. Padding only
+      // to the bottom keeps whatever was already on screen in view.
+      const row = await queryCursorRow(options.input, output);
+      const rows = dimensions().rows;
+      if (row !== null && row < rows) output.write("\n".repeat(rows - row));
       output.write("\u001b[?2004h");
       editor = new ChatInputController({
         input: options.input,
@@ -1448,4 +1454,35 @@ export function uniqueRoomNames(rooms: ReadonlyArray<Pick<PathRoom, "room_id" | 
 
 function isRoomGone(error: unknown): boolean {
   return error instanceof ProtocolError && error.code === "room_not_found";
+}
+
+type CursorQueryInput = Readable & { isRaw?: boolean; setRawMode?: (raw: boolean) => void };
+
+// Asks the terminal for the cursor row (DSR 6). Resolves null when the input
+// is not a raw-capable TTY or no report arrives in time, so callers keep the
+// unpadded layout rather than guessing.
+export function queryCursorRow(input: Readable, output: NodeJS.WritableStream, timeoutMs = 200): Promise<number | null> {
+  const raw = input as CursorQueryInput;
+  if (typeof raw.setRawMode !== "function") return Promise.resolve(null);
+  const wasRaw = Boolean(raw.isRaw);
+  raw.setRawMode(true);
+  return new Promise((resolve) => {
+    let buffer = "";
+    const finish = (row: number | null) => {
+      clearTimeout(timer);
+      input.off("data", onData);
+      input.pause();
+      if (!wasRaw) raw.setRawMode?.(false);
+      resolve(row);
+    };
+    const onData = (data: Buffer | string) => {
+      buffer += data.toString();
+      const report = /\u001b\[(\d+);\d+R/.exec(buffer);
+      if (report) finish(Number(report[1]));
+    };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    input.on("data", onData);
+    input.resume();
+    output.write("\u001b[6n");
+  });
 }
