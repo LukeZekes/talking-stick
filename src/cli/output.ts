@@ -284,38 +284,15 @@ export function indent(text: string, prefix = "  "): string {
     .join("\n");
 }
 
-export function printHelp(): void {
+// The command list comes from the registry, so new commands appear here
+// without a second list to keep in sync. Internal hook commands are omitted.
+export function printHelp(usages: readonly string[]): void {
   process.stdout.write(`Usage: tt <command> [options]
 
 Commands:
-  tt whoami [--explain]
-  tt list [path]
-  tt join [path] [--force-new]
-  tt leave [path]
-  tt kick <agent_id> [path] [--reason TEXT] [--force]
-  tt wait [path] [--timeout 110s] [--park] [--after N]
-  tt standby [path] [--wake cmux|manual]
-  tt try [path] [--park] [--after N]
-  tt state [path] [--all]
-  tt health [path] [--verbose|--all]
-  tt status [path] [--verbose|--all]
-  tt events [path] [--all] [--after N] [--limit N] [--wait|--follow] [--event TYPE[,TYPE]] [--target self|any|agent]
-  tt msg send <recipient|room> <body...> [--interrupt] [--stdin] [--path DIR]
-  tt msg recv [--wait|--follow] [--from agent] [--after N] [--target self|any|agent] [--path DIR]
-  tt instructions show [path] [--harness claude|codex|antigravity|gemini|grok|opencode|all] [--scope effective|bundled|user|project]
-  tt instructions edit [path] [--user|--project]
-  tt instructions update [path] [--user|--project] [--replace]
-  tt instructions reset [path] (--user|--project)
-  tt release [path] (--status TEXT --next-action TEXT | --stdin)
-  tt pass [path] (--status TEXT --next-action TEXT | --stdin)
-  tt assign <target|next> [path] (--status TEXT --next-action TEXT | --stdin) [--operator-requested]
-  tt take [path] [--reason TEXT] [--operator-requested]
-  tt takeover [path] [--reason TEXT] [--operator-requested]
-  tt notes add <body> [--turn N] [--path DIR] [--stdin]
-  tt notes list [--all] [--after NOTE_ID] [--limit N] [--path DIR]
-  tt install <harness...> | --all [--print] [--copy] [--link] [--replace] [--no-guard]
-  tt uninstall <harness...|agents> | --all | --shared [--print]
-  tt self-update [--print] [--manager npm|pnpm|yarn|bun]
+${usages.map((usage) => `  ${usage}`).join("\n")}
+
+Run \`tt <command> --help\` for a command's details.
 
 Harnesses: ${SUPPORTED_HARNESSES.join(", ")} (claude aliases claude-code)
 

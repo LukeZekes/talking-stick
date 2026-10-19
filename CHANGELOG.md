@@ -11,22 +11,27 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+## [0.22.0] — 2026-10-19
+
+Full notes: [`docs/releases/0.22.0.md`](docs/releases/0.22.0.md).
+
 ### Breaking changes
 
 - An agent is in one room per repository. Joining a child or sibling room (by path, `--in`, or `TT_ROOM`) leaves the agent's other rooms in that repository, with a `leave` event whose reason is `moved to <path>`, and the join result warns `Left …`. A join is refused with `holds_turn_elsewhere` while the agent holds or is reserved the turn in the room it would leave. Chat consoles still observe many rooms, and rooms in other repositories are unaffected.
+- `tt up` in Herdr's current tab turns the invoking pane into the chat console once the agents have started, instead of opening chat in a new split. Agents open to the right of it and share that column at equal heights. `--agents` is optional: without it, `tt up` launches every verified agent (Claude, Codex, Antigravity) whose executable and Talking Stick skill are installed. Grok and OpenCode remain available through an explicit `--agents`. Chat opens in place only from an interactive terminal outside an agent harness; otherwise, and with `--json`, the result says to run `tt chat --in <room>`.
 
 ### Added
 
 - `/rooms` and Ctrl+T open a directory tree with live room member counts, unread counts, and collapsed descendant totals. Arrow keys navigate, Enter opens the selected directory’s room, and `n` offers to create a room boundary after confirmation.
-
 - Chat member actions: `/members` opens a keyboard picker in inline or fullscreen chat. With `--fullscreen --mouse`, right-click a visible member in the status bar to message or remove that exact session. Removal requires confirmation and leaves the harness running. Herdr can forward right-clicks with its pane input routing or configured modifier.
-
+- Chat message bodies are highlighted by kind: inline and fenced code, bold, headings, list and quote markers, URLs, file paths, `#123` references, and agent mentions in their harness colour. Styling only adds colour; copying from the terminal returns the original Markdown.
 - Room roles. `/roles` in `tt chat` opens an editor: ↑↓ picks a member, ←→ a role, Space toggles, `d` saves the row as that harness's default, Enter applies, Esc cancels. `/roles set|default` and `tt roles show|set|default` do the same from text. Precedence is exact agent > harness in the room > user default (`<data>/roles.json`) > bundled. Only the operator assigns roles. Applying tells exactly the agents whose roles changed, in one transaction with the change, through normal message delivery (`[roles vN] …`). `tt instructions show` replaces the bundled role lines with the room's live role block. Roles never grant write authority; only the stick does.
 
 ### Fixed
 
+- Inline chat starts its composer on the terminal's bottom row, so history grows upward above a prompt pinned to the foot of the pane. Content already on screen stays visible; terminals that do not report the cursor position keep the previous layout.
+- `tt --help` lists every public command, including `tt up`, `tt room`, `tt roles`, and `tt chat`, from the same registry that runs them, so new commands and flags such as `--in` and `--claim` can no longer go missing from the overview.
 - Standby omits diagnostics about unavailable automatically detected wake backends. It still reports whether it can self-wake and its available transports; explicit `--wake cmux` requests retain actionable errors.
-
 - Inline chat keeps the room bar and prompt at a stable terminal position while command or mention suggestions open and close. `/go` now lists open rooms immediately; Up/Down selects one and a single Enter switches to it. Room cycling accepts more terminal Alt+Arrow encodings and Ctrl+PgUp/PgDn as a fallback, including rooms with no agents.
 
 ## [0.21.0] — 2026-10-15
@@ -686,6 +691,7 @@ Initial alpha. Core room protocol, SQLite-backed persistence, multi-process
 contention coverage, MCP smoke coverage, human guardian flow, harness
 installers, and the portable `talking-stick` skill.
 
+[0.22.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.22.0
 [0.21.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.21.0
 [0.20.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.20.0
 [0.19.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.19.0
