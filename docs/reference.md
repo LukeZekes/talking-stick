@@ -36,7 +36,7 @@ tt health [path] [--verbose|--all]                        # concise safety/actio
 tt status [path] [--verbose|--all]                        # alias for health
 tt events [path] [--all] [--after N] [--limit N] [--wait|--follow] [--event TYPE[,TYPE]] [--target self|any|agent]
 tt chat [path] [--history N] [--events] [--fullscreen] [--mouse|--no-mouse]   # operator console
-tt up --agents claude,codex[,grok] [--path DIR] [--in ROOM] [--new-tab|--new-workspace] [--print] [--forget] [--timeout 120s] # experimental Herdr launcher
+tt up [--agents claude,codex,grok,opencode,antigravity] [--path DIR] [--in ROOM] [--new-tab|--new-workspace] [--print] [--forget] [--timeout 120s] # experimental Herdr launcher
 tt msg send <recipient|room> <body...> [--interrupt] [--stdin] [--path DIR]
 tt msg recv [--wait|--follow] [--from agent] [--after N] [--target self|any|agent] [--path DIR]
 tt ack <delivery-token> [--json]                          # acknowledge a native delivery envelope
@@ -56,6 +56,13 @@ tt install <harness...> | --all [--print] [--copy] [--link] [--replace] [--no-gu
 tt uninstall <harness...|agents> | --all | --shared [--print]
 tt self-update [--print] [--manager npm|pnpm|yarn|bun]
 ```
+
+In Herdr, `tt up` defaults to installed Claude, Codex, and Antigravity launchers. The invoking
+terminal becomes chat; agent panes split to its right with equal shares of the
+side column. Grok and OpenCode launchers require an explicit `--agents` list.
+`--print` shows the selected agents and any
+installed experimental launchers. `--json`, redirected terminals, and harness
+tool calls return a manual `tt chat --in` step instead of attaching chat.
 
 `[path]` defaults to the current working directory. Pass it only when you intentionally
 want a different room.

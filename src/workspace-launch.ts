@@ -5,7 +5,6 @@ import type { HarnessId } from "./harness-model.js";
 import {
   listHerdrAgents,
   paneExists,
-  preferredSplitDirection,
   readPaneLayout,
   type HerdrAgent,
   type HerdrContext,
@@ -24,7 +23,7 @@ import { resolvePrimarySkillTargetPath } from "./skill-install.js";
 import type { RoomMember } from "./types.js";
 
 export type LaunchTopology = "here" | "new-tab" | "new-workspace";
-export type LaunchAgent = "claude" | "codex" | "grok";
+export type LaunchAgent = "claude" | "codex" | "grok" | "opencode" | "antigravity";
 export type CheckStatus = "ok" | "uncertain" | "failed";
 
 export interface LaunchAdapter {
@@ -35,15 +34,18 @@ export interface LaunchAdapter {
   initial_prompt: boolean;
   cli_args: string[];
   experimental: boolean;
+  default_enabled: boolean;
 }
 
 // Explicit per-harness adapters; other Herdr kinds are not implied support.
 const LAUNCH_ADAPTERS: Record<LaunchAgent, LaunchAdapter> = {
-  claude: { herdr_kind: "claude", harness: "claude-code", executable: "claude", initial_prompt: true, cli_args: [], experimental: false },
+  claude: { herdr_kind: "claude", harness: "claude-code", executable: "claude", initial_prompt: true, cli_args: [], experimental: false, default_enabled: true },
   // With the shared daemon, Codex tools and hooks inherit the daemon's stale
   // Herdr pane and PID, so neither Herdr nor tt can prove the new pane joined.
-  codex: { herdr_kind: "codex", harness: "codex", executable: "codex", initial_prompt: true, cli_args: ["--no-daemon"], experimental: false },
-  grok: { herdr_kind: "grok", harness: "grok", executable: "grok", initial_prompt: true, cli_args: [], experimental: true }
+  codex: { herdr_kind: "codex", harness: "codex", executable: "codex", initial_prompt: true, cli_args: ["--no-daemon"], experimental: false, default_enabled: true },
+  grok: { herdr_kind: "grok", harness: "grok", executable: "grok", initial_prompt: true, cli_args: [], experimental: true, default_enabled: false },
+  opencode: { herdr_kind: "opencode", harness: "opencode", executable: "opencode", initial_prompt: true, cli_args: ["--prompt"], experimental: true, default_enabled: false },
+  antigravity: { herdr_kind: "agy", harness: "antigravity", executable: "agy", initial_prompt: true, cli_args: ["--prompt-interactive"], experimental: true, default_enabled: true }
 };
 
 export const LAUNCH_AGENTS = Object.keys(LAUNCH_ADAPTERS) as LaunchAgent[];
@@ -138,6 +140,18 @@ export function parseLaunchAgents(value: string | undefined): LaunchAgent[] {
   return agents;
 }
 
+// An omitted --agents selects launchers that can run and read their installed
+// Talking Stick skill on this machine. Explicit --agents keeps the usual
+// preflight behavior so a missing pane-shell binary can still be diagnosed.
+export function installedLaunchAgents(env: NodeJS.ProcessEnv = process.env, homeDir?: string, includeExperimental = false): LaunchAgent[] {
+  return LAUNCH_AGENTS.filter((agent) => {
+    const adapter = LAUNCH_ADAPTERS[agent];
+    if (!adapter.default_enabled && !includeExperimental) return false;
+    const skillPath = resolvePrimarySkillTargetPath(adapter.harness as Exclude<HarnessId, "gemini">, { homeDir });
+    return findOnPath(adapter.executable, env.PATH ?? "") !== null && fs.existsSync(path.join(skillPath, "SKILL.md"));
+  });
+}
+
 export function buildBootstrapPrompt(skillPath: string, canonicalPath: string): string {
   return [
     `Use the talking-stick skill (${path.join(skillPath, "SKILL.md")}).`,
@@ -167,12 +181,10 @@ export function planWorkspaceLaunch(input: PlanWorkspaceLaunchInput): WorkspaceL
     checks.push({ name: "herdr", status: "failed", detail: "HERDR_WORKSPACE_ID is missing, so a tab cannot be created in this workspace." });
   }
 
-  let callerDirection: "right" | "down" = "right";
   let herdrAgents: HerdrAgent[] = [];
   if (input.herdr) {
     try {
       const layout = readPaneLayout(input.runner, input.herdr.pane_id);
-      callerDirection = preferredSplitDirection(layout.rect);
       checks.push({ name: "herdr", status: "ok", detail: `Caller pane ${layout.pane_id} is ${layout.rect.width}x${layout.rect.height}.` });
       herdrAgents = listHerdrAgents(input.runner);
     } catch (error) {
@@ -223,9 +235,9 @@ export function planWorkspaceLaunch(input: PlanWorkspaceLaunchInput): WorkspaceL
   const chatMembers = input.room?.members.filter((member) =>
     member.status === "active" && member.session_kind === "human_chat" && CHAT_MEMBER_PATTERN.test(member.agent_id)
   ) ?? [];
-  // A console elsewhere in the room does not supply the requested new layout.
-  // On rerun, reuse only the console our record can prove in its own pane.
-  const chatMember = input.topology === "here" ? chatMembers[0]
+  // A console elsewhere in the room does not supply the requested layout.
+  // The invoking pane is running `tt up`, so it cannot already host chat.
+  const chatMember = input.topology === "here" ? undefined
     : input.record?.chat_pane_id ? chatMembers.find((member) => proveChatMemberInPane(member, input.record!.chat_pane_id!, input)) : undefined;
   let chat: WorkspaceLaunchPlan["chat"] = chatMember
     ? chatMember.process_liveness === "alive"
@@ -235,11 +247,11 @@ export function planWorkspaceLaunch(input: PlanWorkspaceLaunchInput): WorkspaceL
   const oldAgentOnlyAnchor = input.topology !== "here" && input.record?.anchor?.state === "created" &&
     !input.record.chat_state && !input.record.chat_pane_id &&
     Object.values(input.record.agents).some((agent) => agent.pane_id === input.record!.anchor!.pane_id);
-  if (!chatMember && !oldAgentOnlyAnchor && input.record?.anchor && input.record.anchor.state !== "failed" &&
+  if (input.topology !== "here" && !chatMember && !oldAgentOnlyAnchor && input.record?.anchor && input.record.anchor.state !== "failed" &&
       (!input.record.anchor.pane_id || paneExists(input.runner, input.record.anchor.pane_id) !== false)) {
     chat = { action: "inspect", reason: `An earlier launch created or may have created an anchor${input.record.anchor.pane_id ? ` in pane ${input.record.anchor.pane_id}` : ""}; inspect it before opening another console. Use --forget only after checking the old panes.` };
   }
-  if (!chatMember && input.record?.chat_state && input.record.chat_state !== "failed" &&
+  if (input.topology !== "here" && !chatMember && input.record?.chat_state && input.record.chat_state !== "failed" &&
       (!input.record.chat_pane_id || paneExists(input.runner, input.record.chat_pane_id) !== false)) {
     chat = { action: "inspect", reason: `An earlier chat submission (${input.record.chat_state}) is still unconfirmed${input.record.chat_pane_id ? ` in pane ${input.record.chat_pane_id}` : ""}. Inspect it; use --forget only after checking the old panes.` };
   }
@@ -247,7 +259,7 @@ export function planWorkspaceLaunch(input: PlanWorkspaceLaunchInput): WorkspaceL
     chat = { action: "inspect", reason: "No agents need launching, so a new layout would contain only a console. Run tt chat in the existing agents' tab, or close the old agents and use --forget for a fresh layout." };
   }
   const steps = input.herdr
-    ? planSteps(input.topology, input.herdr, canonicalPath, callerDirection, chat.action === "launch", agents,
+    ? planSteps(input.topology, input.herdr, canonicalPath, chat.action === "launch", agents,
         input.pin_room_id ?? input.room?.room_id ?? "<room-id>")
     : [];
 
@@ -307,7 +319,6 @@ function planSteps(
   topology: LaunchTopology,
   herdr: HerdrContext,
   canonicalPath: string,
-  callerDirection: "right" | "down",
   openChat: boolean,
   agents: LaunchAgentPlan[],
   pinRoomId: string
@@ -317,10 +328,9 @@ function planSteps(
   const pin = ["--env", `TT_ROOM=${pinRoomId}`];
   const launching = agents.filter((agent) => agent.action === "launch");
   if (!openChat && launching.length === 0) return steps;
-  // Without a new chat console, the first agent takes the anchor pane instead.
+  // New tabs/workspaces get a fresh anchor. In the current tab, the caller
+  // remains chat and every agent gets a pane beside it.
   const anchorPane = openChat ? "<chat-pane>" : "<anchor-pane>";
-  // Agents stack perpendicular to the chat split so columns stay usable.
-  let agentDirection: "right" | "down" = "right";
   if (topology === "new-workspace") {
     steps.push({
       kind: "anchor",
@@ -335,34 +345,29 @@ function planSteps(
       description: `Create a tab in the caller's workspace; its root pane (${anchorPane}) anchors the layout.`,
       argv: ["herdr", "tab", "create", "--workspace", herdr.workspace_id ?? "<workspace>", "--cwd", canonicalPath, "--label", "talking-stick", ...pin, "--no-focus"]
     });
-  } else {
-    steps.push({
-      kind: "anchor",
-      produces: anchorPane,
-      description: `Split the caller pane for ${anchorPane}, keeping focus.`,
-      argv: ["herdr", "pane", "split", "--pane", herdr.pane_id, "--direction", callerDirection, "--cwd", canonicalPath, ...pin, "--no-focus"]
-    });
-    agentDirection = callerDirection === "right" ? "down" : "right";
   }
-  if (openChat) {
+  if (openChat && topology !== "here") {
     steps.push({ kind: "chat", description: "Open the operator chat console.", argv: ["herdr", "pane", "run", anchorPane, `tt chat --in ${pinRoomId}`] });
   }
 
-  let previous = anchorPane;
+  let previous = topology === "here" ? herdr.pane_id : anchorPane;
   let first = true;
-  for (const agent of launching) {
-    // The anchor is already a fresh shell when no chat console occupies it.
-    const reuseAnchor = first && !openChat;
+  for (const [index, agent] of launching.entries()) {
+    // Only a fresh tab/workspace anchor can host an agent directly.
+    const reuseAnchor = topology !== "here" && first && !openChat;
     const pane = reuseAnchor ? anchorPane : `<${agent.agent}-pane>`;
-    // In a fresh tab the first agent sits beside chat; the rest stack below it.
-    const direction = topology === "here" ? agentDirection : first ? "right" : "down";
+    // The first agent sits to the right of chat; the rest stack below it.
+    const direction = first ? "right" : "down";
+    // Splitting the bottom pane at 50% each time makes later agents tiny.
+    // The old pane takes one equal share of the remaining column instead.
+    const ratio = first ? [] : ["--ratio", String(1 / (launching.length - index + 1))];
     if (!reuseAnchor) {
       steps.push({
         kind: "split",
         agent: agent.agent,
         produces: pane,
         description: `Create a fresh shell pane for ${agent.agent}.`,
-        argv: ["herdr", "pane", "split", "--pane", previous, "--direction", direction, "--cwd", canonicalPath, ...pin, "--no-focus"]
+        argv: ["herdr", "pane", "split", "--pane", previous, "--direction", direction, ...ratio, "--cwd", canonicalPath, ...pin, "--no-focus"]
       });
     }
     const start = [

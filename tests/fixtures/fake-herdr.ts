@@ -27,6 +27,7 @@ export class FakeHerdr {
   readonly startBehavior: Record<string, FakeStartBehavior> = {};
   failSplit = false;
   ambiguousSplitAt: number | null = null;
+  ambiguousCreate = false;
   ambiguousChat = false;
   emptyChatOutput = false;
   failFocus = false;
@@ -68,9 +69,10 @@ export class FakeHerdr {
       }
       const agent = pane.agent;
       if (!agent || !agent.joins) continue;
+      const harness = agent.kind === "agy" ? "antigravity" : agent.kind;
       members.push({
-        agent_id: `${agent.kind}:${agent.pid}`,
-        harness_name: agent.kind,
+        agent_id: `${harness}:${agent.pid}`,
+        harness_name: harness,
         status: "active",
         session_kind: "harness_cli",
         process_liveness: "alive",
@@ -119,7 +121,9 @@ export class FakeHerdr {
       return ok({ pane: { pane_id: pane } });
     }
     if ((group === "tab" || group === "workspace") && command === "create") {
-      return ok({ root_pane: { pane_id: this.createPane() },
+      const pane = this.createPane();
+      if (this.ambiguousCreate) throw new Error("spawnSync herdr ETIMEDOUT");
+      return ok({ root_pane: { pane_id: pane },
         ...(!this.omitDestinationIds ? {
         tab: { tab_id: "w1:t2", workspace_id: "w1", number: 2, label: "talking-stick" },
         ...(group === "workspace" ? { workspace: { workspace_id: "w1" } } : {}) } : {}) });

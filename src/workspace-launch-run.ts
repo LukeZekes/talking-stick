@@ -57,7 +57,7 @@ export interface LaunchAgentOutcome {
 export interface WorkspaceLaunchResult {
   status: "launched" | "partial" | "nothing_to_do" | "blocked";
   canonical_path: string;
-  chat: { state: "opened" | "submitted" | "skipped" | "inspect" | "failed" | "ambiguous" | "not_started"; pane_id: string | null; detail: string };
+  chat: { state: "ready" | "opened" | "submitted" | "skipped" | "inspect" | "failed" | "ambiguous" | "not_started"; pane_id: string | null; detail: string };
   agents: LaunchAgentOutcome[];
   next_steps: string[];
   destination: { workspace_id: string | null; tab_id: string | null; tab_number: number | null; label: string; focused: boolean; focus_error?: string } | null;
@@ -79,9 +79,11 @@ export async function executeWorkspaceLaunch(
     detail: agent.reason ?? ""
   }]));
   const chat: WorkspaceLaunchResult["chat"] = {
-    state: plan.chat.action === "launch" ? "not_started" : plan.chat.action === "skip" ? "skipped" : "inspect",
-    pane_id: null,
-    detail: plan.chat.reason ?? ""
+    state: plan.chat.action === "launch" ? plan.topology === "here" ? "ready" : "not_started"
+      : plan.chat.action === "skip" ? "skipped" : "inspect",
+    pane_id: plan.chat.action === "launch" && plan.topology === "here" ? plan.herdr?.pane_id ?? null : null,
+    detail: plan.chat.action === "launch" && plan.topology === "here"
+      ? "Chat will open in this pane after agent startup." : plan.chat.reason ?? ""
   };
   let destination: WorkspaceLaunchResult["destination"] = null;
   const finish = (status: WorkspaceLaunchResult["status"]): WorkspaceLaunchResult => ({
@@ -96,7 +98,7 @@ export async function executeWorkspaceLaunch(
 
   if (plan.status === "blocked") return finish("blocked");
   if (plan.steps.length === 0) {
-    return finish(plan.status === "ready" ? "nothing_to_do" : "partial");
+    return finish(plan.status === "ready" ? chat.state === "ready" ? "launched" : "nothing_to_do" : "partial");
   }
 
   const record: LaunchRecord = deps.record ?? {
@@ -244,7 +246,7 @@ export async function executeWorkspaceLaunch(
     plan.agents.find((agent) => agent.agent === outcome.agent)?.action === "launch"
   );
   const complete = launched.every((outcome) => outcome.state === "confirmed") &&
-    (chat.state === "opened" || chat.state === "skipped") &&
+    (chat.state === "ready" || chat.state === "opened" || chat.state === "skipped") &&
     plan.status === "ready" && !destination?.focus_error;
   return finish(complete ? "launched" : "partial");
 

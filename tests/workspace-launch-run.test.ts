@@ -29,7 +29,7 @@ function setup() {
   const dataDir = path.join(root, "data");
   fs.mkdirSync(repo, { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
-  for (const name of ["tt", "claude", "codex", "grok"]) {
+  for (const name of ["tt", "claude", "codex", "grok", "opencode", "agy"]) {
     fs.writeFileSync(path.join(bin, name), "#!/bin/sh\n", { mode: 0o755 });
   }
   for (const dir of [[".claude", "skills"], [".agents", "skills"]]) {
@@ -87,10 +87,10 @@ describe("tt up execution", () => {
       messages.push(message);
     });
     expect(result.status).toBe("launched");
-    expect(messages.some((message) => message.includes("Chat: submitted"))).toBe(true);
+    expect(messages.some((message) => message.includes("Chat: submitted"))).toBe(false);
     expect(messages.filter((message) => message.startsWith("Waiting for joins"))).toEqual([
-      "Waiting for joins (up to 10s): chat submitted, claude started.",
-      "Waiting for joins (up to 10s): chat opened, claude confirmed."
+      "Waiting for joins (up to 10s): chat ready, claude started.",
+      "Waiting for joins (up to 10s): chat ready, claude confirmed."
     ]);
   });
 
@@ -110,12 +110,87 @@ describe("tt up execution", () => {
         homeDir: home, runner: herdr.runner, readStartTime: (pid) => herdr.startTimes.get(pid) ?? null
       });
       expect(JSON.parse(output.join(""))).toMatchObject({ status: "launched" });
+      expect(JSON.parse(output.join("")).next_steps.join(" ")).toContain("Run tt chat --in room-1");
       expect(progress.join("")).toContain("[tt up] Waiting for joins");
       expect(progress.join("")).toContain("claude: confirmed");
     } finally {
       stdout.mockRestore();
       stderr.mockRestore();
     }
+  });
+
+  test("omitting --agents selects every installed launcher", async () => {
+    const { herdr, repo, home, bin, dataDir } = setup();
+    const runtime = { commands: {
+      listRooms: () => ({ rooms: [{ canonical_path: repo, room_id: "room-1" }] }),
+      getRoomState: () => ({ members: herdr.members() })
+    } } as unknown as Runtime;
+    const output: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => { output.push(String(chunk)); return true; });
+    try {
+      await handleUpCommand(runtime, parseCommand(["up", "--path", repo, "--print", "--json"]), {
+        env: { PATH: bin, TALKING_STICK_DATA_DIR: dataDir, HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+        homeDir: home, runner: herdr.runner
+      });
+    } finally { stdout.mockRestore(); }
+    const plan = JSON.parse(output.join(""));
+    expect(plan.agents.map((agent: { agent: string }) => agent.agent)).toEqual(["claude", "codex", "antigravity"]);
+    expect(plan.checks.find((check: { name: string }) => check.name === "optional launchers")?.detail).toContain("grok, opencode");
+  });
+
+  test.each(["opencode", "antigravity"] as const)("confirms a %s join in its pane", async (agent) => {
+    const { run } = setup();
+    const result = await run([agent]);
+    expect(result.status).toBe("launched");
+    expect(result.agents[0]).toMatchObject({ agent, state: "confirmed", pane_id: "w1:p2" });
+  });
+
+  test("tt up opens chat in the invoking pane after releasing the launch lock", async () => {
+    const { herdr, repo, home, bin, dataDir } = setup();
+    const runtime = { commands: {
+      listRooms: () => ({ rooms: [{ canonical_path: repo, room_id: "room-1" }] }),
+      getRoomState: () => ({ members: herdr.members() })
+    } } as unknown as Runtime;
+    const started: Array<{ path: string; room: string }> = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      await handleUpCommand(runtime, parseCommand(["up", "--agents", "claude", "--path", repo, "--text"]), {
+        env: { PATH: bin, TALKING_STICK_DATA_DIR: dataDir, HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+        homeDir: home, runner: herdr.runner, readStartTime: (pid) => herdr.startTimes.get(pid) ?? null,
+        stdinIsTTY: true, stdoutIsTTY: true,
+        startLocalChat: async (_runtime, contextPath, roomId) => {
+          const unlock = acquireLaunchLock(dataDir, repo, { timeoutMs: 0 });
+          unlock();
+          started.push({ path: contextPath, room: roomId });
+        }
+      });
+    } finally { stdout.mockRestore(); }
+    expect(started).toEqual([{ path: repo, room: "room-1" }]);
+    expect(herdr.calls.some((call) => call[0] === "pane" && call[1] === "run")).toBe(false);
+  });
+
+  test.each([
+    ["pipe", {}, false, true],
+    ["harness", { CLAUDECODE: "1" }, true, true]
+  ] as const)("%s invocation reports a manual chat step without attaching", async (_label, markers, stdinIsTTY, stdoutIsTTY) => {
+    const { herdr, repo, home, bin, dataDir } = setup();
+    const runtime = { commands: {
+      listRooms: () => ({ rooms: [{ canonical_path: repo, room_id: "room-1" }] }),
+      getRoomState: () => ({ members: herdr.members() })
+    } } as unknown as Runtime;
+    let chatStarted = false;
+    const output: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => { output.push(String(chunk)); return true; });
+    try {
+      await handleUpCommand(runtime, parseCommand(["up", "--agents", "claude", "--path", repo, "--text"]), {
+        env: { PATH: bin, TALKING_STICK_DATA_DIR: dataDir, HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", ...markers },
+        homeDir: home, runner: herdr.runner, readStartTime: (pid) => herdr.startTimes.get(pid) ?? null,
+        stdinIsTTY, stdoutIsTTY,
+        startLocalChat: async () => { chatStarted = true; }
+      });
+    } finally { stdout.mockRestore(); }
+    expect(chatStarted).toBe(false);
+    expect(output.join("")).toContain("Run tt chat --in room-1 in this pane");
   });
 
   test("a subdirectory launch keeps the panes' cwd and pins the room an ordinary join selects", async () => {
@@ -179,22 +254,22 @@ describe("tt up execution", () => {
 
   test("an ambiguous anchor persists intent and a repeat creates no additional panes", async () => {
     const { run, herdr, repo, dataDir, mutations } = setup();
-    herdr.ambiguousSplitAt = 1;
-    expect((await run(["claude"])).status).toBe("partial");
+    herdr.ambiguousCreate = true;
+    expect((await run(["claude"], "new-tab")).status).toBe("partial");
     expect(readLaunchRecord(dataDir, repo)?.anchor?.state).toBe("ambiguous");
     const before = mutations().length;
-    const repeat = await run(["claude"]);
+    const repeat = await run(["claude"], "new-tab");
     expect(repeat.chat.state).toBe("inspect");
     expect(mutations().length).toBe(before);
   });
 
   test("an ambiguous agent split with an unknown pane ID is not repeated", async () => {
     const { run, herdr, mutations, repo, dataDir } = setup();
-    herdr.ambiguousSplitAt = 2;
-    await run(["claude"]);
+    herdr.ambiguousSplitAt = 1;
+    await run(["claude"], "new-tab");
     expect(readLaunchRecord(dataDir, repo)?.agents.claude).toMatchObject({ state: "ambiguous", pane_id: null });
     const before = mutations().length;
-    const repeat = await run(["claude"]);
+    const repeat = await run(["claude"], "new-tab");
     expect(repeat.agents[0].state).toBe("inspect");
     expect(mutations().length).toBe(before);
   });
@@ -203,11 +278,11 @@ describe("tt up execution", () => {
     const { run, herdr, setMembers, mutations, repo, dataDir } = setup();
     herdr.ambiguousChat = true;
     setMembers(() => []);
-    await run(["claude"]);
+    await run(["claude"], "new-tab");
     expect(readLaunchRecord(dataDir, repo)?.chat_state).toBe("ambiguous");
     for (const pane of herdr.panes.values()) pane.chat = false;
     const before = mutations().length;
-    const repeat = await run(["claude"]);
+    const repeat = await run(["claude"], "new-tab");
     expect(repeat.chat.state).toBe("inspect");
     expect(mutations().length).toBe(before);
   });
@@ -216,7 +291,7 @@ describe("tt up execution", () => {
     const { plan, dataDir, repo } = setup();
     writeLaunchRecord(dataDir, { canonical_path: repo, chat_pane_id: null, agents: {},
       anchor: { state: "creating", pane_id: null }, updated_at: new Date().toISOString() });
-    const repeat = plan(["claude"]);
+    const repeat = plan(["claude"], "new-tab");
     expect(repeat.chat.action).toBe("inspect");
     expect(repeat.steps.some((step) => step.kind === "chat")).toBe(false);
   });
@@ -243,30 +318,31 @@ describe("tt up execution", () => {
     release();
   });
 
-  test("launches chat and agents, then confirms each join by session and process", async () => {
+  test("launches agents beside the caller and leaves chat ready in that pane", async () => {
     const { run, herdr, dataDir, repo } = setup();
     const result = await run(["claude", "codex"]);
 
     expect(result.status).toBe("launched");
-    expect(result.chat).toMatchObject({ state: "opened", pane_id: "w1:p2" });
+    expect(result.chat).toMatchObject({ state: "ready", pane_id: "w1:p1" });
     expect(result.agents.map((agent) => [agent.agent, agent.state, agent.pane_id])).toEqual([
-      ["claude", "confirmed", "w1:p3"],
-      ["codex", "confirmed", "w1:p4"]
+      ["claude", "confirmed", "w1:p2"],
+      ["codex", "confirmed", "w1:p3"]
     ]);
     expect(result.agents[0].member_id).toMatch(/^claude:/);
     // Each agent splits from the pane created just before it, with real IDs.
     const splits = herdr.calls.filter((call) => call[1] === "split").map((call) => call[3]);
-    expect(splits).toEqual(["w1:p1", "w1:p2", "w1:p3"]);
+    expect(splits).toEqual(["w1:p1", "w1:p2"]);
+    expect(herdr.calls.some((call) => call[0] === "pane" && call[1] === "run")).toBe(false);
     const record = readLaunchRecord(dataDir, repo)!;
-    expect(record.chat_pane_id).toBe("w1:p2");
-    expect(record.agents.claude).toMatchObject({ pane_id: "w1:p3", state: "confirmed" });
+    expect(record.chat_pane_id).toBeNull();
+    expect(record.agents.claude).toMatchObject({ pane_id: "w1:p2", state: "confirmed" });
     expect(herdr.calls.some((call) => call[1] === "focus")).toBe(false);
   });
 
   test("accepts empty successful pane-run output only after live chat proof", async () => {
     const { run, herdr } = setup();
     herdr.emptyChatOutput = true;
-    const result = await run(["claude"]);
+    const result = await run(["claude"], "new-tab");
     expect(result.status).toBe("launched");
     expect(result.chat.state).toBe("opened");
   });
@@ -307,16 +383,18 @@ describe("tt up execution", () => {
     expect(result.destination?.focus_error).toContain("did not return the destination ID");
   });
 
-  test("a repeat launch after success creates nothing", async () => {
-    const { run, mutations, plan } = setup();
+  test("a repeat launch reopens chat without creating agent panes", async () => {
+    const { run, mutations, plan, herdr } = setup();
     const first = await run(["claude", "codex"]);
-    expect(renderResult(plan(["claude"]), first)).toMatch(/claude: confirmed \(w1:p3\) as claude:/);
+    expect(renderResult(plan(["claude"]), first)).toMatch(/claude: confirmed \(w1:p2\) as claude:/);
+    // The direct chat process joins from the caller pane after launch.
+    herdr.runner(["pane", "run", "w1:p1", "tt chat"]);
     const before = mutations().length;
     const preview = renderPlan(plan(["claude", "codex"]));
-    expect(preview).toMatch(/claude: skip — claude:\d+ is confirmed in pane w1:p3/);
-    expect(preview).toContain("Nothing to launch");
+    expect(preview).toMatch(/claude: skip — claude:\d+ is confirmed in pane w1:p2/);
+    expect(preview).toContain("Chat console: launch in the caller pane");
     const repeat = await run(["claude", "codex"]);
-    expect(repeat.status).toBe("nothing_to_do");
+    expect(repeat.status).toBe("launched");
     expect(repeat.agents.map((agent) => agent.state)).toEqual(["skipped", "skipped"]);
     expect(mutations().length).toBe(before);
   });
@@ -378,11 +456,11 @@ describe("tt up execution", () => {
 
   test("closed recorded panes allow a later fresh launch", async () => {
     const { run, herdr } = setup();
-    const first = await run(["claude"]);
+    const first = await run(["claude"], "new-tab");
     expect(first.status).toBe("launched");
     herdr.panes.delete(first.chat.pane_id!);
     herdr.panes.delete(first.agents[0].pane_id!);
-    const repeat = await run(["claude"]);
+    const repeat = await run(["claude"], "new-tab");
     expect(repeat.status).toBe("launched");
     expect(repeat.chat.pane_id).not.toBe(first.chat.pane_id);
   });
@@ -401,13 +479,13 @@ describe("tt up execution", () => {
     herdr.panes.set("w1:p8", { id: "w1:p8", chat: false, agent: null });
     writeLaunchRecord(dataDir, { canonical_path: repo, chat_pane_id: "w1:p8", chat_state: "ambiguous",
       anchor: { state: "created", pane_id: "closed-later-agent-anchor" }, agents: {}, updated_at: "now" });
-    expect(plan(["claude"]).chat.action).toBe("inspect");
+    expect(plan(["claude"], "new-tab").chat.action).toBe("inspect");
   });
 
   test("a submitted chat command without a live console cannot report full success", async () => {
     const { run, herdr, setMembers } = setup();
     setMembers(() => herdr.members().filter((member) => member.session_kind !== "human_chat"));
-    const result = await run(["claude"]);
+    const result = await run(["claude"], "new-tab");
     expect(result.status).toBe("partial");
     expect(result.agents[0].state).toBe("confirmed");
     expect(result.chat.state).toBe("submitted");
@@ -419,7 +497,7 @@ describe("tt up execution", () => {
     let polls = 0;
     setMembers(() => ++polls < 2
       ? herdr.members().filter((member) => member.session_kind !== "human_chat") : herdr.members());
-    const result = await run(["claude"]);
+    const result = await run(["claude"], "new-tab");
     expect(result.status).toBe("launched");
     expect(result.chat.state).toBe("opened");
     expect(polls).toBe(2);
@@ -429,7 +507,7 @@ describe("tt up execution", () => {
     const { run, herdr, setMembers } = setup();
     setMembers(() => herdr.members().map((member) => member.session_kind === "human_chat"
       ? { ...member, pid: member.pid! + 1000 } : member));
-    expect((await run(["claude"])).chat.state).toBe("submitted");
+    expect((await run(["claude"], "new-tab")).chat.state).toBe("submitted");
   });
 
   test("a new tab hosts chat in its root pane", async () => {
@@ -445,9 +523,9 @@ describe("tt up execution", () => {
     herdr.startBehavior.claude = "not_ready";
     const result = await run(["claude", "codex"]);
     expect(result.status).toBe("partial");
-    expect(result.agents[0]).toMatchObject({ state: "blocked", pane_id: "w1:p3" });
+    expect(result.agents[0]).toMatchObject({ state: "blocked", pane_id: "w1:p2" });
     expect(result.agents[1].state).toBe("confirmed");
-    expect(result.next_steps.join("\n")).toMatch(/claude in pane w1:p3 is waiting on a dialog/);
+    expect(result.next_steps.join("\n")).toMatch(/claude in pane w1:p2 is waiting on a dialog/);
     // No prompt or dialog answer is ever sent to the blocked pane.
     expect(herdr.calls.filter((call) => call[1] === "prompt" || call[1] === "send-keys")).toEqual([]);
   });
@@ -456,16 +534,16 @@ describe("tt up execution", () => {
     const { run, herdr, mutations } = setup();
     herdr.startBehavior.codex = "timeout";
     const first = await run(["codex"]);
-    expect(first.agents[0]).toMatchObject({ state: "ambiguous", pane_id: "w1:p3" });
+    expect(first.agents[0]).toMatchObject({ state: "ambiguous", pane_id: "w1:p2" });
     expect(herdr.calls.filter((call) => call[1] === "start")).toHaveLength(1);
 
     // The timed-out start did launch something in that pane after all.
-    herdr.addAgent("w1:p3", "codex", { session: null }).joins = false;
+    herdr.addAgent("w1:p2", "codex", { session: null }).joins = false;
     const before = mutations().length;
     const second = await run(["codex"]);
     expect(second.status).toBe("partial");
     expect(second.agents[0].state).toBe("inspect");
-    expect(second.agents[0].detail).toContain("pane w1:p3 (ambiguous)");
+    expect(second.agents[0].detail).toContain("pane w1:p2 (ambiguous)");
     expect(mutations().length).toBe(before);
   });
 
