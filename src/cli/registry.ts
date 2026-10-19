@@ -11,13 +11,14 @@ import { runClaudeStopHookCommand } from "./claude-stop-hook.js";
 import { runGrokSessionHookCommand } from "./grok-session-hook.js";
 import {
   runInstallCommand,
+  runPostInstallCommand,
   runSelfUpdateCommand,
   runUninstallCommand
 } from "./install-commands.js";
 import { handleInstructionsCommand } from "./instructions-commands.js";
 import { handleMsgCommand } from "./msg-commands.js";
 import { handleNotesCommand } from "./notes-commands.js";
-import type { ParsedCommand } from "./parser.js";
+import { getStringOption, type ParsedCommand } from "./parser.js";
 import {
   handleEventsCommand,
   handleHealthCommand,
@@ -109,6 +110,12 @@ export const COMMAND_REGISTRY: CommandEntry[] = [
     usage: "tt grok-session-hook",
     description: "Record Grok hook session context for identity resolution.",
     handler: () => runGrokSessionHookCommand()
+  },
+  {
+    name: "post-install", needsRuntime: false, startupMaintenance: false, internal: true,
+    usage: "tt post-install --bin-dir DIR",
+    description: "Finish a standalone install: link current, re-point managed skills, report an npm copy.",
+    handler: ({ parsed }) => runPostInstallCommand(getStringOption(parsed, "bin-dir"))
   },
   {
     name: "up",

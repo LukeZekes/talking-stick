@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
+import { digestDirectory, recordManagedContent } from "../src/managed-content.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // Builds the real `bun build --compile` binary, installs it with
@@ -35,7 +36,7 @@ describe.skipIf(!hasBun || !supported)("standalone binary", () => {
     bin = path.join(root, "bin dir");
     install = path.join(root, "install dir");
     execFileSync("sh", ["scripts/install.sh", "--base-url", assets, "--bin-dir", bin, "--install-dir", install],
-      { env: { ...process.env, HOME: path.join(root, "home") }, stdio: "pipe" });
+      { env: env(), stdio: "pipe" });
     tt = path.join(bin, "tt");
     fs.mkdirSync(path.join(root, "home"));
   }, 180_000);
@@ -58,6 +59,74 @@ describe.skipIf(!hasBun || !supported)("standalone binary", () => {
     execFileSync(process.execPath, [path.resolve("dist/cli.js"), "notes", "add", "from Node", "--json"],
       { cwd: project, env: env(), encoding: "utf8" });
     expect(JSON.stringify(run(["notes", "list"], project))).toContain("from Node");
+  });
+
+  it("recreates a missing current link, as after an upgrade by the 0.23.0 installer", () => {
+    const current = path.join(install, "current");
+    expect(fs.realpathSync(path.join(current, "tt"))).toBe(fs.realpathSync(tt));
+    fs.rmSync(current);
+    // Any maintained command heals the link, even one that then fails here.
+    spawnSync(tt, ["state", "--json"], { cwd: root, env: env() });
+    expect(fs.realpathSync(path.join(current, "tt"))).toBe(fs.realpathSync(tt));
+  });
+
+  it("writes nothing around an archive that was extracted and run by hand", () => {
+    const extracted = path.join(root, "Downloads", "talking-stick");
+    fs.mkdirSync(extracted, { recursive: true });
+    const release = path.dirname(fs.realpathSync(tt));
+    fs.cpSync(release, extracted, { recursive: true });
+    spawnSync(path.join(extracted, "tt"), ["state", "--json"], { cwd: root, env: env() });
+    expect(fs.existsSync(path.join(root, "current"))).toBe(false);
+    expect(fs.existsSync(path.join(root, "Downloads", "current"))).toBe(false);
+    const update = spawnSync(path.join(extracted, "tt"), ["self-update", "--print"], { env: env(), encoding: "utf8" });
+    expect(update.status).not.toBe(0);
+    expect(update.stderr).toContain("not installed by the installer");
+  });
+
+  it("migrates legacy skill links before explicit npm cleanup and blocks customized links", () => {
+    const fakeRoot = fs.realpathSync(root);
+    const npmRoot = path.join(fakeRoot, "npm", "lib", "node_modules");
+    const npmPackage = path.join(npmRoot, "talking-stick");
+    const npmSkill = path.join(npmPackage, "skills", "talking-stick");
+    fs.mkdirSync(path.join(npmPackage, "dist"), { recursive: true });
+    fs.writeFileSync(path.join(npmPackage, "dist", "cli.js"), "#!/bin/sh\necho fixture\n", { mode: 0o755 });
+    fs.cpSync(path.join(path.dirname(fs.realpathSync(tt)), "skills", "talking-stick"), npmSkill, { recursive: true });
+    const npmBin = path.join(fakeRoot, "npm", "bin");
+    fs.mkdirSync(npmBin, { recursive: true });
+    fs.symlinkSync(path.join(npmPackage, "dist", "cli.js"), path.join(npmBin, "tt"));
+    const log = path.join(fakeRoot, "npm-actions");
+    fs.writeFileSync(path.join(npmBin, "npm"), `#!${process.execPath}
+const fs = require("node:fs");
+const args = process.argv.slice(2).join(" ");
+if (args === "root -g") console.log(${JSON.stringify(npmRoot)});
+else if (args === "uninstall -g talking-stick") {
+  fs.writeFileSync(${JSON.stringify(log)}, args);
+  fs.rmSync(${JSON.stringify(npmPackage)}, {recursive: true, force: true});
+  fs.unlinkSync(${JSON.stringify(path.join(npmBin, "tt"))});
+} else process.exit(1);
+`, { mode: 0o755 });
+    const home = path.join(fakeRoot, "cleanup-home");
+    const cleanupEnv = { ...env(), HOME: home, TALKING_STICK_DATA_DIR: path.join(fakeRoot, "cleanup-data"),
+      PATH: `${npmBin}${path.delimiter}${fs.realpathSync(bin)}${path.delimiter}${process.env.PATH}` };
+    const legacySkill = path.join(home, ".codex", "skills", "talking-stick");
+    fs.mkdirSync(path.dirname(legacySkill), { recursive: true });
+    fs.symlinkSync(npmSkill, legacySkill);
+    recordManagedContent(legacySkill, "skill-copy", digestDirectory(npmSkill), { env: cleanupEnv });
+    fs.appendFileSync(path.join(npmSkill, "SKILL.md"), "\nlocal customization");
+    const args = ["scripts/install.sh", "--base-url", path.join(root, "assets"), "--bin-dir", bin, "--install-dir", install, "--remove-npm"];
+    const blocked = execFileSync("sh", args, { env: cleanupEnv, encoding: "utf8" });
+    expect(blocked).toContain("Not offering to remove");
+    expect(fs.existsSync(log)).toBe(false);
+    expect(fs.readlinkSync(legacySkill)).toBe(npmSkill);
+    // Restoring the recorded content makes the link eligible for migration.
+    fs.cpSync(path.join(path.dirname(fs.realpathSync(tt)), "skills", "talking-stick"), npmSkill, { recursive: true });
+    const cleaned = execFileSync("sh", args, { env: cleanupEnv, encoding: "utf8" });
+    expect(cleaned).toContain("Removed the npm copy");
+    expect(fs.readFileSync(log, "utf8")).toBe("uninstall -g talking-stick");
+    expect(fs.existsSync(npmPackage)).toBe(false);
+    expect(fs.readlinkSync(legacySkill)).toBe(path.join(fs.realpathSync(install), "current", "skills", "talking-stick"));
+    expect(fs.existsSync(path.join(legacySkill, "SKILL.md"))).toBe(true);
+    expect(spawnSync(tt, ["--help"], { env: cleanupEnv }).status).toBe(0);
   });
 
   it("finds its skill beside the executable and self-updates with the installed directories", () => {
