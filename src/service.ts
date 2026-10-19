@@ -404,7 +404,7 @@ export class TalkingStickService {
           : this.leaveOtherRepositoryRooms(
               roomSelection.room,
               input.agent_id,
-              input.room_id ? null : resolved.checkout_root,
+              input.room_id || !resolved.checkout_root ? null : resolved.workspace_root,
               timestamp
             );
 
@@ -481,10 +481,12 @@ export class TalkingStickService {
   private leaveOtherRepositoryRooms(
     target: PathRoomRow,
     agentId: AgentId,
-    checkoutRoot: string | null,
+    coordinationRoot: string | null,
     timestamp: string
   ): string[] {
-    const repositoryRoot = checkoutRoot ?? checkoutRootOf(target.canonical_path);
+    // Rooms are keyed under the main checkout, so a linked worktree compares
+    // against its coordination root rather than its own checkout path.
+    const repositoryRoot = coordinationRoot ?? coordinationRootOf(target.canonical_path);
     if (!repositoryRoot) return [];
     const others = this.db.prepare<[string, string], { room_id: string }>(
       "SELECT room_id FROM room_members WHERE agent_id = ? AND room_id != ?"
@@ -5846,11 +5848,12 @@ function isVerifiedHarnessSessionId(sessionId: string): boolean {
   return sessionId.startsWith("harness:");
 }
 
-// The git checkout holding a room's path, or null when the path is gone or
-// outside any repository (then nothing is moved).
-function checkoutRootOf(canonicalPath: string): string | null {
+// The Git coordination root (main checkout) for a room's path, or null when
+// the path is gone or outside any repository (then nothing is moved).
+function coordinationRootOf(canonicalPath: string): string | null {
   try {
-    return resolveContextPath(canonicalPath).checkout_root;
+    const resolved = resolveContextPath(canonicalPath);
+    return resolved.checkout_root ? resolved.workspace_root : null;
   } catch {
     return null;
   }

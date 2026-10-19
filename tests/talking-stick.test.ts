@@ -5101,4 +5101,30 @@ describe("one room per repository for agents", () => {
     expect(harness.service.getRoomState({ room_id: root.room_id, agent_id: "codex:hold" }).members
       .map((member) => member.agent_id)).toContain("human:op:chat:1");
   });
+
+  test("a join through a linked worktree moves membership out of rooms keyed under the main checkout", async () => {
+    const harness = createHarness();
+    const repo = path.join(harness.tempRoot, "main");
+    const linked = path.join(harness.tempRoot, "linked");
+    fs.mkdirSync(path.join(repo, "api", ".talking-stick"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "api", ".talking-stick", "room.toml"), 'name = "api"\n');
+    execFileSync("git", ["init", "-q", repo]);
+    execFileSync("git", ["-C", repo, "add", "."]);
+    execFileSync("git", ["-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "fixture"]);
+    execFileSync("git", ["-C", repo, "worktree", "add", "-qb", "linked", linked]);
+
+    const root = harness.service.joinPath({ agent_id: "codex:move", context_path: repo });
+    harness.service.joinPath({ agent_id: "claude:stay", context_path: repo });
+    harness.service.joinPath({ agent_id: "codex:move", context_path: path.join(linked, "api") });
+    expect(harness.service.getRoomState({ room_id: root.room_id, agent_id: "claude:stay" }).members
+      .map((member) => member.agent_id)).toEqual(["claude:stay"]);
+
+    // Holding the turn in the main-checkout room blocks a move made from the worktree.
+    const back = harness.service.joinPath({ agent_id: "claude:stay", context_path: path.join(linked, "api") });
+    harness.service.joinPath({ agent_id: "claude:hold", context_path: repo });
+    asYourTurn(await harness.service.waitForTurn({ agent_id: "claude:hold", room_id: root.room_id, max_wait_ms: 0 }));
+    expect(() => harness.service.joinPath({ agent_id: "claude:hold", context_path: path.join(linked, "api") }))
+      .toThrow(expect.objectContaining({ code: "holds_turn_elsewhere" }));
+    expect(back.room_id).not.toBe(root.room_id);
+  });
 });
