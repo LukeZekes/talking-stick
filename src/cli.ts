@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { isProtocolError } from "./index.js";
 import { hasOption, parseCommand } from "./cli/parser.js";
 import { printCommandHelp, printHelp, shouldUseJson } from "./cli/output.js";
-import { getCommand } from "./cli/registry.js";
+import { COMMAND_REGISTRY, getCommand } from "./cli/registry.js";
 import { createRuntime } from "./cli/runtime.js";
 import { runStartupMaintenance } from "./cli/startup-maintenance.js";
 
@@ -31,7 +31,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
     if (command) {
       printCommandHelp(command);
     } else {
-      printHelp();
+      printHelp(COMMAND_REGISTRY.filter((entry) => !entry.internal).map((entry) => entry.usage));
     }
     return;
   }

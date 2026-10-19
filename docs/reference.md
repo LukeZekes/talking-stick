@@ -328,7 +328,7 @@ it. Scrolling, selection, and copying stay with the terminal.
 | `/help`, `/help keys` | Show chat commands, or keyboard shortcuts |
 | `/older` | Print an earlier page of saved messages; in fullscreen, scroll into older history |
 | `/roles` | Edit roles: ↑↓ member, ←→ role, Space toggle, `d` save as harness default, Enter apply, Esc cancel. `/roles set <agent|harness> <roles|none|clear>` and `/roles default <harness> <roles|none|clear>` work as text |
-| `/rooms` | List rooms in this repository with live agents, unread messages, or a past visit. Chat joins them as an observer so agents there can address you; those messages show inline as `#room › agent → you: …` |
+| `/rooms`, Ctrl+T | Open the repository's directory tree with live members, unread counts, and rollups (see [Directory tree](#directory-tree)); without an interactive terminal, `/rooms` prints the room list. Chat joins listed rooms as an observer so agents there can address you; those messages show inline as `#room › agent → you: …` |
 | `/go` (↑↓ choose, Enter open; Tab fills) or Alt+←/→ | Switch to another open room, including one with no agents; Ctrl+PgUp/PgDn is a fallback when the terminal captures Alt+Arrow. Drafts and memberships are kept until chat exits. `/go <dir>` (relative to the active repository's checkout) opens a directory's room even if nobody has joined it yet, e.g. a committed declaration; `#name` never falls back to a directory |
 | `/bottom` or Ctrl+End | Fullscreen: return to latest messages. Default mode: use the terminal's scroll-to-bottom shortcut |
 | `/quit`, `/exit`, or Ctrl+D on an empty draft | Exit and remove this console's membership |

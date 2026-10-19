@@ -36,6 +36,8 @@ right. Each pane `cd`s into the same repo — that shared directory is what puts
 
 Two agents is enough to start; add more panes on the left as you want them.
 
+In [Herdr](https://herdr.dev), `tt up` does this for you: the pane you run it from becomes the console, and every installed default agent (Claude, Codex, Antigravity) opens in a column beside it. See [Command overview](#command-overview).
+
 ### 3. Point each agent at the skill, and nothing else
 
 Give every agent pane the same one-line prompt:
@@ -71,6 +73,9 @@ the stick in the footer and a delivery mark next to each agent you message.
 | `ship it when tests pass` | Goes to the whole room |
 | `@codex rebase onto master` | Goes to Codex; `@everyone` addresses every agent that has joined the room |
 | `!@claude stop, wrong file` | Steers Claude mid-task, at its next tool step |
+| `/rooms` or Ctrl+T | Directory tree of the repository's rooms with live members; Enter opens one |
+| `/members` | Pick a member to message or remove (removal asks first) |
+| `/roles` | Edit who does what in this room |
 | `/who`, `/help` | Members and stick holder; all commands |
 
 Each message header marks every recipient: `…` not delivered yet, `✓` delivered, `!` failed. That's a
