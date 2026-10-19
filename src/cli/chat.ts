@@ -12,6 +12,7 @@ import { applyRoleChanges, liveAgents, parseRoleList, parseRoleSubject, roomRole
 import { readUserRoleDefaults, writeUserRoleDefault } from "../roles.js";
 import { resolveRoomSelector, roomShortName, selectedRoom } from "./room-selector.js";
 import { insideNestedRepository, isWithinOrSame, resolveContextPath } from "../path-resolution.js";
+import { createMemberMenu, memberMenuKey, renderMemberMenu, type MemberMenu } from "./member-menu.js";
 import { resolveChatKick } from "./chat-kick.js";
 import {
   ChatTranscript,
@@ -26,6 +27,7 @@ import {
   wrapStyledLine,
   chatTranscriptHeight,
   chatWheelRegion,
+  chatMemberAt,
   CHAT_COMMANDS,
   type ChatFrame
 } from "./chat-view.js";
@@ -353,8 +355,43 @@ export async function runChatSession(
     }
     return runtime.commands.openRoom({ context_path: directory });
   };
+  let memberMenu: MemberMenu | null = null;
+  const closeMemberMenu = () => {
+    memberMenu = null;
+    editor?.setModal(null);
+    redraw();
+  };
+  const onMemberMenuKey = (key: ChatModalKey) => {
+    if (!memberMenu) return;
+    const action = memberMenuKey(memberMenu, key);
+    const target = memberMenu.target;
+    if (action === "close") closeMemberMenu();
+    else if (action === "message" && target) {
+      closeMemberMenu();
+      editor?.setDraft(`@${target} ${editor.draft.line}`);
+    } else if (action === "kick" && target) {
+      closeMemberMenu();
+      // The operator confirmed the exact session. The existing kick path
+      // rechecks current membership and rejects console/self targets.
+      submit(`/kick --force ${target}`);
+    }
+    redraw();
+  };
+  const openMemberMenu = (target?: string) => {
+    if (rolesPanel) { print("Close /roles before opening member actions."); return; }
+    if (!editor) { print("Use /who to list members and /kick <agent> to remove one."); return; }
+    refreshMembers();
+    const agents = members.filter(member => member.agent_id !== selfId && member.session_kind !== HUMAN_CHAT_SESSION_KIND)
+      .map(member => member.agent_id);
+    if (target && !agents.includes(target)) { print("That member has left the room."); return; }
+    if (!agents.length) { print("No agents in this room."); return; }
+    rolesPanel = null;
+    memberMenu = createMemberMenu(agents, target);
+    editor?.setModal(onMemberMenuKey);
+    redraw();
+  };
   let rolesPanel: RolesEditorState | null = null;
-  const rolesPanelLines = () => rolesPanel
+  const rolesPanelLines = () => memberMenu ? renderMemberMenu(memberMenu, Math.max(3, dimensions().rows - 6), nameOf) : rolesPanel
     ? renderRolesEditor(rolesPanel, formatContext(), Math.max(4, dimensions().rows - 6), Math.max(20, dimensions().columns - 1))
     : undefined;
   const closeRolesPanel = () => {
@@ -967,6 +1004,10 @@ export async function runChatSession(
         }
         return;
       }
+      case "members": {
+        openMemberMenu();
+        return;
+      }
       case "kick": {
         refreshMembers();
         const { target, force, reason } = resolveChatKick(args, members, selfId);
@@ -1202,6 +1243,11 @@ export async function runChatSession(
           const height = chatTranscriptHeight({ draft, columns, rows, room_path: joined.canonical_path });
           if (height === 0) return;
           scrollHistory(amount * (kind === "pages" ? Math.max(1, height - 1) : 1));
+        },
+        onRightClick: (column, row) => {
+          if (!options.mouse || rolesPanel || memberMenu) return;
+          const target = chatMemberAt(previousFrame, column, row);
+          if (target) openMemberMenu(target);
         },
         onWheel: (row, direction) => {
           const size = dimensions();

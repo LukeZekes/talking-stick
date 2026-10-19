@@ -2043,3 +2043,70 @@ test("/roles opens a key-driven editor; Enter applies and tells only the changed
   input.write("/quit\r");
   await session;
 });
+
+
+test.each([true, false])("/members confirms exact-session removal without sending modal keys (inline=%s)", async (inline) => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:aa", context_path: root });
+  service.joinPath({ agent_id: "codex:bb", context_path: root });
+  const input = new PassThrough();
+  const output = Object.assign(new PassThrough(), { columns: 120, rows: 20 });
+  let out = "";
+  output.on("data", chunk => { out += chunk.toString(); });
+  const session = runChatSession({
+    runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output,
+    terminal: true, inline, color: false, history: 0, show_turn_events: false, poll_ms: 5
+  });
+  await until(() => out.includes("Room"));
+  input.write("/members\r");
+  await until(() => out.includes("Room members"));
+  input.write("\u001b[B\r\u001b[B\r");
+  await until(() => out.includes("harness keeps running"));
+  expect(service.getRoomState({ room_id: joined.room_id }).members.some(m => m.agent_id === "codex:bb")).toBe(true);
+  input.write("\u001b[B\r");
+  await until(() => !service.getRoomState({ room_id: joined.room_id }).members.some(m => m.agent_id === "codex:bb"));
+  expect(service.getRoomState({ room_id: joined.room_id }).members.some(m => m.agent_id === "codex:aa")).toBe(true);
+  expect(service.getRecentRoomEvents({ room_id: joined.room_id, limit: 30 }).filter(e => e.event_type === "message_sent")).toHaveLength(0);
+  input.write("/quit\r");
+  await session;
+});
+
+test("status hit offsets exclude truncation and include wide display names", () => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:aa", context_path: root });
+  service.joinPath({ agent_id: "codex:bb", context_path: root });
+  const status = { members: service.getRoomState({ room_id: joined.room_id }).members, owner: null, owner_since: null, reserved_for: null, now: new Date(), columns: 80 };
+  const context = { self_agent_id: "human:op", name_of: () => "界", color: false, show_turn_events: false };
+  const hits: Array<[string, number, number]> = [];
+  const line = formatChatStatus(status, context, (...hit) => hits.push(hit));
+  expect(hits).toHaveLength(2);
+  expect(hits[0][1]).toBe(0);
+  expect(hits[1][1]).toBe(hits[0][2] + 3);
+  expect(hits[0][2]).toBeGreaterThan(line.split(" · ")[0].length);
+  const narrow: string[] = [];
+  expect(formatChatStatus({ ...status, columns: 4 }, context, id => narrow.push(id))).toContain("+2");
+  expect(narrow).toEqual([]);
+});
+
+test("right-clicking a footer member preserves the draft when addressing a message", async () => {
+  const { root, service } = setupService();
+  service.joinPath({ agent_id: "codex:aa", context_path: root });
+  const input = new PassThrough();
+  const output = Object.assign(new PassThrough(), { columns: 120, rows: 20 });
+  let out = "";
+  output.on("data", chunk => { out += chunk.toString(); });
+  const session = runChatSession({
+    runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output,
+    terminal: true, mouse: true, color: false, history: 0, show_turn_events: false, poll_ms: 5
+  });
+  await until(() => out.includes("Room"));
+  input.write("keep this draft");
+  input.write("\u001b[<2;1;20M");
+  await until(() => out.includes("Remove from room"));
+  input.write("\r");
+  await until(() => out.includes("@codex:aa keep this draft"));
+  input.write("\u0003/quit\r");
+  await session;
+});

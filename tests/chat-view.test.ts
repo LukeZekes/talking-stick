@@ -4,6 +4,7 @@ import { buildNameResolver } from "../src/cli/chat-format.js";
 import {
   ChatTranscript,
   chatWheelRegion,
+  chatMemberAt,
   completeChatInput,
   getChatCompletions,
   diffChatFrame,
@@ -541,4 +542,15 @@ test("prepending persisted history preserves viewport and unread state until ret
   transcript.scrollToBottom();
   expect(transcript.size).toBe(5);
   expect(transcript.viewport(4, 60, context).join("\n")).toContain("live");
+});
+
+
+test("member hit testing uses terminal coordinates and excludes adjacent cells", () => {
+  const frame = { lines: [], cursor: { row: 0, col: 0 }, members: [{ agent_id: "codex:exact", row: 23, start: 4, end: 12 }] };
+  expect(chatMemberAt(frame, 5, 24)).toBe("codex:exact");
+  expect(chatMemberAt(frame, 12, 24)).toBe("codex:exact");
+  expect(chatMemberAt(frame, 4, 24)).toBeUndefined();
+  expect(chatMemberAt(frame, 13, 24)).toBeUndefined();
+  expect(chatMemberAt(frame, 5, 23)).toBeUndefined();
+  expect(chatMemberAt(null, 5, 24)).toBeUndefined();
 });

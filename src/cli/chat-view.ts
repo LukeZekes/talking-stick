@@ -28,6 +28,7 @@ export interface ChatCommandInfo {
 
 export const CHAT_COMMANDS: ChatCommandInfo[] = [
   { name: "quit", usage: "/quit", description: "leave the chat" },
+  { name: "members", usage: "/members", description: "choose a member to message or remove (right-click status with --fullscreen --mouse)" },
   { name: "who", usage: "/who", description: "members and who has the stick" },
   { name: "roles", usage: "/roles", description: "edit who does what in this room (Space toggles; d saves a default)" },
   { name: "rooms", usage: "/rooms", description: "rooms in this repository with agents or unread messages" },
@@ -777,9 +778,17 @@ export interface ChatScreenInput {
   rows: number;
 }
 
+export interface ChatMemberHit { agent_id: string; row: number; start: number; end: number }
+
 export interface ChatFrame {
+  members?: ChatMemberHit[];
   lines: string[];
   cursor: { row: number; col: number };
+}
+
+// Terminal mouse reports are 1-based; frame cells are 0-based.
+export function chatMemberAt(frame: ChatFrame | null, column: number, row: number): string | undefined {
+  return frame?.members?.find(member => member.row === row - 1 && column - 1 >= member.start && column - 1 < member.end)?.agent_id;
 }
 
 // A bounded live panel beneath ordinary terminal output. Keep suggestions
@@ -922,7 +931,8 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
     });
 
   const rule = dim(context, "─".repeat(width));
-  const footer = renderFooter(input, width);
+  const memberHits: ChatMemberHit[] = [];
+  const footer = renderFooter(input, width, (agent_id, start, end) => memberHits.push({ agent_id, row: height - 1, start, end }));
 
   const fixed = [rule, ...composer.rows, rule, footer];
 
@@ -945,6 +955,7 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
 
   return {
     lines,
+    members: memberHits,
     cursor: {
       row: Math.min(height - 1, Math.max(0, composerTop + composer.cursor_row)),
       col: Math.min(width, composer.cursor_col)
@@ -952,7 +963,7 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
   };
 }
 
-function renderFooter(input: ChatScreenInput, width: number): string {
+function renderFooter(input: ChatScreenInput, width: number, onMember?: (agent_id: string, start: number, end: number) => void): string {
   const context = input.format;
   const transcript = input.transcript;
   let suffix = "";
@@ -977,7 +988,7 @@ function renderFooter(input: ChatScreenInput, width: number): string {
   const statusWidth = Math.max(0, width - suffixWidth - gap);
   const status =
     statusWidth > 0
-      ? formatChatStatus({ ...input.status, columns: statusWidth + 1 }, context)
+      ? formatChatStatus({ ...input.status, columns: statusWidth + 1 }, context, onMember)
       : "";
   const statusCells = textWidth(status);
   if (!suffix) {
