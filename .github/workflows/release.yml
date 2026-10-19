@@ -39,7 +39,12 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - run: npm ci
+      - name: Check release version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+      - run: npm run build
       - run: npm run test:bun
+      - run: npm test -- tests/standalone-binary.test.ts
       - name: Build archive
         run: node scripts/build-standalone.mjs "${{ matrix.target }}"
         env:

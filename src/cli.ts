@@ -33,7 +33,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
     if (command) {
       printCommandHelp(command);
     } else {
-      printHelp(COMMAND_REGISTRY.filter((entry) => !entry.internal).map((entry) => entry.usage), helpNotice());
+      printHelp(COMMAND_REGISTRY.filter((entry) => !entry.internal).map((entry) => entry.usage), shouldUseJson(parsed) ? undefined : helpNotice());
     }
     return;
   }

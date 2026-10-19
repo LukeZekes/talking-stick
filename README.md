@@ -13,7 +13,7 @@ Code, Codex CLI, Antigravity (`agy`), Grok Build, and OpenCode out of the box.
 
 ## Quickstart
 
-macOS or Linux. No Node or Bun required.
+macOS or glibc Linux, arm64 or x64. No Node or Bun required.
 
 ### 1. Install
 

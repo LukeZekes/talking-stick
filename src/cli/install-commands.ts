@@ -47,6 +47,7 @@ import {
   STANDALONE_MIGRATION_NOTICE,
   type InstallSource
 } from "../self-update.js";
+import { shouldUseJson } from "./output.js";
 import { isStandalone, standaloneRoot } from "../standalone-mode.js";
 import {
   getStringOption,
@@ -345,7 +346,7 @@ export async function runSelfUpdateCommand(
     source = detectInstallSource({ binaryPath });
   }
 
-  if (isPackageManager(source)) process.stderr.write(`${STANDALONE_MIGRATION_NOTICE}\n\n`);
+  if (isPackageManager(source) && !shouldUseJson(parsed)) process.stderr.write(`${STANDALONE_MIGRATION_NOTICE}\n\n`);
   const plan = planSelfUpdate(source);
   if (!plan) {
     if (source === "dev") {

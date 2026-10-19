@@ -11,9 +11,17 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+## [0.23.0] — 2026-10-19
+
+Full notes: [`docs/releases/0.23.0.md`](docs/releases/0.23.0.md).
+
+### Breaking changes
+
+- npm distribution ends with 0.23.0. Existing Node installs remain functional, but future updates ship as standalone GitHub release binaries. Run the GitHub installer, put `~/.local/bin` on PATH, and remove the old npm copy.
+
 ### Added
 
-- Standalone `tt` binary for macOS and Linux (arm64 and x64), with no Node or Bun required. Install with `curl -fsSL https://raw.githubusercontent.com/mostlydev/talking-stick/master/scripts/install.sh | sh`. The installer verifies the release's SHA-256 checksum, installs each release into its own directory under `~/.local/share/talking-stick/releases/` with the skill files beside the binary, and links `~/.local/bin/tt` (`--install-dir` and `--bin-dir` override both). It warns when another `tt` comes first on `PATH`. Tagged releases build and smoke-test the binaries on each platform and attach them with `checksums.txt`.
+- Standalone `tt` binary for macOS and glibc Linux (arm64 and x64), with no Node or Bun required. Install with `curl -fsSL https://raw.githubusercontent.com/mostlydev/talking-stick/master/scripts/install.sh | sh`. The installer verifies the release's SHA-256 checksum, installs each release into its own directory under `~/.local/share/talking-stick/releases/` with the skill files beside the binary, and links `~/.local/bin/tt` (`--install-dir` and `--bin-dir` override both). It warns when another `tt` comes first on `PATH`. Tagged releases build and smoke-test the binaries on each platform and attach them with `checksums.txt`.
 - `tt self-update` on the standalone binary reruns the installer with the directories it was installed with.
 
 ### Changed
@@ -700,6 +708,7 @@ Initial alpha. Core room protocol, SQLite-backed persistence, multi-process
 contention coverage, MCP smoke coverage, human guardian flow, harness
 installers, and the portable `talking-stick` skill.
 
+[0.23.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.23.0
 [0.22.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.22.0
 [0.21.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.21.0
 [0.20.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.20.0
