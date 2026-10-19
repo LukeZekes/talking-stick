@@ -31,7 +31,7 @@ export const CHAT_COMMANDS: ChatCommandInfo[] = [
   { name: "members", usage: "/members", description: "choose a member to message or remove (right-click status with --fullscreen --mouse)" },
   { name: "who", usage: "/who", description: "members and who has the stick" },
   { name: "roles", usage: "/roles", description: "edit who does what in this room (Space toggles; d saves a default)" },
-  { name: "rooms", usage: "/rooms", description: "rooms in this repository with agents or unread messages" },
+  { name: "rooms", usage: "/rooms", description: "browse directories and room members (Ctrl+T)" },
   { name: "go", usage: "/go <room|dir>", description: "choose an open room with ↑↓ Enter; a directory opens its room" },
   { name: "older", usage: "/older", description: "load an earlier page of saved messages" },
   { name: "kick", usage: "/kick <agent>", description: "remove a member; --force for a live agent" },
@@ -72,6 +72,7 @@ export function formatChatHelp(width: number, color: boolean, keys = false, inli
     ["Alt+Enter", "Insert a new line"],
     ["Esc", "Clear text; interrupt agents when the draft is empty"],
     ["Ctrl+C", "Clear the draft"],
+    ["Ctrl+T", "Browse folders and rooms"],
     ["Alt+← / Alt+→", "Previous / next open room in this repository"],
     ["Ctrl+PgUp / PgDn", "Room-switch fallback if the terminal captures Alt+Arrow"],
     ...(inline ? [

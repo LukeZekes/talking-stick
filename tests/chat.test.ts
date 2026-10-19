@@ -2111,3 +2111,37 @@ test("right-clicking a footer member preserves the draft when addressing a messa
   input.write("\u0003/quit\r");
   await session;
 });
+
+
+test.each([true, false])("room tree opens a directory and creates its room only after confirmation (inline=%s)", async (inline) => {
+  const { root, service } = setupService();
+  execFileSync("git", ["init", "-q", root]);
+  const child = path.join(root, "empty");
+  fs.mkdirSync(child);
+  service.joinPath({ agent_id: "claude:root", context_path: root });
+  const input = new PassThrough();
+  const output = Object.assign(new PassThrough(), { columns: 120, rows: 20 });
+  let out = "";
+  output.on("data", chunk => { out += chunk.toString(); });
+  const session = runChatConsole({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline,
+    color: false, history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => out.includes("Room"));
+    input.write("\u0014");
+    await until(() => out.includes("Rooms ·"));
+    input.write("\u001b[Bn");
+    await until(() => out.includes("Create a room boundary?"));
+    expect(fs.existsSync(path.join(child, ".talking-stick", "room.toml"))).toBe(false);
+    input.write("n");
+    input.write("n");
+    input.write("y");
+    await until(() => fs.existsSync(path.join(child, ".talking-stick", "room.toml")));
+    await until(() => service.listRooms({}).rooms.some(room => room.canonical_path === child &&
+      service.getRoomState({ room_id: room.room_id }).members.some(member => member.session_kind === "human_chat")));
+    expect(service.listRooms({}).rooms.some(room => room.canonical_path === child)).toBe(true);
+  } finally {
+    input.write("\u0003/quit\r");
+    await session;
+  }
+});

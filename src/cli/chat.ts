@@ -13,6 +13,8 @@ import { readUserRoleDefaults, writeUserRoleDefault } from "../roles.js";
 import { resolveRoomSelector, roomShortName, selectedRoom } from "./room-selector.js";
 import { insideNestedRepository, isWithinOrSame, resolveContextPath } from "../path-resolution.js";
 import { createMemberMenu, memberMenuKey, renderMemberMenu, type MemberMenu } from "./member-menu.js";
+import { RoomTree, type TreeRoom } from "./room-tree.js";
+import { createDeclaredRoom } from "./room-admin.js";
 import { resolveChatKick } from "./chat-kick.js";
 import {
   ChatTranscript,
@@ -355,6 +357,55 @@ export async function runChatSession(
     }
     return runtime.commands.openRoom({ context_path: directory });
   };
+  let roomTree: RoomTree | null = null;
+  const treeResolvedCache = new Map<string, string>();
+  const treeRooms = (): TreeRoom[] => {
+    const anchor = consoleState?.anchor ?? joined.workspace_root;
+    const rooms = runtime.commands.listRooms({}).rooms.filter(room => room.state !== "closed" &&
+      isWithinOrSame(room.canonical_path, anchor) && !insideNestedRepository(room.canonical_path, anchor));
+    const activity = new Map(runtime.commands.summarizeRoomActivity(selfId, rooms.map(room => ({
+      room_id: room.room_id, after_event_seq: consoleState?.last_seen.get(room.room_id) ?? consoleState?.start_seq ?? 0
+    }))).map(entry => [entry.room_id, entry]));
+    return rooms.map(room => ({ path: room.canonical_path, agents: activity.get(room.room_id)?.agent_members ?? 0,
+      unread: room.room_id === roomId ? 0 : activity.get(room.room_id)?.unread_messages ?? 0 }));
+  };
+  const refreshTree = () => { if (roomTree) roomTree.rooms = treeRooms(); };
+  const closeRoomTree = () => { roomTree = null; editor?.setModal(null); redraw(); };
+  const resolvedTreeRoom = () => {
+    if (!roomTree) return "";
+    const cached = treeResolvedCache.get(roomTree.selected);
+    if (cached) return cached;
+    const resolved = resolveContextPath(roomTree.selected);
+    const nearest = roomTree.rooms.filter(room => isWithinOrSame(roomTree!.selected, room.path))
+      .sort((a, b) => b.path.length - a.path.length)[0]?.path;
+    const result = nearest && nearest.length > resolved.room_path.length ? nearest : resolved.room_path;
+    treeResolvedCache.set(roomTree.selected, result);
+    return result;
+  };
+  const onRoomTreeKey = (key: ChatModalKey) => {
+    if (!roomTree) return;
+    try {
+      const action = roomTree.key(key);
+      if (action.kind === "close") closeRoomTree();
+      if (action.kind === "go" || action.kind === "create") {
+        const room = action.kind === "create" ? createDeclaredRoom(runtime, action.path).room : openRoomAtPath(action.path);
+        if (!room) throw new Error("Directory is no longer available.");
+        closeRoomTree();
+        switchTo(room);
+      }
+    } catch (error) {
+      if (roomTree) { roomTree.confirm = null; roomTree.notice = sanitizeChatText(error instanceof Error ? error.message : String(error)); }
+    }
+    redraw();
+  };
+  const openRoomTree = () => {
+    if (!consoleState || !editor) { print("Use /go <directory> to open a room."); return; }
+    if (rolesPanel || memberMenu) { print("Close the current editor before opening rooms."); return; }
+    treeResolvedCache.clear();
+    roomTree = new RoomTree(consoleState.anchor, treeRooms(), joined.canonical_path);
+    editor.setModal(onRoomTreeKey);
+    redraw();
+  };
   let memberMenu: MemberMenu | null = null;
   const closeMemberMenu = () => {
     memberMenu = null;
@@ -378,6 +429,7 @@ export async function runChatSession(
     redraw();
   };
   const openMemberMenu = (target?: string) => {
+    if (roomTree) { print("Close /rooms before opening member actions."); return; }
     if (rolesPanel) { print("Close /roles before opening member actions."); return; }
     if (!editor) { print("Use /who to list members and /kick <agent> to remove one."); return; }
     refreshMembers();
@@ -391,7 +443,7 @@ export async function runChatSession(
     redraw();
   };
   let rolesPanel: RolesEditorState | null = null;
-  const rolesPanelLines = () => memberMenu ? renderMemberMenu(memberMenu, Math.max(3, dimensions().rows - 6), nameOf) : rolesPanel
+  const rolesPanelLines = () => roomTree ? roomTree.render(Math.max(3, dimensions().rows - 6), resolvedTreeRoom(), Boolean(formatContext().color)) : memberMenu ? renderMemberMenu(memberMenu, Math.max(3, dimensions().rows - 6), nameOf) : rolesPanel
     ? renderRolesEditor(rolesPanel, formatContext(), Math.max(4, dimensions().rows - 6), Math.max(20, dimensions().columns - 1))
     : undefined;
   const closeRolesPanel = () => {
@@ -968,13 +1020,13 @@ export async function runChatSession(
         return;
       }
       case "rooms": {
+        if (editor) { openRoomTree(); return; }
         if (!consoleState) { print("This console shows one room."); return; }
         refreshStrip();
         const current = `* ${sanitizeChatText(joined.canonical_path)} (here)`;
-        print([current, ...stripOrder.map((room) =>
+        print([current, ...stripOrder.map(room =>
           `  #${sanitizeChatText(roomNames.get(room.room_id) ?? roomShortName(room))}  ${sanitizeChatText(room.canonical_path)}`),
           stripOrder.length ? "Switch with /go <room> or Alt+←/→." : "No other rooms with agents in this repository."].join("\n"));
-        redraw();
         return;
       }
       case "go": {
@@ -1232,6 +1284,7 @@ export async function runChatSession(
         },
         onEmptyEscape,
         onCycleRoom,
+        onRoomTree: openRoomTree,
         onQuit: stop,
         onBottom: () => {
           transcript.scrollToBottom();
@@ -1295,6 +1348,7 @@ export async function runChatSession(
         },
         onEmptyEscape,
         onCycleRoom,
+        onRoomTree: openRoomTree,
         onQuit: stop,
         // Scrollback belongs to the terminal in this mode.
         onBottom: () => {},
@@ -1397,7 +1451,11 @@ export async function runChatSession(
         ) {
           refreshMembers();
         }
-        if (consoleState && Date.now() - lastStripRefresh >= STRIP_REFRESH_MS && refreshStrip()) redraw();
+        if (consoleState && Date.now() - lastStripRefresh >= STRIP_REFRESH_MS) {
+          const changed = refreshStrip();
+          refreshTree();
+          if (changed || roomTree) redraw();
+        }
         hydrateReceipts(result.events);
         for (const event of result.events) {
           if (OWNERSHIP_EVENTS.includes(event.event_type)) {
