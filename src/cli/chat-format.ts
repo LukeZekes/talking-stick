@@ -439,7 +439,8 @@ export interface ChatStatusInput {
 // away, or how long since its last tt command). Observers are not listed.
 export function formatChatStatus(
   input: ChatStatusInput,
-  context: ChatFormatContext
+  context: ChatFormatContext,
+  onMember?: (agent_id: string, start: number, end: number) => void
 ): string {
   // Agents whose harness process has ended are history, not members.
   const present = input.members.filter(
@@ -459,6 +460,7 @@ export function formatChatStatus(
       sanitizeChatText(context.name_of(id)).replace(/\s+/g, " ")
   };
   const segments = agents.map((member) => ({
+    agent_id: member.agent_id,
     plain: `${safeContext.name_of(member.agent_id)} ${describeMemberState(member, input)}`,
     painted: `${formatChatAgent(safeContext, member.agent_id)} ${paint(context, "2", describeMemberState(member, input))}`
   }));
@@ -476,6 +478,7 @@ export function formatChatStatus(
       if (width + more.length <= budget) result += paint(context, "2", more);
       break;
     }
+    onMember?.(segment.agent_id, width + separator.length, width + separator.length + chatTextWidth(segment.plain));
     result += paint(context, "2", separator) + segment.painted;
     width += separator.length + chatTextWidth(segment.plain);
   }

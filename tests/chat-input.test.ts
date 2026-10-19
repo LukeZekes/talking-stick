@@ -6,7 +6,7 @@ import { completeChatInput, getChatCompletions } from "../src/cli/chat-view.js";
 function setup(
   menu = false,
   wheel?: (row: number, direction: number) => void,
-  extra: { onEmptyEscape?: () => void; now?: () => number } = {}
+  extra: { onRightClick?: (column: number, row: number) => void; onEmptyEscape?: () => void; now?: () => number } = {}
 ) {
   const input = Object.assign(new PassThrough(), {
     isRaw: false,
@@ -23,6 +23,7 @@ function setup(
     onQuit: quit,
     onScroll: scroll,
     onWheel: wheel,
+    onRightClick: extra.onRightClick,
     onBottom: bottom,
     onChange: vi.fn(),
     onClear: vi.fn(),
@@ -376,4 +377,16 @@ test("/go completes room names and path-suffix parts, keeping text after the cur
   const [first] = getChatCompletions({ line: "/go do", cursor: 6 }, [], [], rooms);
   expect(first.draft).toEqual({ line: "/go docs ", cursor: 9 });
   expect(offered("/g")).toContain("/go <room|dir>");
+});
+
+
+test("right-click reports retain coordinates and modifiers without entering the draft", () => {
+  const click = vi.fn();
+  const { editor, input } = setup(false, undefined, { onRightClick: click });
+  try {
+    input.write("\u001b[<2;12;");
+    input.write("24M\u001b[<18;20;24M\u001b[<2;12;24m\u001b[<0;1;1M");
+    expect(click.mock.calls).toEqual([[12, 24], [20, 24]]);
+    expect(editor.draft.line).toBe("");
+  } finally { editor.close(); }
 });

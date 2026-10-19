@@ -10,6 +10,7 @@ export interface ChatInputOptions {
   onChange: () => void;
   onSubmit: (line: string) => void;
   onScroll: (kind: "lines" | "pages", amount: number) => void;
+  onRightClick?: (column: number, row: number) => void;
   onWheel?: (row: number, direction: number) => void;
   onBottom: () => void;
   onQuit: () => void;
@@ -367,13 +368,14 @@ export class ChatInputController {
           }
           const sequence = match[0];
           this.pending = this.pending.slice(sequence.length);
-          const mouse = /^\u001b\[<(\d+);\d+;(\d+)([Mm])$/.exec(sequence);
+          const mouse = /^\u001b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(sequence);
           if (mouse) {
-            if (mouse[3] === "M") {
+            if (mouse[4] === "M") {
               const button = Number(mouse[1]);
+              if ((button & 195) === 2) this.options.onRightClick?.(Number(mouse[2]), Number(mouse[3]));
               if ((button & 195) === 64 || (button & 195) === 65) {
                 const direction = button & 1 ? 1 : -1;
-                if (this.options.onWheel) this.options.onWheel(Number(mouse[2]), direction);
+                if (this.options.onWheel) this.options.onWheel(Number(mouse[3]), direction);
                 else this.options.onScroll("lines", direction * 3);
               }
             }

@@ -315,6 +315,7 @@ it. Scrolling, selection, and copying stay with the terminal.
 | `@agent <message>` or `/to agent <message>` | Send to every matching ID or display-name prefix, ignoring case. Mention several agents anywhere in the text: `@claude @codex, review this`. `@everyone` (or `@all`) addresses every agent in the room. Leading mentions are stripped from the message; an unknown `@name` blocks the whole send; email addresses and `` `code` `` spans are not mentions |
 | `/interrupt [@agent] <message>`, `!@agent <message>`, or `!@ <message>` | Steer an agent now. A busy Claude Code session gets the prompt at its next tool step and changes course without stopping; Codex gets it after its current turn. `!@` works anywhere a mention does, and any `!@` makes the whole message an interrupt |
 | `/who` | Show members and the current stick holder |
+| `/members` | Choose an exact member with ↑↓ and Enter, then message or remove it. Removal requires confirmation and does not stop the harness |
 | `/kick [--force] <agent> [reason]` | Remove one exact ID or unique prefix from the room. Live or unconfirmed processes require `--force`; consoles cannot be kicked. Kicking only removes room membership: the harness keeps running, and its next `tt wait` can rejoin it |
 | `/events` | Toggle turn and handoff events, hidden by default |
 | `/help`, `/help keys` | Show chat commands, or keyboard shortcuts |
@@ -615,3 +616,9 @@ The coordination database lives at:
 - Windows: `%APPDATA%\talking-stick\rooms.sqlite`
 
 Override with `TALKING_STICK_DATA_DIR` if you want to keep per-project state.
+
+### Member actions with the mouse
+
+Run `tt chat --fullscreen --mouse` to right-click a visible member in the bottom status bar. The menu identifies the exact session; use ↑↓ and Enter to choose Message or Remove, and Escape to cancel. Removal asks for confirmation and leaves the harness running. `/members` opens the same picker in fullscreen or inline mode, including members that do not fit in the status bar.
+
+In Herdr, choose **Send right-clicks to pane** from its pane menu, or run `herdr pane input --current --right-click pane` in the chat pane before starting chat. Right-click the pane frame to reach Herdr's menu. Alternatively configure `ui.right_click_passthrough_modifier = "ctrl"` and use Ctrl-right-click. Mouse capture remains opt-in; inline mode retains native selection.
