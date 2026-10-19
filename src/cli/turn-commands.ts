@@ -326,10 +326,9 @@ export function handleStandbyCommand(
   ) {
     throw new Error("--wake must be cmux or manual.");
   }
-  let transport: "cmux" | "manual" = requestedTransport ?? "cmux";
+  let transport: "cmux" | "manual" = requestedTransport ?? (hasCmuxCallerContext() ? "cmux" : "manual");
 
   let endpoint = null;
-  let fallbackReason: string | undefined;
   if (transport === "cmux") {
     try {
       if (!hasCmuxCallerContext()) {
@@ -341,8 +340,6 @@ export function handleStandbyCommand(
         throw error;
       }
       transport = "manual";
-      fallbackReason =
-        error instanceof Error ? error.message : String(error);
     }
   }
   const result = runtime.commands.registerStandby(identity, {
@@ -354,13 +351,10 @@ export function handleStandbyCommand(
 
   printResult(
     parsed,
-    fallbackReason ? { ...result, fallback_reason: fallbackReason } : result,
+    result,
     () => {
       if (result.can_self_wake) {
         return `Standby registered. This turn may end; Talking Stick will wake this session through ${result.wake_transports.join(", ")} for a directed update.`;
-      }
-      if (fallbackReason) {
-        return `Manual standby registered because cmux wake is unavailable (${fallbackReason}). It cannot self-wake; run \`tt wait --json\` to resume.`;
       }
       return "Manual standby registered. It cannot self-wake; run `tt wait --json` to resume.";
     }

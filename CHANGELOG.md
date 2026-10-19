@@ -17,6 +17,8 @@ changes will be called out under **Breaking changes**.
 
 ### Fixed
 
+- Standby omits diagnostics about unavailable automatically detected wake backends. It still reports whether it can self-wake and its available transports; explicit `--wake cmux` requests retain actionable errors.
+
 - Inline chat keeps the room bar and prompt at a stable terminal position while command or mention suggestions open and close. `/go` now lists open rooms immediately; Up/Down selects one and a single Enter switches to it. Room cycling accepts more terminal Alt+Arrow encodings and Ctrl+PgUp/PgDn as a fallback, including rooms with no agents.
 
 ## [0.21.0] — 2026-10-15

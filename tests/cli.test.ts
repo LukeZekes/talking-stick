@@ -1331,11 +1331,23 @@ describe("tt turn commands", () => {
         transport: "manual",
         can_self_wake: false
       });
-      expect(output.fallback_reason).toContain("Unable to verify");
+      expect(output).not.toHaveProperty("fallback_reason");
     } finally {
       process.env.PATH = originalPath;
       delete process.env.CMUX_TAB_ID;
     }
+  });
+
+  test("tt standby omits unavailable cmux diagnostics in automatic mode", async () => {
+    const { project } = setupIsolatedCli(tempDirs);
+    const output = JSON.parse(await captureStdout([
+      "standby", project, "--agent", "human:parked", "--json"
+    ]));
+    expect(output).toMatchObject({ status: "standby_registered", transport: "manual", can_self_wake: false, wake_transports: [] });
+    expect(output).not.toHaveProperty("fallback_reason");
+    const plain = await captureStdout(["standby", project, "--agent", "human:parked"]);
+    expect(plain).not.toContain("cmux");
+    expect(plain).toContain("cannot self-wake");
   });
 
   test("tt standby keeps an explicit --wake cmux request strict", async () => {
