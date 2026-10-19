@@ -5,6 +5,8 @@ export default defineConfig({
     environment: "node",
     hookTimeout: 15_000,
     testTimeout: 30_000,
-    globalSetup: "./tests/setup.ts"
+    globalSetup: "./tests/setup.ts",
+    // tests/bun runs under `bun test` (npm run test:bun).
+    exclude: ["**/node_modules/**", "tests/bun/**"]
   }
 });

@@ -2,6 +2,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+export const STANDALONE_INSTALL_COMMAND =
+  "curl -fsSL https://raw.githubusercontent.com/mostlydev/talking-stick/master/scripts/install.sh | sh";
+
+// Shown to humans only (help and self-update), never on JSON or agent paths.
+export const STANDALONE_MIGRATION_NOTICE = [
+  "Talking Stick now ships as a standalone binary; the npm package is no longer updated.",
+  `Install it with: ${STANDALONE_INSTALL_COMMAND}`,
+  "then remove the npm copy: npm uninstall -g talking-stick"
+].join("\n");
+
 export type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
 export type InstallSource = PackageManager | "dev" | "unknown";
 
@@ -90,4 +100,26 @@ export function isPackageManager(value: string): value is PackageManager {
 function normalize(value: string): string {
   // Treat backslashes as forward slashes for cross-platform regex matching.
   return value.replace(/\\/g, "/");
+}
+
+// A standalone install lives at <install_dir>/releases/<release>/tt, and the
+// installer records its bin directory in <install_dir>/install-receipt.
+// Updating reruns that release's own installer with the same directories, so
+// custom --install-dir/--bin-dir choices survive.
+export function planStandaloneUpdate(releaseRoot: string): UpdateCommand {
+  const installDir = path.dirname(path.dirname(releaseRoot));
+  const installer = path.join(releaseRoot, "scripts", "install.sh");
+  const args = [installer, "--install-dir", installDir];
+  try {
+    const receipt = fs.readFileSync(path.join(installDir, "install-receipt"), "utf8");
+    const binDir = /^bin_dir=(.+)$/m.exec(receipt)?.[1];
+    if (binDir) args.push("--bin-dir", binDir);
+  } catch {
+    // Without a receipt the installer's default bin directory applies.
+  }
+  return { command: "sh", args, description: `sh ${args.map(shellWord).join(" ")}` };
+}
+
+function shellWord(value: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
 }

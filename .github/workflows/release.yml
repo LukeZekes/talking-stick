@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BUN_VERSION: 1.3.8
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each binary is built and smoke-tested on its own platform.
+          - runner: ubuntu-latest
+            target: bun-linux-x64-baseline
+          - runner: ubuntu-24.04-arm
+            target: bun-linux-arm64
+          - runner: macos-15-intel
+            target: bun-darwin-x64
+          - runner: macos-14
+            target: bun-darwin-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: npm ci
+      - name: Check release version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+      - run: npm run build
+      - run: npm run test:bun
+      - run: npm test -- tests/standalone-binary.test.ts
+      - name: Build archive
+        run: node scripts/build-standalone.mjs "${{ matrix.target }}"
+        env:
+          TT_RELEASE_DIR: release-dist
+      - name: Smoke-test the archive
+        shell: bash
+        run: |
+          stage="$(mktemp -d)"
+          tar -xzf release-dist/*.tar.gz -C "$stage"
+          "$stage/tt" --help >/dev/null
+          test -f "$stage/skills/talking-stick/SKILL.md"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            release-dist/*.tar.gz
+            release-dist/*.sha256
+
+  release:
+    name: Publish GitHub release assets
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-dist
+          merge-multiple: true
+      - name: Create checksums
+        working-directory: release-dist
+        run: |
+          cat *.sha256 > checksums.txt
+          test "$(wc -l < checksums.txt)" -eq 4
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          assets=(release-dist/*.tar.gz release-dist/checksums.txt)
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --title "Talking Stick $version" \
+              --notes-file "docs/releases/$version.md" \
+              --verify-tag
+          fi

@@ -1,11 +1,10 @@
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import DatabaseConstructor from "better-sqlite3";
-import type BetterSqlite3 from "better-sqlite3";
+import { openSqlite, type SqliteDatabase } from "./sqlite.js";
 import { resolveDataDir } from "./config.js";
 
-export type SqliteDatabase = BetterSqlite3.Database;
+export type { SqliteDatabase } from "./sqlite.js";
 
 export interface OpenDatabaseOptions {
   dbPath?: string;
@@ -413,7 +412,7 @@ export function openDatabase(options: OpenDatabaseOptions = {}): SqliteDatabase 
     }
   }
 
-  const db = new DatabaseConstructor(dbPath);
+  const db = openSqlite(dbPath);
   applyPragmas(db);
   migrate(db);
   return db;

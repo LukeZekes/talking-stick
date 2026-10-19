@@ -1,6 +1,6 @@
 {
   "name": "talking-stick",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "CLI coordination tool for path-scoped agent handoffs.",
   "type": "module",
   "bin": {
@@ -23,6 +23,7 @@
     "postinstall": "node scripts/postinstall.cjs",
     "prepare": "node scripts/clean-dist.cjs && tsc -p tsconfig.build.json && chmod +x dist/cli.js",
     "test": "vitest run",
+    "test:bun": "bun test tests/bun",
     "version": "node scripts/prepare-release.mjs --from-package",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
