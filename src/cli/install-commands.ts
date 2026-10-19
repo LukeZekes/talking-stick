@@ -43,8 +43,11 @@ import {
   isPackageManager,
   planSelfUpdate,
   resolveCurrentBinaryPath,
+  planStandaloneUpdate,
+  STANDALONE_MIGRATION_NOTICE,
   type InstallSource
 } from "../self-update.js";
+import { isStandalone, standaloneRoot } from "../standalone-mode.js";
 import {
   getStringOption,
   hasOption,
@@ -317,6 +320,18 @@ export async function runSelfUpdateCommand(
   const dryRun = hasOption(parsed, "print");
   const managerOverride = getStringOption(parsed, "manager");
 
+  if (!managerOverride && isStandalone()) {
+    const plan = planStandaloneUpdate(standaloneRoot());
+    if (dryRun) {
+      process.stdout.write(`${plan.description}\n`);
+      return;
+    }
+    process.stdout.write(`Updating via: ${plan.description}\n`);
+    await runInheritIo(plan.command, plan.args);
+    process.stdout.write("Done. Restart any long-running harness sessions to pick up the new tt.\n");
+    return;
+  }
+
   let source: InstallSource;
   if (managerOverride) {
     if (!isPackageManager(managerOverride)) {
@@ -330,6 +345,7 @@ export async function runSelfUpdateCommand(
     source = detectInstallSource({ binaryPath });
   }
 
+  if (isPackageManager(source)) process.stderr.write(`${STANDALONE_MIGRATION_NOTICE}\n\n`);
   const plan = planSelfUpdate(source);
   if (!plan) {
     if (source === "dev") {

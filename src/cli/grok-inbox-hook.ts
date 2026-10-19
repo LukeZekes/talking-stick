@@ -1,4 +1,4 @@
-import DatabaseConstructor from "better-sqlite3";
+import { openSqlite } from "../sqlite.js";
 import { resolveDatabasePath, type SqliteDatabase } from "../db.js";
 import { TalkingStickService } from "../service.js";
 
@@ -30,7 +30,7 @@ export async function runGrokInboxHookCommand(options: GrokInboxHookOptions = {}
     if (!options.service) {
       // Hooks never create or migrate state. Joining/installing through the CLI
       // owns that work; an absent or older database simply fails open.
-      hookDatabase = new DatabaseConstructor(resolveDatabasePath(), { fileMustExist: true, timeout: 1000 });
+      hookDatabase = openSqlite(resolveDatabasePath(), { fileMustExist: true, timeout: 1000 });
       hookDatabase.pragma("foreign_keys = ON");
     }
     service = options.service ?? new TalkingStickService({ db: hookDatabase });

@@ -16,6 +16,7 @@ import {
 } from "./install.js";
 import type { AuditLog, AuditReason } from "./install-audit.js";
 import type { CleanupResult } from "./install-audit.js";
+import { isStandalone, standaloneRoot } from "./standalone-mode.js";
 import {
   DEFAULT_SKILL_NAME,
   resolveBundledSkillPath,
@@ -645,7 +646,7 @@ function tomlString(value: string): string {
 }
 
 function readLocalPackageVersion(): string {
-  const root = findPackageRoot(path.dirname(fileURLToPath(import.meta.url)));
+  const root = isStandalone() ? standaloneRoot() : findPackageRoot(path.dirname(fileURLToPath(import.meta.url)));
   if (!root) return "unknown";
   try {
     const parsed = JSON.parse(

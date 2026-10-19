@@ -101,6 +101,9 @@ link_tmp="$bin_dir/.tt-install-$$"
 ln -s "$release_dir/tt" "$link_tmp"
 mv -f "$link_tmp" "$bin_dir/tt"
 link_tmp=
+# tt self-update reruns this installer with the same directories.
+printf 'bin_dir=%s\n' "$bin_dir" > "$install_dir/install-receipt.tmp"
+mv -f "$install_dir/install-receipt.tmp" "$install_dir/install-receipt"
 printf 'Installed talking-stick %s to %s/tt\n' "$release_name" "$bin_dir"
 case ":${PATH:-}:" in *":$bin_dir:"*) ;; *) printf 'Add %s to PATH.\n' "$bin_dir" ;; esac
 resolved_tt=$(command -v tt || true)

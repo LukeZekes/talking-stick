@@ -11,6 +11,15 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+### Added
+
+- Standalone `tt` binary for macOS and Linux (arm64 and x64), with no Node or Bun required. Install with `curl -fsSL https://raw.githubusercontent.com/mostlydev/talking-stick/master/scripts/install.sh | sh`. The installer verifies the release's SHA-256 checksum, installs each release into its own directory under `~/.local/share/talking-stick/releases/` with the skill files beside the binary, and links `~/.local/bin/tt` (`--install-dir` and `--bin-dir` override both). It warns when another `tt` comes first on `PATH`. Tagged releases build and smoke-test the binaries on each platform and attach them with `checksums.txt`.
+- `tt self-update` on the standalone binary reruns the installer with the directories it was installed with.
+
+### Changed
+
+- The npm package is deprecated in favour of the standalone binary: `tt --help` and `tt self-update` from an npm-family install explain how to switch. Agent, JSON, and hook output are unchanged.
+
 ## [0.22.0] — 2026-10-19
 
 Full notes: [`docs/releases/0.22.0.md`](docs/releases/0.22.0.md).

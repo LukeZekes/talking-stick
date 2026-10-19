@@ -78,7 +78,10 @@ Help flags are always read-only. `--help` and `-h` take precedence over command 
 even for stateful commands such as `wait`, `release`, `assign`, `notes add`, or `msg send`;
 they do not join rooms, claim turns, spawn guardians, write events, or update session state.
 
-`tt self-update` detects how `tt` was installed (npm / pnpm / yarn / bun, including
+`tt self-update` on the standalone binary reruns the installer bundled with the current release,
+keeping the `--install-dir` and `--bin-dir` it was installed with (recorded in
+`<install-dir>/install-receipt`). For an npm-family install it explains the move to the standalone
+binary, then detects how `tt` was installed (npm / pnpm / yarn / bun, including
 npm-via-Homebrew/mise/asdf/nvm) and runs the right global-update command. Pass `--print`
 to see the inferred command without running it, or `--manager` to override detection.
 Running it from a development checkout refuses and tells you to

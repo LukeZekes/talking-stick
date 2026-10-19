@@ -13,14 +13,17 @@ Code, Codex CLI, Antigravity (`agy`), Grok Build, and OpenCode out of the box.
 
 ## Quickstart
 
-Node ≥ 22 required.
+macOS or Linux. No Node or Bun required.
 
 ### 1. Install
 
 ```bash
-npm i -g talking-stick
+curl -fsSL https://raw.githubusercontent.com/mostlydev/talking-stick/master/scripts/install.sh | sh
 tt install --all
 ```
+
+The installer downloads the release for your platform, verifies its SHA-256 checksum, and links
+`~/.local/bin/tt`.
 
 `tt install` adds the coordination skill to every harness it finds and skips the ones you don't have.
 Restart any harness that was already running so it picks the skill up.
@@ -173,16 +176,24 @@ preflight passes.
 
 | Method | Command |
 |---|---|
-| From npm | `npm i -g talking-stick` |
-| From GitHub (`master`) | `npm i -g github:mostlydev/talking-stick` |
-| From source | `git clone … && npm install && npm link` |
+| Standalone binary (recommended) | `curl -fsSL https://raw.githubusercontent.com/mostlydev/talking-stick/master/scripts/install.sh \| sh` |
+| A specific version | `… \| sh -s -- --version 0.23.0` |
+| From source | `git clone … && npm install && npm link` (needs Node ≥ 22) |
+
+The installer accepts `--bin-dir DIR` (default `~/.local/bin`) and `--install-dir DIR` (default
+`~/.local/share/talking-stick`). Each release lives in its own directory under `releases/`, with the
+skill files beside the binary; `tt` is a symlink to the current one.
 
 ```bash
 tt install --all --print   # preview every change without touching anything
 tt install claude-code codex   # install into a subset
-tt self-update             # update using whichever npm/pnpm/yarn you installed with
+tt self-update             # reinstall the latest release with the same directories
 tt uninstall --all         # remove
 ```
+
+**Moving from npm.** The npm package (`talking-stick` on npm) is no longer updated after 0.23.0. Run
+the installer above, then `npm uninstall -g talking-stick`. If `tt` still resolves to the npm copy,
+put `~/.local/bin` first on your `PATH`; the installer warns when another `tt` comes first.
 
 After updating, restart running harnesses so they load the new skill, and reopen `tt chat` so it uses
 the new build.
@@ -217,17 +228,22 @@ automatically; customized ones are preserved. See
 
 ```bash
 npm install
-npm test
+npm test            # Node/Vitest suite; builds and drives the standalone binary when Bun is installed
+npm run test:bun    # bun:sqlite adapter tests (needs Bun)
 npm run typecheck
 npm run build
+node scripts/build-standalone.mjs   # standalone archive for this platform, in release-dist/
 ```
 
-`tt` executes `dist/cli.js`, so run `npm run build` after source changes and restart any long-running
-harness that cached the old build.
+A development checkout runs `dist/cli.js` under Node (better-sqlite3); the standalone binary is the
+same code compiled with `bun build --compile` (bun:sqlite). Run `npm run build` after source changes
+and restart any long-running harness that cached the old build.
 
 When cutting a release, add entries under `CHANGELOG.md`'s `Unreleased` section, then run
 `npm version <new-version>`. The lifecycle script moves those entries into the new version section,
 writes `docs/releases/<version>.md`, and adds the GitHub release link before npm commits and tags.
+Pushing the `v<version>` tag runs the Release workflow, which builds and smoke-tests the macOS and
+Linux binaries and attaches them, with `checksums.txt`, to the GitHub release.
 Write local links relative to the repository root; the script rebases them for the release notes and
 aborts before writing anything if a local target is missing. Put code examples in fenced blocks, since
 indented lines are treated as list continuations and their links are rewritten too. Keep inline code

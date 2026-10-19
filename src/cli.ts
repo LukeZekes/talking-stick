@@ -8,6 +8,8 @@ import { printCommandHelp, printHelp, shouldUseJson } from "./cli/output.js";
 import { COMMAND_REGISTRY, getCommand } from "./cli/registry.js";
 import { createRuntime } from "./cli/runtime.js";
 import { runStartupMaintenance } from "./cli/startup-maintenance.js";
+import { isStandalone } from "./standalone-mode.js";
+import { detectInstallSource, isPackageManager, resolveCurrentBinaryPath, STANDALONE_MIGRATION_NOTICE } from "./self-update.js";
 
 export { checkGuardianLiveness } from "./cli/guardian.js";
 export { parseHandoffJson } from "./cli/handoff.js";
@@ -31,7 +33,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
     if (command) {
       printCommandHelp(command);
     } else {
-      printHelp(COMMAND_REGISTRY.filter((entry) => !entry.internal).map((entry) => entry.usage));
+      printHelp(COMMAND_REGISTRY.filter((entry) => !entry.internal).map((entry) => entry.usage), helpNotice());
     }
     return;
   }
@@ -56,6 +58,13 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
   }
 }
 
+// Package-manager installs point humans at the standalone binary.
+function helpNotice(): string | undefined {
+  if (isStandalone()) return undefined;
+  const source = detectInstallSource({ binaryPath: resolveCurrentBinaryPath(import.meta.url) });
+  return isPackageManager(source) ? STANDALONE_MIGRATION_NOTICE : undefined;
+}
+
 function isDirectExecution(): boolean {
   const argvPath = process.argv[1];
   if (!argvPath) {
@@ -69,9 +78,11 @@ function isDirectExecution(): boolean {
   }
 }
 
-if (isDirectExecution()) {
-  await runCli().catch((error) => {
-    const parsed = parseCommand(process.argv.slice(2));
+// Runs the CLI and turns any error into the stderr payload and exit code
+// shared by the Node script and the standalone binary.
+export async function runCliMain(argv = process.argv.slice(2)): Promise<void> {
+  await runCli(argv).catch((error) => {
+    const parsed = parseCommand(argv);
     if (shouldUseJson(parsed)) {
       const payload = isProtocolError(error)
         ? error.toJSON()
@@ -90,4 +101,8 @@ if (isDirectExecution()) {
     }
     process.exit(1);
   });
+}
+
+if (!isStandalone() && isDirectExecution()) {
+  await runCliMain();
 }

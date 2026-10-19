@@ -21,6 +21,7 @@ import {
 } from "./parser.js";
 import { createRuntime } from "./runtime.js";
 import type { Runtime } from "./runtime.js";
+import { isStandalone } from "../standalone-mode.js";
 
 const GUARD_READY = "READY";
 const GUARD_READY_TIMEOUT_MS = 10_000;
@@ -301,6 +302,8 @@ function appendOption(
 }
 
 function resolveSelfSpawn(cliEntryUrl: string): { command: string; args: string[] } {
+  // The compiled binary is its own entry point; it takes no script path.
+  if (isStandalone()) return { command: process.execPath, args: [] };
   const scriptPath = fileURLToPath(cliEntryUrl);
   if (scriptPath.endsWith(".ts")) {
     const tsxBin = path.join(process.cwd(), "node_modules", ".bin", "tsx");

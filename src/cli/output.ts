@@ -286,7 +286,7 @@ export function indent(text: string, prefix = "  "): string {
 
 // The command list comes from the registry, so new commands appear here
 // without a second list to keep in sync. Internal hook commands are omitted.
-export function printHelp(usages: readonly string[]): void {
+export function printHelp(usages: readonly string[], notice?: string): void {
   process.stdout.write(`Usage: tt <command> [options]
 
 Commands:
@@ -302,7 +302,7 @@ Common options:
   --json       Force JSON output (also default when invoked from a harness)
   --text       Force human-readable text even when invoked from a harness
   --help, -h   Show help without running the command or changing room state
-`);
+${notice ? `\n${notice}\n` : ""}`);
 }
 
 export function printCommandHelp(command: {

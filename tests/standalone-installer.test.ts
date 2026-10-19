@@ -36,6 +36,9 @@ describe.skipIf(process.platform === "win32")("standalone installer", () => {
     expect(binary.startsWith(fs.realpathSync(f.install))).toBe(true);
     expect(fs.readFileSync(path.join(path.dirname(binary), "skills/talking-stick/SKILL.md"), "utf8")).toBe("fixture");
     expect(execFileSync(binary, ["--help"], { encoding: "utf8" }).trim()).toBe("standalone-fixture");
+    // tt self-update reruns the installer with this bin directory.
+    expect(fs.readFileSync(path.join(f.install, "install-receipt"), "utf8"))
+      .toBe(`bin_dir=${fs.realpathSync(f.bin)}\n`);
     expect(f.run().status).toBe(0);
     expect(fs.realpathSync(path.join(f.bin, "tt"))).toBe(binary);
   });
