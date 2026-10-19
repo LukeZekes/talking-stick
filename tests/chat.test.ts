@@ -1648,7 +1648,8 @@ test("inline incoming messages erase from the actual draft cursor and restore pa
     await session;
   }
   expect(out).toContain("\u001b[?2004l");
-  expect(rawModes).toEqual([true, false]);
+  // The startup cursor-row query toggles raw mode once before the editor does.
+  expect(rawModes).toEqual([true, false, true, false]);
 });
 
 test("inline terminal retains history, bars and draft across incoming messages and resize", async () => {
