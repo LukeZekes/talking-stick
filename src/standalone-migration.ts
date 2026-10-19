@@ -58,11 +58,13 @@ export function advanceCurrentLink(options: MigrationOptions = {}): RepointedLin
   const releaseRoot = options.releaseRoot ?? standaloneRoot();
   const env = options.env ?? process.env;
   const currentSkill = path.join(standaloneInstallDir(releaseRoot), "current", "skills", DEFAULT_SKILL_NAME);
+  const currentResolved = safeRealpath(currentSkill);
   const pinned: RepointedLink[] = [];
   for (const target of skillLinkTargets(options)) {
     const from = linkDestination(target);
-    if (from !== currentSkill) continue;
-    const resolved = safeRealpath(from);
+    // Any route into the skill `current` serves today, aliases included.
+    if (from === null || !currentResolved || safeRealpath(target) !== currentResolved) continue;
+    const resolved = currentResolved;
     const recorded = getManagedContent(target, { env })?.digest;
     if (!resolved || (recorded && digestDirectory(resolved) === recorded)) continue;
     replaceLink(target, resolved);

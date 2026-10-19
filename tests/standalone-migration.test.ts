@@ -122,6 +122,22 @@ describe("standalone migration", () => {
     expect(fs.readFileSync(path.join(shared, "SKILL.md"), "utf8")).toBe("new");
   });
 
+  it("pins an edited skill that reaches current through an alias", () => {
+    const f = layout();
+    const oldRelease = f.release("0.23.1-old", "old");
+    const release = f.release("0.23.2-new", "new");
+    ensureCurrentLink({ releaseRoot: oldRelease });
+    const alias = path.join(f.root, "alias");
+    fs.symlinkSync(path.join(f.install, "current", "skills", "talking-stick"), alias);
+    const claude = path.join(f.home, ".claude", "skills", "talking-stick");
+    fs.mkdirSync(path.dirname(claude), { recursive: true });
+    fs.symlinkSync(alias, claude);
+    recordManagedContent(claude, "skill-copy", digestDirectory(alias), { env: f.env });
+    fs.appendFileSync(path.join(oldRelease, "skills", "talking-stick", "SKILL.md"), " + edit");
+    expect(advanceCurrentLink({ releaseRoot: release, env: f.env, homeDir: f.home }).map((link) => link.path)).toEqual([claude]);
+    expect(fs.readFileSync(path.join(claude, "SKILL.md"), "utf8")).toBe("old + edit");
+  });
+
   it("finds skill links that reach a package through an alias", () => {
     const f = layout();
     const npmSkill = path.join(f.root, "lib", "node_modules", "talking-stick", "skills", "talking-stick");

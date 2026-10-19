@@ -15,7 +15,7 @@ function fixture() {
   fs.mkdirSync(assets);
   fs.mkdirSync(path.join(stage, "skills/talking-stick"), { recursive: true });
   // Like a release before 0.23.1, the fixture has no post-install step.
-  fs.writeFileSync(path.join(stage, "tt"), "#!/bin/sh\n[ \"$1\" = post-install ] && exit 1\necho standalone-fixture\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(stage, "tt"), "#!/bin/sh\n[ \"$1\" = post-install ] && { echo 'Unknown command: post-install' >&2; exit 1; }\necho standalone-fixture\n", { mode: 0o755 });
   fs.writeFileSync(path.join(stage, "package.json"), '{"version":"0.23.0"}');
   fs.writeFileSync(path.join(stage, "skills/talking-stick/SKILL.md"), "fixture");
   const name = `talking-stick_0.23.0_${process.platform}_${process.arch}.tar.gz`;

@@ -114,9 +114,17 @@ case ":${PATH:-}:" in *":$bin_dir:"*) on_path=yes ;; esac
 # post-install moves `current` (through which skill links follow every update)
 # to this release, re-points managed skill links, and looks for an npm copy.
 # A release older than 0.23.1 has none; then only `current` is moved here.
-if ! post=$("$release_dir/tt" post-install --bin-dir "$bin_dir" 2>/dev/null); then
+# A release older than 0.23.1 has no post-install; then only a missing
+# `current` is created. Any other failure leaves `current` and skills alone.
+if ! post=$("$release_dir/tt" post-install --bin-dir "$bin_dir" 2>"$task_tmp/post.err"); then
   post=
-  ln -sfn "releases/$(basename "$release_dir")" "$install_dir/current"
+  if [ ! -e "$install_dir/current" ] && [ ! -L "$install_dir/current" ]; then
+    ln -s "releases/$(basename "$release_dir")" "$install_dir/current"
+  elif grep -q 'Unknown command' "$task_tmp/post.err" 2>/dev/null; then
+    :
+  else
+    printf 'Skipped skill-link migration: %s\n' "$(head -n 1 "$task_tmp/post.err")" >&2
+  fi
 fi
 npm_copy=
 while IFS= read -r line; do
