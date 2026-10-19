@@ -3693,7 +3693,7 @@ export class TalkingStickService {
    */
   setRoomRolesBatch(input: {
     agent_id: AgentId;
-    rooms: Array<{ room_id: string; changes: Array<{ subject: RoleSubject; roles: string[] | null }>; notify: RoleNotifier }>;
+    rooms: Array<{ room_id: string; expected_version?: number; changes: Array<{ subject: RoleSubject; roles: string[] | null }>; notify: RoleNotifier }>;
     process_metadata?: ProcessMetadata;
   }): Array<{ room_id: string; version: number; event_seq: number | null; recipients: AgentId[] }> {
     assertNonEmpty(input.agent_id, "agent_id");
@@ -3715,7 +3715,11 @@ export class TalkingStickService {
       this.requireRoom(room.room_id);
       // The notification must compare against the state protected by this
       // write transaction, including changes committed by another process.
-      const before = this.getRoomRoles({ room_id: room.room_id }).assignments;
+      const current = this.getRoomRoles({ room_id: room.room_id });
+      if (room.expected_version !== undefined && current.version !== room.expected_version) {
+        throw new ProtocolError("stale_roles", "Roles changed since the editor opened; reopen /roles.");
+      }
+      const before = current.assignments;
       for (const change of room.changes) {
         if (change.roles === null) {
           this.db.prepare("DELETE FROM room_roles WHERE room_id = ? AND subject = ?").run(room.room_id, change.subject);

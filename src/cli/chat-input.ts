@@ -38,7 +38,7 @@ const PASTE_START = "\u001b[200~";
 const PASTE_END = "\u001b[201~";
 const MAX_PASTE_LENGTH = 65_536;
 
-export type ChatModalKey = "up" | "down" | "left" | "right" | "space" | "enter" | "escape" | "default" | "yes" | "no";
+export type ChatModalKey = "up" | "down" | "left" | "right" | "space" | "enter" | "escape" | "default" | "yes" | "no" | "tab" | "edit" | "instructions" | "preview" | "undo" | "reset" | "help" | "quit" | "page_up" | "page_down" | "notifications";
 
 // Readline edits a private buffer; it never writes to the physical terminal.
 // Terminal-only controls are consumed before readline's keypress decoder.
@@ -165,6 +165,8 @@ export class ChatInputController {
       ["\u001b[A", "up"], ["\u001bOA", "up"], ["\u001b[B", "down"], ["\u001bOB", "down"],
       ["\u001b[C", "right"], ["\u001bOC", "right"], ["\u001b[D", "left"], ["\u001bOD", "left"],
       [" ", "space"], ["\r", "enter"], ["\n", "enter"], ["d", "default"], ["D", "default"], ["y", "yes"], ["Y", "yes"], ["n", "no"], ["N", "no"],
+      ["\t", "tab"], ["e", "edit"], ["i", "instructions"], ["p", "preview"], ["v", "notifications"], ["u", "undo"], ["r", "reset"], ["?", "help"], ["q", "quit"],
+      ["\u001b[5~", "page_up"], ["\u001b[6~", "page_down"],
       ["k", "up"], ["j", "down"], ["h", "left"], ["l", "right"], ["\u0003", "escape"]
     ];
     if (this.modalEscapeTimer) clearTimeout(this.modalEscapeTimer);

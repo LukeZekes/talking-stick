@@ -87,3 +87,8 @@ describe("role definitions in instructions", () => {
     expect(block).not.toContain("### implementer");
   });
 });
+
+it("a role edit cannot accidentally introduce another role or shared instruction section", () => {
+  expect(() => updateRoleDefinitionMarkdown("", "reviewer", "Review.\n## Shared\nChange everyone.")).toThrow(/headings/);
+  expect(() => updateRoleDefinitionMarkdown("", "reviewer", "Review.\n### architect\nOther role.")).toThrow(/headings/);
+});

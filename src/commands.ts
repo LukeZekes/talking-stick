@@ -178,7 +178,7 @@ export class TalkingStickCommands {
   }
 
   setRoomRolesBatch(identity: DerivedIdentity, input: {
-    rooms: Array<{ room_id: string; changes: Array<{ subject: RoleSubject; roles: string[] | null }>; notify: RoleNotifier }>;
+    rooms: Array<{ room_id: string; expected_version?: number; changes: Array<{ subject: RoleSubject; roles: string[] | null }>; notify: RoleNotifier }>;
   }) {
     return this.service.setRoomRolesBatch({ ...input, agent_id: identity.agent_id, process_metadata: identity.process_metadata });
   }

@@ -8,6 +8,10 @@ import path from "node:path";
 // saved until they apply it. A terminal editor is required: GUI fallbacks such
 // as `open -t` return before the edit happens.
 
+export class ExternalEditorError extends Error {
+  constructor(message: string, readonly draftText: string) { super(message); this.name = "ExternalEditorError"; }
+}
+
 export interface SuspendableTerminal {
   suspend(): void;
   resume(): void;
@@ -26,16 +30,19 @@ export async function editTextInTerminal(
   const file = path.join(directory, options.name ?? "instructions.md");
   fs.writeFileSync(file, text, { mode: 0o600 });
   const editor = terminalEditor(options.env);
-  terminal.suspend();
   try {
+    terminal.suspend();
     await new Promise<void>((resolve, reject) => {
       const child = spawn(`${editor} '${file.replaceAll("'", "'\\''")}'`, { stdio: "inherit", shell: true, env: options.env ?? process.env });
       child.on("error", reject);
       child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`${editor} exited with code ${code}; nothing was changed.`)));
     });
     return fs.readFileSync(file, "utf8");
+  } catch (error) {
+    let draft = text;
+    try { draft = fs.readFileSync(file, "utf8"); } catch { /* keep initial text */ }
+    throw new ExternalEditorError(error instanceof Error ? error.message : String(error), draft);
   } finally {
-    terminal.resume();
-    fs.rmSync(directory, { recursive: true, force: true });
+    try { terminal.resume(); } finally { fs.rmSync(directory, { recursive: true, force: true }); }
   }
 }

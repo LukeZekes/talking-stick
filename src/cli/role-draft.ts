@@ -17,6 +17,7 @@ import {
   effectiveRoles,
   harnessOf,
   readUserRoleDefaults,
+  readUserRoleDefaultsStrict,
   renderRoleBlock,
   userRoleDefaultsPath,
   type RoleSubject,
@@ -44,6 +45,7 @@ export interface RoleDraft {
 export interface RoleRecipients {
   room_id: string;
   canonical_path: string;
+  expected_version: number;
   /** agent → what changed for it */
   agents: Map<string, string[]>;
 }
@@ -92,7 +94,7 @@ export function previewRoleDraft(runtime: Runtime, roomId: string, draft: RoleDr
     project = { path: projectPath, before, after: replaceRolesSection(shared, parseRoleDefinitions(withRoles)) };
   }
 
-  const defaultsBefore = readUserRoleDefaults(options);
+  const defaultsBefore = draft.defaults ? readUserRoleDefaultsStrict(options) : readUserRoleDefaults(options);
   let defaults: RoleDraftPreview["defaults"] = null;
   if (draft.defaults) {
     const after = { ...defaultsBefore };
@@ -110,7 +112,7 @@ export function previewRoleDraft(runtime: Runtime, roomId: string, draft: RoleDr
       resolveInstructionPaths({ ...options, contextPath: candidate.canonical_path }).project === projectPath;
     if (!isDraftRoom && !sharesProject && !defaults) continue;
     const context = { ...options, contextPath: candidate.canonical_path };
-    const { assignments } = runtime.commands.getRoomRoles({ room_id: candidate.room_id });
+    const { assignments, version } = runtime.commands.getRoomRoles({ room_id: candidate.room_id });
     const assignmentsAfter = isDraftRoom ? applyAssignmentChanges(assignments, draft.changes) : assignments;
     const defsBefore = definitionMap(loadRoleDefinitions(context));
     const defsAfter = sharesProject ? definitionMap(loadRoleDefinitions(context, { projectText: project!.after })) : defsBefore;
@@ -133,7 +135,7 @@ export function previewRoleDraft(runtime: Runtime, roomId: string, draft: RoleDr
       if (reasons.length) agents.set(agent, reasons);
     }
     if (agents.size || (isDraftRoom && (draft.changes?.length ?? 0) > 0)) {
-      rooms.push({ room_id: candidate.room_id, canonical_path: candidate.canonical_path, agents });
+      rooms.push({ room_id: candidate.room_id, canonical_path: candidate.canonical_path, expected_version: version, agents });
     }
   }
 
@@ -164,7 +166,7 @@ export async function applyRoleDraft(
   identity: DerivedIdentity,
   roomId: string,
   draft: RoleDraft,
-  options: InstructionOptions & { base?: { projectText?: string; defaults?: Record<string, string[]> } } = {}
+  options: InstructionOptions & { base?: { projectText?: string; defaults?: Record<string, string[]>; versions?: Record<string, number> } } = {}
 ): Promise<RoleDraftResult> {
   const preview = previewRoleDraft(runtime, roomId, draft, options);
   if (preview.project && options.base?.projectText !== undefined && preview.project.before !== options.base.projectText) {
@@ -175,6 +177,7 @@ export async function applyRoleDraft(
     throw new Error("Harness defaults changed since the editor opened; reopen /roles to start from the current defaults.");
   }
 
+  let committed = false;
   const restores: Array<() => void> = [];
   const write = (file: string, text: string) => {
     const existed = fs.existsSync(file);
@@ -191,6 +194,7 @@ export async function applyRoleDraft(
     const results = runtime.commands.setRoomRolesBatch(identity, {
       rooms: preview.rooms.map((entry) => ({
         room_id: entry.room_id,
+        expected_version: options.base?.versions?.[entry.room_id] ?? entry.expected_version,
         changes: entry.room_id === roomId ? draft.changes ?? [] : [],
         notify: ({ version, assignments }) => ({
           to_agent_ids: [...entry.agents.keys()],
@@ -198,6 +202,7 @@ export async function applyRoleDraft(
         })
       }))
     });
+    committed = true;
     // Committed: wake parked recipients now rather than at a later flush.
     for (const entry of results) {
       try { await runtime.commands.flushWakes(entry.room_id); } catch { /* wakes stay durable */ }
@@ -209,7 +214,7 @@ export async function applyRoleDraft(
       summary: preview.summary
     };
   } catch (error) {
-    for (const restore of restores.reverse()) {
+    for (const restore of committed ? [] : restores.reverse()) {
       try { restore(); } catch { /* report the original failure */ }
     }
     throw error;

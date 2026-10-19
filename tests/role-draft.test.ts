@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { applyRoleDraft, previewRoleDraft } from "../src/cli/role-draft.js";
+import { roomRoleBlock } from "../src/cli/role-commands.js";
 import type { Runtime } from "../src/cli/runtime.js";
 import { TalkingStickService } from "../src/service.js";
 import type { DerivedIdentity } from "../src/identity.js";
@@ -52,6 +53,7 @@ test("a definition change reaches only that role's holders, with the new text", 
   expect(preview.rooms.flatMap((room) => [...room.agents])).toEqual([["claude:a", ["architect redefined"]]]);
   await applyRoleDraft(f.runtime, f.operator, f.main.room_id, draft, f.options);
   expect(f.notices("claude:a", f.main.room_id).at(-1)).toContain("### architect\nOwns the plan and the final call on structure.");
+  expect(roomRoleBlock(f.runtime, f.main.room_id, "claude:a")).toContain("Owns the plan and the final call on structure.");
   expect(f.notices("grok:c", f.main.room_id)).toEqual([]);
   expect(f.notices("codex:b", f.api.room_id)).toEqual([]);
   expect(fs.readFileSync(path.join(f.repo, ".talking-stick", "instructions.md"), "utf8")).toContain("### architect");
@@ -90,4 +92,26 @@ test("a failed database write puts the files back; a stale base is refused befor
   await expect(applyRoleDraft(f.runtime, f.operator, f.main.room_id, { definitions: { architect: "New." } },
     { ...f.options, base: { projectText: "# Something else\n" } })).rejects.toThrow(/changed since the editor opened/);
   expect(fs.readFileSync(file, "utf8")).toBe("# Local\n");
+});
+
+test("malformed defaults are never overwritten by a draft", async () => {
+  const f = fixture();
+  const file = path.join(f.data, "roles.json");
+  fs.mkdirSync(f.data, { recursive: true });
+  fs.writeFileSync(file, "{ broken");
+  await expect(applyRoleDraft(f.runtime, f.operator, f.main.room_id, { defaults: { grok: [] } }, f.options)).rejects.toThrow(/Refusing to overwrite/);
+  expect(fs.readFileSync(file, "utf8")).toBe("{ broken");
+});
+
+test("a newer assignment rejects an old draft and restores instruction files", async () => {
+  const f = fixture();
+  const original = f.service.getRoomRoles({ room_id: f.main.room_id }).version;
+  await applyRoleDraft(f.runtime, f.operator, f.main.room_id, { changes: [{ subject: "agent:claude:a", roles: ["architect", "reviewer"] }] }, f.options);
+  const count = f.notices("claude:a", f.main.room_id).length;
+  await expect(applyRoleDraft(f.runtime, f.operator, f.main.room_id,
+    { definitions: { architect: "stale definition" }, defaults: { grok: [] } },
+    { ...f.options, base: { versions: { [f.main.room_id]: original } } })).rejects.toThrow(/changed since the editor opened/);
+  expect(fs.existsSync(path.join(f.repo, ".talking-stick", "instructions.md"))).toBe(false);
+  expect(fs.existsSync(path.join(f.data, "roles.json"))).toBe(false);
+  expect(f.notices("claude:a", f.main.room_id)).toHaveLength(count);
 });

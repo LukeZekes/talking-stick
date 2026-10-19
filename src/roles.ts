@@ -68,6 +68,22 @@ export function readUserRoleDefaults(options: ResolveDataDirOptions = {}): Recor
   }
 }
 
+/** Saves must never turn a malformed defaults file into silent data loss. */
+export function readUserRoleDefaultsStrict(options: ResolveDataDirOptions = {}): Record<string, string[]> {
+  const file = userRoleDefaultsPath(options);
+  if (!fs.existsSync(file)) return {};
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) ||
+      Object.values(parsed).some(value => !Array.isArray(value) || value.some(role => typeof role !== "string" || !normalizeRole(role)))) {
+      throw new Error("expected an object of harness names to role lists");
+    }
+  } catch (error) {
+    throw new Error(`Refusing to overwrite ${file}: ${error instanceof Error ? error.message : String(error)}. Fix or remove it first.`);
+  }
+  return readUserRoleDefaults(options);
+}
+
 /** `roles: null` removes the override so the bundled default applies again. */
 export function writeUserRoleDefault(harness: string, roles: string[] | null, options: ResolveDataDirOptions = {}): void {
   // Reads fail open, but a save must never replace a file it could not parse:

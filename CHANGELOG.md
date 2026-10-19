@@ -11,6 +11,11 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+### Added
+
+- `/roles` now has a stable keyboard grid with separate room assignments and harness defaults, editable Markdown role definitions and project instructions through `$VISUAL`/`$EDITOR`, and instruction/notification previews. Enter applies the draft; Tab changes scope. Changes notify affected agents in chat, including inheriting sessions in other rooms when defaults change.
+
+
 ## [0.23.1] — 2026-10-19
 
 Full notes: [`docs/releases/0.23.1.md`](docs/releases/0.23.1.md).

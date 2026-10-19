@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import {
   extractHarnessInstructions,
+  BUNDLED_DEFAULT_ROLE_LINES,
   resolveInstructionPaths,
   showInstructions,
   type InstructionOptions
@@ -57,6 +58,12 @@ export function replaceRolesSection(markdown: string, definitions: ReadonlyArray
     "",
     ...definitions.flatMap((definition) => [`### ${definition.name}`, definition.text.trim(), ""])
   ].join("\n").trimEnd();
+  if (definitions.length) {
+    const expected = definitions.map(definition => ({ name: definition.name, text: normalizeNewlines(definition.text).trim() }));
+    if (JSON.stringify(parseRoleDefinitions(rendered)) !== JSON.stringify(expected)) {
+      throw new Error("Role bodies must not contain un-fenced ## or ### headings; use #### subheadings or fenced examples.");
+    }
+  }
   const section = findRolesSection(text);
   if (section) {
     const before = text.slice(0, section.start).trimEnd();
@@ -130,9 +137,10 @@ export function effectiveSharedInstructions(
 ): string {
   // showInstructions already strips "## Roles" from every layer; staged
   // project text is stripped the same way before harness extraction.
-  if (staged.projectText === undefined) return showInstructions({ harness, options }).text;
+  const stripHints = (text: string) => text.split("\n").filter(line => !BUNDLED_DEFAULT_ROLE_LINES.has(line)).join("\n");
+  if (staged.projectText === undefined) return stripHints(showInstructions({ harness, options }).text);
   const resolved = showInstructions({ harness, scope: "bundled", options }).harness;
   const parts = (["bundled", "user"] as const).map((scope) => showInstructions({ harness, scope, options }).text);
   parts.push(extractHarnessInstructions(stripRolesSection(staged.projectText), resolved));
-  return parts.map((part) => part.trim()).filter(Boolean).join("\n\n");
+  return stripHints(parts.map((part) => part.trim()).filter(Boolean).join("\n\n"));
 }
