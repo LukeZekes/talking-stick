@@ -37,7 +37,7 @@ tt status [path] [--verbose|--all]                        # alias for health
 tt events [path] [--all] [--after N] [--limit N] [--wait|--follow] [--event TYPE[,TYPE]] [--target self|any|agent]
 tt chat [path] [--history N] [--events] [--fullscreen] [--mouse|--no-mouse]   # operator console
 tt up [--agents claude,codex,grok,opencode,antigravity] [--path DIR] [--in ROOM] [--new-tab|--new-workspace] [--print] [--forget] [--timeout 120s] # experimental Herdr launcher
-tt msg send <recipient|room> <body...> [--interrupt] [--stdin] [--path DIR]
+tt msg send <recipient|room> <body...> [--interrupt] [--stdin] [--attach IMAGE]... [--path DIR]
 tt msg recv [--wait|--follow] [--from agent] [--after N] [--target self|any|agent] [--path DIR]
 tt ack <delivery-token> [--json]                          # acknowledge a native delivery envelope
 tt kick <agent_id> [path] [--reason TEXT] [--force]       # remove a member (live ones need --force)
@@ -158,7 +158,7 @@ chat protocol. When two agents need to talk — design questions, "are you about
 coordination — use messages instead of churning the stick.
 
 ```bash
-tt msg send <recipient|room> "<body>" [--interrupt] [--stdin]
+tt msg send <recipient|room> "<body>" [--interrupt] [--stdin] [--attach IMAGE]...
 tt wait --json
 ```
 
@@ -330,6 +330,7 @@ it. Scrolling, selection, and copying stay with the terminal.
 | `/events` | Toggle turn and handoff events, hidden by default |
 | `/help`, `/help keys` | Show chat commands, or keyboard shortcuts |
 | `/older` | Print an earlier page of saved messages; in fullscreen, scroll into older history |
+| Ctrl+V, `/attach <file>` | Attach an image: Ctrl+V reads the clipboard (macOS `osascript`; Linux `wl-paste` or `xclip`), and a pasted or dragged-in image path does the same. The draft shows `[Image #N]`; delete the marker to drop the image. See [Images](#images) |
 | `/roles` | Edit roles: ↑↓ member, ←→ role, Space toggle, `d` save as harness default, Enter apply, Esc cancel. `/roles set <agent|harness> <roles|none|clear>` and `/roles default <harness> <roles|none|clear>` work as text |
 | `/rooms`, Ctrl+T | Open the repository's directory tree with live members, unread counts, and rollups (see [Directory tree](#directory-tree)); without an interactive terminal, `/rooms` prints the room list. Chat joins listed rooms as an observer so agents there can address you; those messages show inline as `#room › agent → you: …` |
 | `/go` (↑↓ choose, Enter open; Tab fills) or Alt+←/→ | Switch to another open room, including one with no agents; Ctrl+PgUp/PgDn is a fallback when the terminal captures Alt+Arrow. Drafts and memberships are kept until chat exits. `/go <dir>` (relative to the active repository's checkout) opens a directory's room even if nobody has joined it yet, e.g. a committed declaration; `#name` never falls back to a directory |
@@ -371,6 +372,26 @@ Alt+Enter (or Shift+Enter where supported) adds a new line. With suggestions clo
 through multiline drafts or recall single-line prompt history; Ctrl+P/Ctrl+N also recall prompts.
 Pasted multiline text stays in the draft until Enter. The conversation remains in terminal scrollback
 after exit.
+
+### Images
+
+A terminal paste carries only text, so chat reads images itself, as harness composers do. Ctrl+V
+(or a paste with no text, which some terminals send when the clipboard holds only an image) reads
+the clipboard's image. A pasted path to a PNG, JPEG, GIF, or WebP file, such as a file dragged into
+the terminal, becomes an image too, as does `/attach <file>`. Each image is copied at once to
+`<data dir>/attachments/<sha256>.<ext>`, the extension matching its actual bytes, and stands in the
+draft as `[Image #N]`. On send, the markers are renumbered from 1 in message order, and every
+recipient's prompt carries one line per image:
+
+```text
+Image #1 attached at /…/attachments/<sha256>.png (image/png, 415 KB). Read that file to see it.
+```
+
+Agents run on the same machine and open the file with their own image tools. Hook-based harnesses
+such as Grok carry text only, so the explicit read request is what turns the path into pixels.
+`tt msg send <recipient|room> [body] --attach <file>` (repeatable) sends the same thing from a
+script. A message may name only stored images (at most 8, each up to 20 MB); the body may be empty
+when it has one.
 
 The room bar above the input panel shows the room path (pinned at the screen top with
 `--fullscreen`); long paths are shortened from the left so the workspace name stays visible. The dim

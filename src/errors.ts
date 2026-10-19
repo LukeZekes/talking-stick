@@ -16,6 +16,7 @@ export type ProtocolErrorCode =
   | "takeover_ineligible"
   | "invalid_input"
   | "invalid_body"
+  | "invalid_attachment"
   | "body_too_large"
   | "message_too_large"
   | "invalid_delivery_hint"

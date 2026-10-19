@@ -2514,6 +2514,33 @@ describe("tt msg", () => {
     }
   });
 
+  test("tt msg send --attach stores the image and sends it, with or without text", async () => {
+    const { project, dataDir } = setupIsolatedCli(tempDirs);
+    const roomId = seedCliRoomMembers(project, [
+      { agent_id: "human:sender", display_name: "sender" },
+      { agent_id: "codex:target", display_name: "codex" }
+    ]);
+    const image = path.join(project, "shot.png");
+    fs.writeFileSync(image, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]));
+
+    await captureStdout(["msg", "send", "room", "look", "--attach", image, "--agent", "human:sender", "--path", project, "--json"]);
+    await captureStdout(["msg", "send", "codex:target", "--attach", image, "--agent", "human:sender", "--path", project, "--json"]);
+    await expect(captureStdout(["msg", "send", "room", "--attach", path.join(project, "package.json"),
+      "--agent", "human:sender", "--path", project, "--json"])).rejects.toThrow(/PNG, JPEG, GIF, and WebP/);
+
+    const service = new TalkingStickService();
+    try {
+      const sent = service.getRoomEvents({ room_id: roomId }).filter((event) => event.event_type === "message_sent");
+      expect(sent.map((event) => event.payload?.body)).toEqual(["look", ""]);
+      const attachments = sent.map((event) => event.payload!.attachments![0]);
+      expect(attachments[0].path.startsWith(path.join(dataDir, "attachments") + path.sep)).toBe(true);
+      expect(attachments[0].name).toBe("shot.png");
+      expect(attachments[1].path).toBe(attachments[0].path);
+    } finally {
+      service.close();
+    }
+  });
+
   test("tt msg send repairs --interrupt before a one-token body", async () => {
     const { project } = setupIsolatedCli(tempDirs);
     const roomId = seedCliRoomMembers(project, [

@@ -19,6 +19,10 @@ export interface ChatInputOptions {
   /** Alt+Left / Alt+Right: move to the previous or next room. */
   onRoomTree?: () => void;
   onCycleRoom?: (direction: -1 | 1) => void;
+  /** Ctrl+V, or a paste with no text: attach the clipboard's image, if any. */
+  onImagePaste?: () => void;
+  /** Replacement text for a paste (image paths become markers), or null to keep it. */
+  transformPaste?: (text: string) => string | null;
   now?: () => number;
   complete: (draft: ChatDraft, index: number) => ChatDraft | null;
   completionCount?: (draft: ChatDraft) => number;
@@ -216,6 +220,18 @@ export class ChatInputController {
     }
   }
 
+  /** Insert text at the cursor, e.g. an image marker once the clipboard is read. */
+  insertText(text: string): void {
+    if (this.closed) return;
+    const { line, cursor } = this.draft;
+    this.rl.line = line.slice(0, cursor) + text + line.slice(cursor);
+    this.rl.cursor = cursor + text.length;
+    this.selectedCompletion = 0;
+    this.completionDismissed = false;
+    this.verticalColumn = undefined;
+    this.options.onChange();
+  }
+
   /** Restore a saved draft, e.g. after returning to a room. */
   setDraft(line: string): void {
     if (this.closed) return;
@@ -331,23 +347,34 @@ export class ChatInputController {
           this.pending = this.pending.slice(-keep);
           return;
         }
-        const text = sanitizeChatText(
+        const pasted = sanitizeChatText(
           (this.paste + this.pending.slice(0, end)).slice(0, MAX_PASTE_LENGTH)
         );
         this.pending = this.pending.slice(end + PASTE_END.length);
         this.paste = null;
-        const { line, cursor } = this.draft;
-        this.rl.line = line.slice(0, cursor) + text + line.slice(cursor);
-        this.rl.cursor = cursor + text.length;
-        this.selectedCompletion = 0;
-        this.completionDismissed = false;
-        this.verticalColumn = undefined;
+        // Some terminals paste nothing when the clipboard holds only an image.
+        if (pasted.length === 0) {
+          this.options.onImagePaste?.();
+          continue;
+        }
+        let text = pasted;
+        try {
+          text = this.options.transformPaste?.(pasted) ?? pasted;
+        } catch {
+          // An unreadable dropped file stays as the text that was pasted.
+        }
+        this.insertText(text);
         continue;
       }
 
       if (this.pending.startsWith(PASTE_START)) {
         this.pending = this.pending.slice(PASTE_START.length);
         this.paste = "";
+        continue;
+      }
+      if (this.pending[0] === "\u0016") {
+        this.pending = this.pending.slice(1);
+        this.options.onImagePaste?.();
         continue;
       }
       if (this.pending[0] === "\u0014") {
@@ -456,7 +483,7 @@ export class ChatInputController {
         this.pending = this.pending.slice(1);
         continue;
       }
-      const next = this.pending.search(/[\u001b\u0014\t\r\n]/);
+      const next = this.pending.search(/[\u001b\u0014\u0016\t\r\n]/);
       const length = next < 0 ? this.pending.length : next;
       const text = this.pending.slice(0, length);
       this.pending = this.pending.slice(length);

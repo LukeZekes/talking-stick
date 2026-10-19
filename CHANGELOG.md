@@ -11,6 +11,10 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+### Added
+
+- Images in chat. Ctrl+V attaches the clipboard's image, and a pasted or dragged-in image path or `/attach <file>` attaches a file. The draft shows `[Image #N]`, and deleting the marker drops the image. Images are copied to `<data dir>/attachments/`, and each recipient's prompt says `Image #1 attached at <path> … Read that file to see it.`, which works in every harness, including Grok, whose hooks carry only text. `tt msg send --attach <file>` sends images from scripts.
+
 ## [0.23.1] — 2026-10-19
 
 Full notes: [`docs/releases/0.23.1.md`](docs/releases/0.23.1.md).

@@ -1,3 +1,4 @@
+import type { MessageAttachment } from "./attachments.js";
 import type { NativeWakeState, NativeWakeTransportName } from "./native-wake.js";
 export type AgentId = string;
 
@@ -157,6 +158,8 @@ export interface MessagePayload {
   recipients?: AgentId[];
   // Agents an operator's room message was delivered to; display only.
   sent_to?: AgentId[];
+  // Stored images, in the order the message numbers them.
+  attachments?: MessageAttachment[];
 }
 
 export interface RoomEvent {
@@ -532,6 +535,8 @@ export interface SendMessageInput {
   // Mutually exclusive with to_agent_id.
   to_agent_ids?: AgentId[];
   delivery_hint?: DeliveryHint;
+  /** Stored images (see attachments.ts); the body may be empty when present. */
+  attachments?: MessageAttachment[];
   process_metadata?: ProcessMetadata;
 }
 

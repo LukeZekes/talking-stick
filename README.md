@@ -79,6 +79,7 @@ the stick in the footer and a delivery mark next to each agent you message.
 | `/rooms` or Ctrl+T | Directory tree of the repository's rooms with live members; Enter opens one |
 | `/members` | Pick a member to message or remove (removal asks first) |
 | `/roles` | Edit who does what in this room |
+| Ctrl+V, a dragged-in image, or `/attach <file>` | Adds `[Image #N]` to the draft; agents get the image's path and read it |
 | `/who`, `/help` | Members and stick holder; all commands |
 
 Each message header marks every recipient: `…` not delivered yet, `✓` delivered, `!` failed. That's a

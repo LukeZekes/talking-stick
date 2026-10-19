@@ -1,4 +1,5 @@
 import os from "node:os";
+import type { MessageAttachment } from "./attachments.js";
 import { detectNativeWakeEndpoints } from "./native-wake.js";
 import { TalkingStickService } from "./service.js";
 import type { RoleSubject, RoomRoleAssignment } from "./roles.js";
@@ -146,6 +147,7 @@ export interface SendMessageCommandInput {
   body: string;
   to_agent_id?: string | null;
   delivery_hint?: "normal" | "interrupt";
+  attachments?: MessageAttachment[];
 }
 
 export interface WaitForEventsCommandInput extends WaitForEventsInput {}
@@ -467,6 +469,7 @@ export class TalkingStickCommands {
       body: input.body,
       to_agent_id: input.to_agent_id,
       delivery_hint: input.delivery_hint,
+      attachments: input.attachments,
       process_metadata: identity.process_metadata
     });
   }

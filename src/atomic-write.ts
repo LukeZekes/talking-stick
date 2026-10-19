@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-export function writeFileAtomic(filePath: string, data: string): void {
+export function writeFileAtomic(filePath: string, data: string | Uint8Array): void {
   const directory = path.dirname(filePath);
   fs.mkdirSync(directory, { recursive: true });
 

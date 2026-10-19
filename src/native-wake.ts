@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import net from "node:net";
+import { attachmentInstruction, payloadAttachments } from "./attachments.js";
 import { startQueuedCodexThread } from "./codex-queue-start.js";
 import type { RoomEvent } from "./types.js";
 
@@ -105,7 +106,8 @@ export function formatNativeEventText(input: {
     const urgent = payload.delivery_hint === "interrupt" ? " ‼ urgent" : "";
     const arrow = event.event_type === "message_sent" || event.to_agent_id || recipients.length > 0 ? ` → ${route}` : "";
     lines.push(`#${event.event_seq} ${kind}${event.from_agent_id ?? "system"}${arrow}${urgent}`);
-    if (typeof payload.body === "string") lines.push(...quote(payload.body));
+    if (typeof payload.body === "string" && payload.body.length > 0) lines.push(...quote(payload.body));
+    for (const [index, attachment] of payloadAttachments(event.payload).entries()) lines.push(...quote(attachmentInstruction(attachment, index)));
     if (event.handoff) {
       lines.push(...quote(`status: ${event.handoff.status}`), ...quote(`next: ${event.handoff.next_action}`));
       // Handoffs written with tt release --stdin often list artifacts as plain

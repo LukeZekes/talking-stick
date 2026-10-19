@@ -6,6 +6,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { planChatInterrupts } from "./chat-interrupt.js";
 import { interruptCodexThread } from "./codex-interrupt.js";
 import { interruptCodexHerdr } from "./codex-herdr-interrupt.js";
+import { ChatImages } from "./chat-images.js";
 import { ChatInputController, type ChatModalKey } from "./chat-input.js";
 import { createRolesEditor, renderRolesEditor, rolesEditorKey, type RolesEditorState } from "./roles-editor.js";
 import { applyRoleChanges, liveAgents, parseRoleList, parseRoleSubject, roomRoleBlock } from "./role-commands.js";
@@ -35,6 +36,7 @@ import {
 } from "./chat-view.js";
 import type { Readable, Writable } from "node:stream";
 
+import { resolveDataDir } from "../config.js";
 import { ProtocolError, isSqliteBusy } from "../errors.js";
 import { hasHookInterrupt, requestHookInterrupt } from "../interrupt-flags.js";
 import { deriveHumanCliIdentity, type DerivedIdentity } from "../identity.js";
@@ -100,6 +102,8 @@ const CONVERSATION_EVENTS: EventType[] = [
 
 // Shared across room switches within one `tt chat` process.
 export interface ChatConsoleState {
+  /** Images attached in this console; their markers survive room switches. */
+  images?: ChatImages;
   /** Coordination root whose rooms the strip lists. */
   anchor: string;
   /** Rooms this console has joined; it stays a member until chat exits. */
@@ -212,6 +216,7 @@ export async function handleChatCommand(
 // session and opens the next with the same identity, drafts, and unread state.
 export async function runChatConsole(options: Omit<ChatSessionOptions, "console">): Promise<void> {
   const consoleState: ChatConsoleState = {
+    images: new ChatImages({ dataDir: resolveDataDir() }),
     anchor: "",
     visited: new Set(),
     last_seen: new Map(),
@@ -503,6 +508,7 @@ export async function runChatSession(
   let exitReason: string | null = null;
 
   const transcript = new ChatTranscript();
+  const images = consoleState?.images ?? new ChatImages({ dataDir: resolveDataDir() });
   let editor: ChatInputController | null = null;
   let rl: readline.Interface | null = null;
   let previousFrame: ChatFrame | null = null;
@@ -931,9 +937,11 @@ export async function runChatSession(
         : { to_agent_ids: resolved.agent_ids };
     }
     redraw();
+    const outgoing = images.take(body);
     void runtime.commands.sendMessageAndWake(identity, {
       room_id: roomId,
-      body,
+      body: outgoing.body,
+      ...(outgoing.attachments.length ? { attachments: outgoing.attachments } : {}),
       ...route,
       delivery_hint: interrupt ? "interrupt" : "normal"
     }, (delivery, sent) => {
@@ -1027,6 +1035,20 @@ export async function runChatSession(
         print([current, ...stripOrder.map(room =>
           `  #${sanitizeChatText(roomNames.get(room.room_id) ?? roomShortName(room))}  ${sanitizeChatText(room.canonical_path)}`),
           stripOrder.length ? "Switch with /go <room> or Alt+←/→." : "No other rooms with agents in this repository."].join("\n"));
+        return;
+      }
+      case "attach": {
+        const file = args.trim();
+        if (!file) {
+          print("Usage: /attach <image file>. Ctrl+V attaches the clipboard's image.");
+          return;
+        }
+        try {
+          const marker = images.fromPastedText(file) ?? images.fromFile(file);
+          editor?.insertText(`${marker} `);
+        } catch (error) {
+          print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`);
+        }
         return;
       }
       case "go": {
@@ -1166,6 +1188,16 @@ export async function runChatSession(
     lastPrinted = isMessage ? "message" : "system";
   };
 
+  const pasteImage = () => {
+    void images.fromClipboard().then((marker) => {
+      if (closed) return;
+      if (marker) editor?.insertText(`${marker} `);
+      else print("No image on the clipboard.");
+    }, (error: unknown) => {
+      if (!closed) print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`);
+    });
+  };
+
   const handleLine = (line: string) => {
     const parsed = parseChatInput(line);
     switch (parsed.kind) {
@@ -1285,6 +1317,8 @@ export async function runChatSession(
         onEmptyEscape,
         onCycleRoom,
         onRoomTree: openRoomTree,
+        onImagePaste: pasteImage,
+        transformPaste: (text) => images.fromPastedText(text),
         onQuit: stop,
         onBottom: () => {
           transcript.scrollToBottom();
@@ -1349,6 +1383,8 @@ export async function runChatSession(
         onEmptyEscape,
         onCycleRoom,
         onRoomTree: openRoomTree,
+        onImagePaste: pasteImage,
+        transformPaste: (text) => images.fromPastedText(text),
         onQuit: stop,
         // Scrollback belongs to the terminal in this mode.
         onBottom: () => {},

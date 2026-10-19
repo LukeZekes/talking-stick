@@ -130,6 +130,8 @@ Do not relay operator messages to peers unless the operator explicitly asks you 
 
 Continue sharing your own plans, work assignments, findings, review questions, and results. Share what peers need to coordinate without restating operator messages or widening their scope. If you genuinely need to know whether a peer received something, ask them, rather than pasting it again. A chat console is an observer, not a turn-taking peer. For a live chat exercise, keep the same single wait receive process active and surface its output; having a subprocess handle alone does not deliver messages into the model. Use `tt wait --park --json` for a discussion that must remain read-only, after releasing any active turn. An operator's room message wakes every agent in the room; room messages between agents wake nobody, and directed messages wake their recipients.
 
+A message line `Image #N attached at <path> (…). Read that file to see it.` is an image the sender attached; open that path with your image-reading tool when the message refers to it.
+
 A message beginning `[roles vN]` from the operator means your role in the room changed: adopt it from your next turn, and keep any work in progress until then. Roles describe responsibility only; they never grant or move the stick. `tt instructions show --json` always reflects the current roles.
 
 Use `tt notes add "finding" --json` for durable findings that should survive a handoff. Do not use notes as a second chat stream.
