@@ -52,7 +52,7 @@ export { stripRolesSection };
 
 /** Replaces (or appends, or with no definitions removes) the "## Roles" section. */
 export function replaceRolesSection(markdown: string, definitions: ReadonlyArray<{ name: string; text: string }>): string {
-  const text = normalizeNewlines(markdown);
+  const text = normalizeNewlines(markdown).replace(/^(?:[ \t]*\n)+/, "");
   const rendered = definitions.length === 0 ? "" : [
     "## Roles",
     "",

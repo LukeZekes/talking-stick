@@ -476,7 +476,7 @@ export async function runChatSession(
       rolesPanel = { ...rolesPanel, notice: `! ${error instanceof Error ? error.message : String(error)}` };
     }
   };
-  const openRolesPanel = () => {
+  const openRolesPanel = (selection?: Pick<RolesEditorState, "tab" | "row" | "col">) => {
     if (roomTree || memberMenu) { print("Close the current panel before opening /roles."); return; }
     const { version, assignments } = runtime.commands.getRoomRoles({ room_id: roomId });
     rolePreviewKey = null;
@@ -484,6 +484,7 @@ export async function runChatSession(
     rolesBase = { projectText: fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "", defaults: readUserRoleDefaults(), version, versions: Object.fromEntries(runtime.commands.listRooms({}).rooms.map(room => [room.room_id, runtime.commands.getRoomRoles({ room_id: room.room_id }).version])) };
     rolesPanel = createRolesEditor({ agents: liveAgents(runtime, roomId), assignments, userDefaults: rolesBase.defaults,
       version, definitions: loadRoleDefinitions(roleOptions), globalDefinitions: loadRoleDefinitions(roleOptions, { projectText: "" }), nameOf });
+    if (selection) rolesPanel = refreshRolesEditor({ ...rolesPanel, ...selection });
     editor?.setModal(onRolesKey);
     redraw();
   };
@@ -550,7 +551,7 @@ export async function runChatSession(
       const rejected = error instanceof ExternalEditorError ? error.draftText : editedText;
       if (rolesPanel) rolesPanel = { ...rolesPanel,
         ...(rejected !== undefined ? { rejectedText: { key: editKey, text: rejected } } : {}),
-        notice: `! ${error instanceof Error ? error.message : String(error)}. Press ${action.kind === "new_role" ? "n" : action.kind === "edit_role" ? "e" : "i"} again to correct the text.` };
+        notice: `! ${(error instanceof Error ? error.message : String(error)).replace(/[.!?]+$/, "")}. Press ${action.kind === "new_role" ? "n" : action.kind === "edit_role" ? "e" : "i"} again to correct the text.` };
     } finally { roleBusy = false; redraw(); }
   };
   const onRolesKey = (key: ChatModalKey) => {
@@ -579,7 +580,7 @@ export async function runChatSession(
       roleBusy = true;
       rolesPanel = { ...state, notice: "Applying…" };
       void applyRoleDraft(runtime, identity, roomId, rolesEditorDraft(state), { ...roleOptions, base: rolesBase })
-        .then(result => { if (!closed) { openRolesPanel(); if (rolesPanel) rolesPanel.notice = result.summary; print(sanitizeChatText(result.summary)); } })
+        .then(result => { if (!closed) { openRolesPanel({ tab: state.tab, row: state.row, col: state.col }); if (rolesPanel) rolesPanel.notice = result.summary; print(sanitizeChatText(result.summary)); } })
         .catch(error => { rolesPanel = { ...state, notice: `! ${error instanceof Error ? error.message : String(error)}` }; })
         .finally(() => { roleBusy = false; redraw(); });
       return;

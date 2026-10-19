@@ -2041,6 +2041,13 @@ test("/roles opens a key-driven editor; Enter applies and tells only the changed
     .filter((event) => event.event_type === "message_sent");
   expect(messages).toHaveLength(1);
   expect(messages[0].to_agent_id).toBe("codex:bb");
+  // Apply keeps the same cell: toggling again removes that exact assignment.
+  out = "";
+  input.write(" "); input.write("\r");
+  await until(() => out.includes("Roles applied; told 1 agent"));
+  expect(service.getRoomRoles({ room_id: joined.room_id }).version).toBe(2);
+  expect(service.getRoomRoles({ room_id: joined.room_id }).assignments)
+    .toEqual([{ subject: "agent:codex:bb", roles: ["implementer"] }]);
   input.write("q");
   input.write("/quit\r");
   await session;
@@ -2206,7 +2213,9 @@ fi
   try {
     await until(() => out.includes("Room")); input.write("/roles\r");
     await until(() => out.includes("Roles v0")); input.write("n");
-    await until(() => out.includes("Press n again")); input.write("n");
+    await until(() => out.includes("Press n again"));
+    expect(out).not.toContain("role-name.. Press");
+    input.write("n");
     await until(() => out.includes("Draft updated"));
     expect(fs.readFileSync(capture, "utf8")).toContain("### Bad Name!\nKeep my text.");
     expect(fs.existsSync(path.join(root, ".talking-stick", "instructions.md"))).toBe(false);

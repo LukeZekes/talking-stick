@@ -51,6 +51,12 @@ describe("role definitions in instructions", () => {
     expect(() => updateRoleDefinitionMarkdown(broken, "tester", "t")).toThrow(/Fix the "## Roles" section/);
   });
 
+  it("starts a roles-only file at its heading", () => {
+    const definitions = [{ name: "tester", text: "Verify behavior." }];
+    expect(replaceRolesSection("\n\n## Roles\n\n### tester\nOld.\n", definitions))
+      .toBe("## Roles\n\n### tester\nVerify behavior.\n");
+  });
+
   it("layers bundled < user < project, and previews staged project text", () => {
     const data = temp();
     const project = temp();
