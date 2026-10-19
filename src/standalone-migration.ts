@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { FILE_SKILL_HARNESSES } from "./harness-model.js";
 import { digestDirectory, getManagedContent, recordManagedContent } from "./managed-content.js";
 import { detectInstallSource } from "./self-update.js";
-import { DEFAULT_SKILL_NAME, resolvePrimarySkillTargetPath } from "./skill-install.js";
+import { DEFAULT_SKILL_NAME, resolveDuplicateSkillTargetPaths, resolvePrimarySkillTargetPath } from "./skill-install.js";
 import { standaloneInstallDir, standaloneRoot } from "./standalone-mode.js";
 
 // Moving a machine from the npm package to the standalone binary. Everything
@@ -88,8 +88,10 @@ export function skillLinksInto(packageDir: string, options: MigrationOptions = {
 function skillLinkTargets(options: MigrationOptions): string[] {
   const env = options.env ?? process.env;
   const installOptions = { homeDir: options.homeDir ?? env.HOME, env };
-  return [...new Set(FILE_SKILL_HARNESSES.map((harness) =>
-    path.resolve(resolvePrimarySkillTargetPath(harness, installOptions))))];
+  return [...new Set(FILE_SKILL_HARNESSES.flatMap((harness) => [
+    resolvePrimarySkillTargetPath(harness, installOptions),
+    ...resolveDuplicateSkillTargetPaths(harness, installOptions)
+  ]).map((target) => path.resolve(target)))];
 }
 
 function linkDestination(target: string): string | null {
