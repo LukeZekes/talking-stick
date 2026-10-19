@@ -53,6 +53,7 @@ export class ChatInputController {
   private escapeTimer: ReturnType<typeof setTimeout> | null = null;
   private submitted: string | null = null;
   private closed = false;
+  private suspended = false;
   private selectedCompletion = 0;
   private completionDismissed = false;
   private verticalColumn: number | undefined;
@@ -226,6 +227,36 @@ export class ChatInputController {
 
   scrollPrompt(direction: number): void {
     this.moveVertical(direction, direction < 0 ? "\u001b[A" : "\u001b[B");
+  }
+
+  /**
+   * Hands the terminal to another program (an external editor): stops
+   * reading keys and restores the terminal's previous mode. resume() takes
+   * it back. Typed-ahead bytes are dropped rather than replayed into chat.
+   */
+  suspend(): void {
+    if (this.closed || this.suspended) return;
+    this.suspended = true;
+    if (this.escapeTimer) clearTimeout(this.escapeTimer);
+    if (this.modalEscapeTimer) clearTimeout(this.modalEscapeTimer);
+    this.escapeTimer = null;
+    this.modalEscapeTimer = null;
+    this.pending = "";
+    this.modalPending = "";
+    this.options.input.off("data", this.onData);
+    this.options.input.pause();
+    (this.options.input as RawInput).setRawMode?.(this.wasRaw);
+  }
+
+  resume(): void {
+    if (this.closed || !this.suspended) return;
+    this.suspended = false;
+    // Keys buffered while another program owned the terminal were meant for
+    // that program; drop them rather than replay them into chat.
+    while (this.options.input.read() !== null) { /* discard */ }
+    (this.options.input as RawInput).setRawMode?.(true);
+    this.options.input.on("data", this.onData);
+    this.options.input.resume();
   }
 
   close(): void {

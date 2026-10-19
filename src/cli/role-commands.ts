@@ -79,7 +79,10 @@ export async function applyRoleChanges(runtime: Runtime, identity: DerivedIdenti
   });
   // Committed: wake parked recipients now rather than at some later flush.
   try { await runtime.commands.flushWakes(roomId); } catch { /* wakes stay durable */ }
-  return result;
+  const summary = result.recipients.length
+    ? `Roles v${result.version} applied; told ${result.recipients.join(", ")}.`
+    : `Roles v${result.version} applied; no agent's roles changed.`;
+  return { ...result, summary };
 }
 
 function targetRoom(runtime: Runtime, parsed: ParsedCommand): PathRoom {
