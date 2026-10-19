@@ -1,3 +1,4 @@
+import path from "node:path";
 import { spawn } from "node:child_process";
 import {
   SUPPORTED_HARNESSES,
@@ -48,7 +49,8 @@ import {
   type InstallSource
 } from "../self-update.js";
 import { shouldUseJson } from "./output.js";
-import { isStandalone, standaloneRoot } from "../standalone-mode.js";
+import { isInstalledRelease, isStandalone, standaloneRoot } from "../standalone-mode.js";
+import { advanceCurrentLink, findRemovableNpmCopy, repointManagedSkillLinks, skillLinksInto } from "../standalone-migration.js";
 import {
   getStringOption,
   hasOption,
@@ -322,6 +324,9 @@ export async function runSelfUpdateCommand(
   const managerOverride = getStringOption(parsed, "manager");
 
   if (!managerOverride && isStandalone()) {
+    if (!isInstalledRelease()) {
+      throw new Error("This tt was not installed by the installer, so it cannot update itself. Install with: curl -fsSL https://raw.githubusercontent.com/mostlydev/talking-stick/master/scripts/install.sh | sh");
+    }
     const plan = planStandaloneUpdate(standaloneRoot());
     if (dryRun) {
       process.stdout.write(`${plan.description}\n`);
@@ -687,4 +692,24 @@ export function reportCleanupResults(
 
 function formatInstallStatus(status: InstallStatus): string {
   return status.replaceAll("_", "-");
+}
+
+// Called by scripts/install.sh after it links a new release. Output is one
+// fact per line for the shell to read: `pinned`, `repointed`, `kept`,
+// `npm_copy`, and `npm_blocked`, each followed by a path.
+export function runPostInstallCommand(binDir: string | undefined): void {
+  if (!isStandalone()) throw new Error("post-install runs only from the standalone binary.");
+  if (!binDir) throw new Error("Usage: tt post-install --bin-dir DIR");
+  if (!isInstalledRelease()) throw new Error("post-install runs only from a release the installer placed under <install-dir>/releases/.");
+  const lines = advanceCurrentLink().map((link) => `pinned ${link.path}`);
+  const { repointed, unproven } = repointManagedSkillLinks();
+  lines.push(...repointed.map((link) => `repointed ${link.path}`));
+  lines.push(...unproven.map((link) => `kept ${link.path}`));
+  const npmCopy = findRemovableNpmCopy(binDir);
+  if (npmCopy) {
+    // Removing the package would strand any skill that still resolves into it.
+    const blocking = skillLinksInto(npmCopy.package_dir)[0];
+    lines.push(blocking ? `npm_blocked ${blocking}` : `npm_copy ${npmCopy.path}`);
+  }
+  if (lines.length) process.stdout.write(`${lines.join("\n")}\n`);
 }

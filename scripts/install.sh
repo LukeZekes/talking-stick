@@ -6,20 +6,23 @@ version=latest
 bin_dir="${HOME:?HOME is required}/.local/bin"
 install_dir="$HOME/.local/share/talking-stick"
 base_url="${TALKING_STICK_RELEASE_BASE_URL:-}"
+remove_npm=ask
 
 usage() {
   cat <<'USAGE'
-Usage: install.sh [--version VERSION] [--bin-dir DIR] [--install-dir DIR] [--base-url URL]
+Usage: install.sh [--version VERSION] [--bin-dir DIR] [--install-dir DIR] [--base-url URL] [--remove-npm]
 
 Install the standalone tt binary for macOS or Linux; Node and Bun are not required.
 Defaults: latest release, ~/.local/bin/tt, assets in ~/.local/share/talking-stick.
 --base-url overrides the release asset URL for local testing or mirrors.
+--remove-npm uninstalls a global npm copy of talking-stick without asking.
 USAGE
 }
 fail() { echo "talking-stick: $*" >&2; exit 1; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --help|-h) usage; exit 0 ;;
+    --remove-npm) remove_npm=yes; shift ;;
     --version|--bin-dir|--install-dir|--base-url)
       [ "$#" -ge 2 ] || fail "$1 requires a value"
       case "$1" in
@@ -106,6 +109,50 @@ printf 'bin_dir=%s\n' "$bin_dir" > "$install_dir/install-receipt.tmp"
 mv -f "$install_dir/install-receipt.tmp" "$install_dir/install-receipt"
 printf 'Installed talking-stick %s to %s/tt\n' "$release_name" "$bin_dir"
 case ":${PATH:-}:" in *":$bin_dir:"*) ;; *) printf 'Add %s to PATH.\n' "$bin_dir" ;; esac
+on_path=no
+case ":${PATH:-}:" in *":$bin_dir:"*) on_path=yes ;; esac
+# post-install moves `current` (through which skill links follow every update)
+# to this release, re-points managed skill links, and looks for an npm copy.
+# A release older than 0.23.1 has none; then only `current` is moved here.
+if ! post=$("$release_dir/tt" post-install --bin-dir "$bin_dir" 2>/dev/null); then
+  post=
+  ln -sfn "releases/$(basename "$release_dir")" "$install_dir/current"
+fi
+npm_copy=
+while IFS= read -r line; do
+  case "$line" in
+    "pinned "*) printf 'Kept your edited skill %s on its current release.\n' "${line#pinned }" ;;
+    "repointed "*) printf 'Updated skill link %s\n' "${line#repointed }" ;;
+    "kept "*) printf 'Left skill %s as it is (customized or not ours).\n' "${line#kept }" ;;
+    "npm_copy "*) npm_copy=${line#npm_copy } ;;
+    "npm_blocked "*) printf 'Not offering to remove the npm copy: %s still uses its skill. Re-run `tt install` after reviewing it.\n' "${line#npm_blocked }" ;;
+  esac
+done <<POST
+$post
+POST
+if [ -n "$npm_copy" ]; then
+  printf 'Found the npm copy of talking-stick at %s.\n' "$npm_copy"
+  if [ "$on_path" = no ]; then
+    printf 'After adding %s to PATH, remove it with: npm uninstall -g talking-stick\n' "$bin_dir"
+  else
+    answer=n
+    if [ "$remove_npm" = yes ]; then
+      answer=y
+    elif (: < /dev/tty) 2>/dev/null && (: > /dev/tty) 2>/dev/null; then
+      printf 'Remove the npm copy (npm uninstall -g talking-stick)? [y/N] ' > /dev/tty
+      read -r answer < /dev/tty || answer=n
+    fi
+    case "$answer" in
+      y|Y|yes|YES)
+        if npm uninstall -g talking-stick; then
+          printf 'Removed the npm copy.\n'
+        else
+          printf 'Could not remove the npm copy; this installation is unaffected. Run: npm uninstall -g talking-stick\n' >&2
+        fi ;;
+      *) printf 'Kept it. Remove it later with: npm uninstall -g talking-stick\n' ;;
+    esac
+  fi
+fi
 resolved_tt=$(command -v tt || true)
 if [ -n "$resolved_tt" ] && [ "$resolved_tt" != "$bin_dir/tt" ]; then
   printf 'Your PATH currently selects %s. Put %s first to use this installation.\n' "$resolved_tt" "$bin_dir"

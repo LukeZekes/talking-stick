@@ -18,3 +18,29 @@ export function isStandalone(): boolean {
 export function standaloneRoot(): string {
   return path.dirname(fs.realpathSync(process.execPath));
 }
+
+/**
+ * Whether a release directory sits where the installer puts it,
+ * <install-dir>/releases/<release>. An archive extracted and run by hand does
+ * not, and nothing may treat its ancestors as an install directory.
+ */
+export function isInstalledRelease(releaseRoot = standaloneRoot()): boolean {
+  return path.basename(path.dirname(releaseRoot)) === "releases" &&
+    fs.existsSync(path.join(releaseRoot, "package.json"));
+}
+
+/** <install-dir> for a release at <install-dir>/releases/<release>. */
+export function standaloneInstallDir(releaseRoot = standaloneRoot()): string {
+  return path.dirname(path.dirname(releaseRoot));
+}
+
+/**
+ * Where skill links should point: <install-dir>/current, which the installer
+ * moves to each new release, so links survive updates. Falls back to the
+ * release itself before `current` exists.
+ */
+export function standaloneLinkRoot(): string {
+  if (!isInstalledRelease()) return standaloneRoot();
+  const current = path.join(standaloneInstallDir(), "current");
+  return fs.existsSync(path.join(current, "package.json")) ? current : standaloneRoot();
+}

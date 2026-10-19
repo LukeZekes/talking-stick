@@ -11,7 +11,7 @@ import {
 } from "./harness-model.js";
 import type { AuditLog, AuditReason } from "./install-audit.js";
 import type { CleanupResult } from "./install-audit.js";
-import { isStandalone, standaloneRoot } from "./standalone-mode.js";
+import { isStandalone, standaloneLinkRoot } from "./standalone-mode.js";
 import {
   digestDirectory,
   getManagedContent,
@@ -418,7 +418,7 @@ function dedupeSyncTargets(options: SkillInstallOptions): FileSkillHarness[] {
 }
 
 function currentPackageDir(): string {
-  if (isStandalone()) return standaloneRoot();
+  if (isStandalone()) return standaloneLinkRoot();
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 }
 

@@ -2,6 +2,8 @@ import { syncInstalledSkills } from "../skill-install.js";
 import { updateInstructions } from "../instructions.js";
 import { getCommand } from "./registry.js";
 import type { ParsedCommand } from "./parser.js";
+import { isInstalledRelease, isStandalone } from "../standalone-mode.js";
+import { ensureCurrentLink, repointManagedSkillLinks } from "../standalone-migration.js";
 
 export async function runStartupMaintenance(
   parsed: ParsedCommand,
@@ -16,6 +18,12 @@ export async function runStartupMaintenance(
   }
 
   try {
+    // A release installed by the 0.23.0 installer has no `current` link yet,
+    // and its skills may still point at the npm package or an old release.
+    if (isStandalone() && isInstalledRelease()) {
+      ensureCurrentLink();
+      if (shouldAutoSyncInstalledSkills(parsed, env)) repointManagedSkillLinks({ env, homeDir: env.HOME });
+    }
     const updates = updateInstructions({
       markOffers: true,
       options: { env, homeDir: env.HOME }

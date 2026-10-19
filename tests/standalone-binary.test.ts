@@ -60,6 +60,28 @@ describe.skipIf(!hasBun || !supported)("standalone binary", () => {
     expect(JSON.stringify(run(["notes", "list"], project))).toContain("from Node");
   });
 
+  it("recreates a missing current link, as after an upgrade by the 0.23.0 installer", () => {
+    const current = path.join(install, "current");
+    expect(fs.realpathSync(path.join(current, "tt"))).toBe(fs.realpathSync(tt));
+    fs.rmSync(current);
+    // Any maintained command heals the link, even one that then fails here.
+    spawnSync(tt, ["state", "--json"], { cwd: root, env: env() });
+    expect(fs.realpathSync(path.join(current, "tt"))).toBe(fs.realpathSync(tt));
+  });
+
+  it("writes nothing around an archive that was extracted and run by hand", () => {
+    const extracted = path.join(root, "Downloads", "talking-stick");
+    fs.mkdirSync(extracted, { recursive: true });
+    const release = path.dirname(fs.realpathSync(tt));
+    fs.cpSync(release, extracted, { recursive: true });
+    spawnSync(path.join(extracted, "tt"), ["state", "--json"], { cwd: root, env: env() });
+    expect(fs.existsSync(path.join(root, "current"))).toBe(false);
+    expect(fs.existsSync(path.join(root, "Downloads", "current"))).toBe(false);
+    const update = spawnSync(path.join(extracted, "tt"), ["self-update", "--print"], { env: env(), encoding: "utf8" });
+    expect(update.status).not.toBe(0);
+    expect(update.stderr).toContain("not installed by the installer");
+  });
+
   it("finds its skill beside the executable and self-updates with the installed directories", () => {
     const releaseRoot = path.dirname(fs.realpathSync(tt));
     const bundledSkill = path.join(releaseRoot, "skills", "talking-stick", "SKILL.md");

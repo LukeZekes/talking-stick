@@ -11,6 +11,18 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+## [0.23.1] — 2026-10-19
+
+Full notes: [`docs/releases/0.23.1.md`](docs/releases/0.23.1.md).
+
+### Added
+
+- The installer offers to remove a global npm copy of talking-stick (`[y/N]` on the terminal, default No; `--remove-npm` skips the question; non-interactive runs print the command). It offers only when the new `bin` directory is on `PATH`, `npm root -g` owns the copy, the copy is not an `npm link`ed checkout, and no skill link still resolves into it. A failed removal leaves the new installation in place.
+
+### Fixed
+
+- Skill links now point through `<install-dir>/current`, which the installer moves to each new release, so they no longer stay on the previous release after `tt self-update`. Installing re-points existing links into the npm package or an older release, but only links whose content still matches what Talking Stick installed; edited skills and links into checkouts are left as they are. A skill you edited inside the active release stays on that release when `current` advances. A release installed by the 0.23.0 installer creates `current` and re-points its links the first time it runs.
+
 ## [0.23.0] — 2026-10-19
 
 Full notes: [`docs/releases/0.23.0.md`](docs/releases/0.23.0.md).
@@ -708,6 +720,7 @@ Initial alpha. Core room protocol, SQLite-backed persistence, multi-process
 contention coverage, MCP smoke coverage, human guardian flow, harness
 installers, and the portable `talking-stick` skill.
 
+[0.23.1]: https://github.com/mostlydev/talking-stick/releases/tag/v0.23.1
 [0.23.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.23.0
 [0.22.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.22.0
 [0.21.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.21.0

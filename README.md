@@ -192,8 +192,12 @@ tt uninstall --all         # remove
 ```
 
 **Moving from npm.** The npm package (`talking-stick` on npm) is no longer updated after 0.23.0. Run
-the installer above, then `npm uninstall -g talking-stick`. If `tt` still resolves to the npm copy,
-put `~/.local/bin` first on your `PATH`; the installer warns when another `tt` comes first.
+the installer above. It moves skill links that still point into the npm package over to the new
+install (only links Talking Stick made and you have not edited), then offers to run
+`npm uninstall -g talking-stick` for you (default No; `--remove-npm` answers yes, and a run with no
+terminal just prints the command). It only offers once `~/.local/bin` is on your `PATH`, and never for an
+`npm link`ed checkout. Skill links go through `~/.local/share/talking-stick/current`, so later updates
+keep them current.
 
 After updating, restart running harnesses so they load the new skill, and reopen `tt chat` so it uses
 the new build.
