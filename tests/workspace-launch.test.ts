@@ -59,7 +59,7 @@ function member(agentId: string, harness: string | null, status = "active"): Roo
 describe("tt up planning", () => {
   test("defaults to launchers with both a binary and an installed skill", () => {
     const { base, home } = fixture({ executables: ["tt", "claude", "codex", "grok", "opencode", "agy"] });
-    expect(installedLaunchAgents(base.env, home)).toEqual(["claude", "codex"]);
+    expect(installedLaunchAgents(base.env, home)).toEqual(["claude", "codex", "antigravity"]);
     expect(installedLaunchAgents(base.env, home, true)).toEqual(["claude", "codex", "grok", "opencode", "antigravity"]);
     const noSkill = fixture({ executables: ["tt", "codex"], skills: [] });
     expect(installedLaunchAgents(noSkill.base.env, noSkill.home)).toEqual([]);

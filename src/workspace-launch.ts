@@ -34,17 +34,18 @@ export interface LaunchAdapter {
   initial_prompt: boolean;
   cli_args: string[];
   experimental: boolean;
+  default_enabled: boolean;
 }
 
 // Explicit per-harness adapters; other Herdr kinds are not implied support.
 const LAUNCH_ADAPTERS: Record<LaunchAgent, LaunchAdapter> = {
-  claude: { herdr_kind: "claude", harness: "claude-code", executable: "claude", initial_prompt: true, cli_args: [], experimental: false },
+  claude: { herdr_kind: "claude", harness: "claude-code", executable: "claude", initial_prompt: true, cli_args: [], experimental: false, default_enabled: true },
   // With the shared daemon, Codex tools and hooks inherit the daemon's stale
   // Herdr pane and PID, so neither Herdr nor tt can prove the new pane joined.
-  codex: { herdr_kind: "codex", harness: "codex", executable: "codex", initial_prompt: true, cli_args: ["--no-daemon"], experimental: false },
-  grok: { herdr_kind: "grok", harness: "grok", executable: "grok", initial_prompt: true, cli_args: [], experimental: true },
-  opencode: { herdr_kind: "opencode", harness: "opencode", executable: "opencode", initial_prompt: true, cli_args: ["--prompt"], experimental: true },
-  antigravity: { herdr_kind: "agy", harness: "antigravity", executable: "agy", initial_prompt: true, cli_args: ["--prompt-interactive"], experimental: true }
+  codex: { herdr_kind: "codex", harness: "codex", executable: "codex", initial_prompt: true, cli_args: ["--no-daemon"], experimental: false, default_enabled: true },
+  grok: { herdr_kind: "grok", harness: "grok", executable: "grok", initial_prompt: true, cli_args: [], experimental: true, default_enabled: false },
+  opencode: { herdr_kind: "opencode", harness: "opencode", executable: "opencode", initial_prompt: true, cli_args: ["--prompt"], experimental: true, default_enabled: false },
+  antigravity: { herdr_kind: "agy", harness: "antigravity", executable: "agy", initial_prompt: true, cli_args: ["--prompt-interactive"], experimental: true, default_enabled: true }
 };
 
 export const LAUNCH_AGENTS = Object.keys(LAUNCH_ADAPTERS) as LaunchAgent[];
@@ -145,7 +146,7 @@ export function parseLaunchAgents(value: string | undefined): LaunchAgent[] {
 export function installedLaunchAgents(env: NodeJS.ProcessEnv = process.env, homeDir?: string, includeExperimental = false): LaunchAgent[] {
   return LAUNCH_AGENTS.filter((agent) => {
     const adapter = LAUNCH_ADAPTERS[agent];
-    if (adapter.experimental && !includeExperimental) return false;
+    if (!adapter.default_enabled && !includeExperimental) return false;
     const skillPath = resolvePrimarySkillTargetPath(adapter.harness as Exclude<HarnessId, "gemini">, { homeDir });
     return findOnPath(adapter.executable, env.PATH ?? "") !== null && fs.existsSync(path.join(skillPath, "SKILL.md"));
   });

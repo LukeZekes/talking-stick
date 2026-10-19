@@ -50,7 +50,7 @@ export async function handleUpCommand(
     ? installedLaunchAgents(env, options.homeDir)
     : parseLaunchAgents(requestedAgents);
   if (agents.length === 0) {
-    throw new Error("No default chat agents with both an executable on PATH and an installed Talking Stick skill were found. Install Claude or Codex, or use --agents for an experimental launcher.");
+    throw new Error("No default chat agents with both an executable on PATH and an installed Talking Stick skill were found. Install Claude, Codex, or Antigravity, or use --agents for an optional launcher.");
   }
   const topology = parseTopology(parsed);
   const joinTimeoutMs = parseWaitTimeout(parsed) ?? DEFAULT_JOIN_TIMEOUT_MS;
@@ -94,7 +94,7 @@ export async function handleUpCommand(
       if (requestedAgents === undefined) {
         const optional = installedLaunchAgents(env, options.homeDir, true).filter((agent) => !agents.includes(agent));
         if (optional.length > 0) {
-          plan.checks.push({ name: "experimental launchers", status: "uncertain", detail: `${optional.join(", ")} are installed but require explicit --agents.` });
+          plan.checks.push({ name: "optional launchers", status: "uncertain", detail: `${optional.join(", ")} are installed but require explicit --agents.` });
         }
       }
       return plan;

@@ -57,10 +57,10 @@ tt uninstall <harness...|agents> | --all | --shared [--print]
 tt self-update [--print] [--manager npm|pnpm|yarn|bun]
 ```
 
-In Herdr, `tt up` defaults to installed Claude and Codex launchers. The invoking
+In Herdr, `tt up` defaults to installed Claude, Codex, and Antigravity launchers. The invoking
 terminal becomes chat; agent panes split to its right with equal shares of the
-side column. Grok, OpenCode, and Antigravity launchers are experimental and
-require an explicit `--agents` list. `--print` shows the selected agents and any
+side column. Grok and OpenCode launchers require an explicit `--agents` list.
+`--print` shows the selected agents and any
 installed experimental launchers. `--json`, redirected terminals, and harness
 tool calls return a manual `tt chat --in` step instead of attaching chat.
 

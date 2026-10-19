@@ -134,8 +134,8 @@ describe("tt up execution", () => {
       });
     } finally { stdout.mockRestore(); }
     const plan = JSON.parse(output.join(""));
-    expect(plan.agents.map((agent: { agent: string }) => agent.agent)).toEqual(["claude", "codex"]);
-    expect(plan.checks.find((check: { name: string }) => check.name === "experimental launchers")?.detail).toContain("grok, opencode, antigravity");
+    expect(plan.agents.map((agent: { agent: string }) => agent.agent)).toEqual(["claude", "codex", "antigravity"]);
+    expect(plan.checks.find((check: { name: string }) => check.name === "optional launchers")?.detail).toContain("grok, opencode");
   });
 
   test.each(["opencode", "antigravity"] as const)("confirms a %s join in its pane", async (agent) => {

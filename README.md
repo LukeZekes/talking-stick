@@ -131,8 +131,8 @@ tt state / tt health     room state and a concise safety check
 Full flags and semantics: [`docs/reference.md`](docs/reference.md#command-reference).
 
 Inside Herdr, experimental `tt up` starts every verified default launcher whose
-executable and Talking Stick skill are installed (Claude and Codex). Grok,
-OpenCode, and Antigravity have experimental adapters available through explicit
+executable and Talking Stick skill are installed (Claude, Codex, and Antigravity).
+Grok and OpenCode have experimental adapters available through explicit
 `--agents`. The invoking pane becomes chat, with
 agent panes stacked evenly in a column to its right. Use `--agents claude,codex`
 to choose agents, `--print` to preview, `--new-tab` to create a separate tab,
