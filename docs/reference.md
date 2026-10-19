@@ -109,6 +109,12 @@ existing room above it, or the nearest project marker. Marker files directly in 
 directory are ignored for descendant paths, so scratch directories under `$HOME` do not
 collapse into one home-scoped room unless you join home itself.
 
+An agent is a member of one room per repository. Joining another room in the same repository
+(child, parent, or sibling) moves it there: it leaves the others with a `leave` event
+(`reason: "moved to <path>"`), and the join result warns `Left …`. The move is refused with
+`holds_turn_elsewhere` while the agent holds or is next for the turn in a room it would leave;
+release there first. Chat consoles are observers and are never moved.
+
 `room.toml` accepts only `name = "..."` today. Any other content, including the reserved
 `channels` and `default_channel` keys, still declares the room, and joins report it. A custom `name` is found by `--in` when the keyed path exists in the main
 checkout; for a package that exists only on a linked worktree's branch, use its directory name,

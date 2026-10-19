@@ -11,6 +11,10 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+### Breaking changes
+
+- An agent is in one room per repository. Joining a child or sibling room (by path, `--in`, or `TT_ROOM`) leaves the agent's other rooms in that repository, with a `leave` event whose reason is `moved to <path>`, and the join result warns `Left …`. A join is refused with `holds_turn_elsewhere` while the agent holds or is reserved the turn in the room it would leave. Chat consoles still observe many rooms, and rooms in other repositories are unaffected.
+
 ### Added
 
 - Room roles. `/roles` in `tt chat` opens an editor: ↑↓ picks a member, ←→ a role, Space toggles, `d` saves the row as that harness's default, Enter applies, Esc cancels. `/roles set|default` and `tt roles show|set|default` do the same from text. Precedence is exact agent > harness in the room > user default (`<data>/roles.json`) > bundled. Only the operator assigns roles. Applying tells exactly the agents whose roles changed, in one transaction with the change, through normal message delivery (`[roles vN] …`). `tt instructions show` replaces the bundled role lines with the room's live role block. Roles never grant write authority; only the stick does.

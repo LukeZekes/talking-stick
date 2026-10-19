@@ -31,7 +31,8 @@ export type ProtocolErrorCode =
   | "park_requires_release"
   | "duplicate_listener"
   | "recipient_unreachable"
-  | "invalid_wait_mode";
+  | "invalid_wait_mode"
+  | "holds_turn_elsewhere";
 
 export interface ProtocolErrorDetails {
   field?: string;
