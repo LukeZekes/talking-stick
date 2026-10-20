@@ -10,6 +10,7 @@ import { createRuntime } from "./cli/runtime.js";
 import { runStartupMaintenance } from "./cli/startup-maintenance.js";
 import { isStandalone, standaloneRoot } from "./standalone-mode.js";
 import { detectInstallSource, isPackageManager, resolveCurrentBinaryPath, STANDALONE_MIGRATION_NOTICE } from "./self-update.js";
+import { runStartupUpdate } from "./cli/startup-update.js";
 
 export { checkGuardianLiveness } from "./cli/guardian.js";
 export { parseHandoffJson } from "./cli/handoff.js";
@@ -49,6 +50,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
     throw new Error(`Unknown command: ${parsed.name}`);
   }
 
+  if (await runStartupUpdate(parsed)) return;
   await runStartupMaintenance(parsed, import.meta.url);
 
   if (!command.needsRuntime) {

@@ -33,12 +33,13 @@ describe.skipIf(!hasBun || !supported)("standalone binary", () => {
     const sums = fs.readdirSync(assets).filter((name) => name.endsWith(".sha256"))
       .map((name) => fs.readFileSync(path.join(assets, name), "utf8")).join("");
     fs.writeFileSync(path.join(assets, "checksums.txt"), sums);
+    // The installer's post-install step runs under this HOME and may create it.
+    fs.mkdirSync(path.join(root, "home"), { recursive: true });
     bin = path.join(root, "bin dir");
     install = path.join(root, "install dir");
     execFileSync("sh", ["scripts/install.sh", "--base-url", assets, "--bin-dir", bin, "--install-dir", install],
       { env: env(), stdio: "pipe" });
     tt = path.join(bin, "tt");
-    fs.mkdirSync(path.join(root, "home"));
   }, 180_000);
   afterAll(() => { if (root) fs.rmSync(root, { recursive: true, force: true }); });
 
@@ -68,6 +69,41 @@ describe.skipIf(!hasBun || !supported)("standalone binary", () => {
     // Any maintained command heals the link, even one that then fails here.
     spawnSync(tt, ["state", "--json"], { cwd: root, env: env() });
     expect(fs.realpathSync(path.join(current, "tt"))).toBe(fs.realpathSync(tt));
+  });
+
+  it("checks updates through curl only in a human terminal, with JSON remaining side-effect free", () => {
+    const fakeBin = path.join(root, "fake-curl");
+    const called = path.join(root, "curl-called");
+    const stamp = path.join(install, ".updates", "last-check.json");
+    fs.mkdirSync(fakeBin);
+    const version = (JSON.parse(fs.readFileSync("package.json", "utf8")) as { version: string }).version;
+    fs.writeFileSync(path.join(fakeBin, "curl"), `#!/bin/sh
+printf '%s\\n' "$@" > "$TT_TEST_CURL_CALLED"
+cat >/dev/null
+printf '{"tag_name":"v${version}"}'
+`, { mode: 0o755 });
+    const humanEnv = { ...env(), TT_NO_AUTO_UPDATE: "", PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`, TT_TEST_CURL_CALLED: called };
+    for (const key of Object.keys(humanEnv)) {
+      if (/^(TT_HARNESS_|CODEX_|CLAUDE|CMUX_|GROK_|OPENCODE|ANTIGRAVITY|GEMINI_)/.test(key)) {
+        delete (humanEnv as NodeJS.ProcessEnv)[key];
+      }
+    }
+    fs.rmSync(stamp, { force: true });
+    const json = execFileSync(tt, ["whoami", "--json"], { env: humanEnv, cwd: root, encoding: "utf8" });
+    expect(() => JSON.parse(json)).not.toThrow();
+    expect(fs.existsSync(stamp)).toBe(false);
+    expect(fs.existsSync(called)).toBe(false);
+    // Both systems provide script(1), with different ways to specify the child.
+    const command = `'${tt.replaceAll("'", "'\\''")}' whoami`;
+    const args = process.platform === "darwin" ? ["-q", "/dev/null", tt, "whoami"]
+      : ["-q", "-e", "-c", command, "/dev/null"];
+    const output = execFileSync("script", args, { env: humanEnv, cwd: root, encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] });
+    expect(output).not.toContain("auto-update failed");
+    expect(fs.existsSync(stamp)).toBe(true);
+    expect(fs.readFileSync(called, "utf8")).toContain("https://api.github.com/repos/mostlydev/talking-stick/releases/latest");
+    const checkedAt = fs.readFileSync(stamp, "utf8");
+    execFileSync("script", args, { env: humanEnv, cwd: root, timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] });
+    expect(fs.readFileSync(stamp, "utf8")).toBe(checkedAt);
   });
 
   it("writes nothing around an archive that was extracted and run by hand", () => {

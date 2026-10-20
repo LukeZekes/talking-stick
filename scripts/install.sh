@@ -10,12 +10,13 @@ remove_npm=ask
 
 usage() {
   cat <<'USAGE'
-Usage: install.sh [--version VERSION] [--bin-dir DIR] [--install-dir DIR] [--base-url URL] [--remove-npm]
+Usage: install.sh [--version VERSION] [--bin-dir DIR] [--install-dir DIR] [--base-url URL] [--remove-npm|--no-remove-npm]
 
 Install the standalone tt binary for macOS or Linux; Node and Bun are not required.
 Defaults: latest release, ~/.local/bin/tt, assets in ~/.local/share/talking-stick.
 --base-url overrides the release asset URL for local testing or mirrors.
 --remove-npm uninstalls a global npm copy of talking-stick without asking.
+--no-remove-npm keeps the npm copy without prompting.
 USAGE
 }
 fail() { echo "talking-stick: $*" >&2; exit 1; }
@@ -23,6 +24,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --help|-h) usage; exit 0 ;;
     --remove-npm) remove_npm=yes; shift ;;
+    --no-remove-npm) remove_npm=no; shift ;;
     --version|--bin-dir|--install-dir|--base-url)
       [ "$#" -ge 2 ] || fail "$1 requires a value"
       case "$1" in
@@ -146,7 +148,7 @@ if [ -n "$npm_copy" ]; then
     answer=n
     if [ "$remove_npm" = yes ]; then
       answer=y
-    elif (: < /dev/tty) 2>/dev/null && (: > /dev/tty) 2>/dev/null; then
+    elif [ "$remove_npm" = ask ] && (: < /dev/tty) 2>/dev/null && (: > /dev/tty) 2>/dev/null; then
       printf 'Remove the npm copy (npm uninstall -g talking-stick)? [y/N] ' > /dev/tty
       read -r answer < /dev/tty || answer=n
     fi
