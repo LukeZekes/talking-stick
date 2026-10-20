@@ -177,12 +177,15 @@ Any agent or person on the host can see what each room is doing without joining 
 `tt room list --all` lists every room with a live agent or console, most recent room activity
 first. Room activity includes lease renewals, so it means the room is in use, not that its
 conversation moved. `tt room brief <room>` then shows one room: the stick holder (marked stale
-once the lease has expired) or the reservation, members and whether each is live, the latest
-handoff in full, up to ten open notes, and the last 20 messages and handoffs. `--limit N` (up to
-200) changes how many recent events to show, and message bodies are cut at 1,000 characters. The
-brief ends with a `tt events --in <room id> --after <cursor> --target any` command that reads
-the full events after it. Name the room by short name, id, path suffix, or directory, from any
-folder. Neither command joins a room or refreshes anyone's presence.
+once the lease has expired) or the reservation, members with their kind and whether each is
+live, inactive, or gone, the latest handoff in full, the newest ten open notes with the real open
+count, and the last 20 messages and handoffs. `--limit N` (up to 200) changes how many recent
+events to show. Message bodies are cut at 1,000 characters and handoffs at 160; each clipped
+event carries a `full` command that reads it whole. `older` pages back with `--before <seq>`, and
+`updates_since` reads everything after the brief's cursor. Name the room by short name, id, or
+path suffix from any folder; a directory needs explicit path syntax (`.`, `./dir`, `../dir`, or an
+absolute path), so a local folder never shadows a room name. Neither command joins a room or
+refreshes anyone's presence.
 
 ### Non-owner notes
 

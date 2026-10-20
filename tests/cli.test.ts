@@ -3635,28 +3635,67 @@ describe("tt room", () => {
     for (const n of [1, 2, 3]) {
       await captureStdout(["msg", "send", "room", `update ${n}`, "--agent", "codex:brief", "--path", project, "--json"]);
     }
+    const service = new TalkingStickService();
+    const db = (service as unknown as { db: { prepare(sql: string): { run(...args: unknown[]): unknown } } }).db;
+    try {
+      const roomId = service.listRooms({ context_path: project }).rooms[0].room_id;
+      // Silent with unknown liveness: inactive, not gone.
+      service.joinPath({ agent_id: "grok:silent", context_path: project,
+        process_metadata: { host_id: "elsewhere", pid: 10, process_started_at: "t", session_kind: "human_guardian", display_name: "silent" } });
+      db.prepare("UPDATE room_members SET last_seen_at = ?, last_wait_at = NULL WHERE agent_id = ?").run("2001-01-01T00:00:00.000Z", "grok:silent");
+      // More open notes than any page: the brief shows the newest ten and the real count.
+      const base = Date.now() + 60_000;
+      for (let n = 0; n < 205; n += 1) {
+        const added = service.addNote({ agent_id: "codex:brief", room_id: roomId, body: `note ${n}` });
+        db.prepare("UPDATE notes SET created_at = ? WHERE note_id = ?").run(new Date(base + n).toISOString(), added.note_id);
+      }
+    } finally {
+      service.close();
+    }
     const before = JSON.parse(await captureStdout(["state", project, "--agent", "human:observer", "--json"]));
+    // A local directory named like the room must not hijack the selector.
+    fs.mkdirSync(path.join(outside, "project"));
+    const run = (command: string) => captureStdout(command.split(" ").slice(1));
 
     const cwd = process.cwd();
     process.chdir(outside);
     try {
       process.env.TT_HARNESS_AGENT_ID = "claude:outsider";
       const brief = JSON.parse(await captureStdout(["room", "brief", "project", "--json"]));
-      expect(brief).toMatchObject({ room_id: before.room.room_id, canonical_path: project, owner: null, notes_total: 1 });
-      expect(brief.members.map((member: { agent_id: string; kind: string; live: boolean }) => [member.agent_id, member.kind, member.live]).sort())
-        .toEqual([["claude:brief", "agent", true], ["codex:brief", "agent", true]]);
+      expect(brief).toMatchObject({ room_id: before.room.room_id, canonical_path: project, owner: null, notes_total: 206 });
+      expect(brief.members.map((member: { agent_id: string; kind: string; live: boolean; process_liveness: string }) =>
+        [member.agent_id, member.kind, member.live, member.process_liveness]).sort())
+        .toEqual([["claude:brief", "agent", true, "unknown"], ["codex:brief", "agent", true, "unknown"], ["grok:silent", "agent", false, "unknown"]]);
       // The latest handoff is whole; the listing only excerpts it.
       expect(brief.last_handoff.handoff).toMatchObject({ status: fullStatus, next_action: "Review the parser." });
-      expect(brief.notes.map((note: { body: string }) => note.body)).toEqual(["Watch the migration"]);
+      expect(brief.notes.map((note: { body: string }) => note.body))
+        .toEqual(Array.from({ length: 10 }, (_, index) => `note ${195 + index}`));
       expect(brief.recent.map((event: { event_type: string; body?: string }) => event.body?.slice(0, 8) ?? event.event_type))
         .toEqual(["long yyy", "release", "update 1", "update 2", "update 3"]);
       expect(brief.recent[0]).toMatchObject({ truncated: true, to: "codex:brief" });
       expect(brief.recent[0].body).toHaveLength(1000);
+      // Clipped bodies and handoffs stay readable in full.
+      expect(JSON.parse(await run(brief.recent[0].full)).events[0].payload.body).toBe(`long ${"y".repeat(1500)}`);
+      expect(brief.recent[1].status).toHaveLength(160);
+      expect(JSON.parse(await run(brief.recent[1].full)).events[0].handoff.status).toBe(fullStatus);
+      expect(brief.recent[2].full).toBeUndefined();
+      expect(brief.older).toBeNull();
       expect(brief.cursor_event_seq).toBe(before.cursor_event_seq);
-      expect(brief.more).toBe(`tt events --in ${before.room.room_id} --after ${before.cursor_event_seq} --target any --json`);
-      expect(JSON.parse(await captureStdout(["room", "brief", "project", "--limit", "2", "--json"])).recent
-        .map((event: { body: string }) => event.body)).toEqual(["update 2", "update 3"]);
-      expect(await captureStdout(["room", "brief", project, "--text"])).toContain("stick: nobody, reserved for codex:brief");
+      expect(brief.updates_since).toBe(`tt events --in ${before.room.room_id} --after ${before.cursor_event_seq} --target any --json`);
+      // Paging back with --before neither skips nor repeats an event.
+      const pages: number[][] = [];
+      let page = JSON.parse(await captureStdout(["room", "brief", "project", "--limit", "2", "--json"]));
+      for (;;) {
+        pages.unshift(page.recent.map((event: { event_seq: number }) => event.event_seq));
+        if (!page.older) break;
+        page = JSON.parse(await run(page.older));
+      }
+      expect(pages.map((seqs) => seqs.length)).toEqual([1, 2, 2]);
+      expect(pages.flat()).toEqual(brief.recent.map((event: { event_seq: number }) => event.event_seq));
+      const text = await captureStdout(["room", "brief", project, "--text"]);
+      expect(text).toContain("stick: nobody, reserved for codex:brief");
+      expect(text).toContain("members: claude:brief, codex:brief, grok:silent (inactive)");
+      expect(text).toContain("open notes (newest 10 of 206):");
       await expect(captureStdout(["room", "brief", "nope", "--json"])).rejects.toThrow(/No open room matches nope/);
     } finally {
       process.chdir(cwd);
