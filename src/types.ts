@@ -648,6 +648,8 @@ export interface WaitForEventsInput {
   from_agent_id?: AgentId;
   max_wait_ms?: number;
   process_metadata?: ProcessMetadata;
+  /** Ends the long-poll early with no events, e.g. when a watcher is stopped. */
+  signal?: AbortSignal;
 }
 
 export interface WaitForEventsResult {
