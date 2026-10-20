@@ -26,6 +26,7 @@ tt roles [show] | set <agent|harness> <roles|none|clear> | default <harness> <ro
 tt room create [path] [--name NAME]                       # declare a room boundary (.talking-stick/room.toml)
 tt room list [path]                                       # this repository's rooms, live agents in each, current marked
 tt room list --all                                        # every room on this host with live members, most recent room activity first
+tt room brief [room] [--limit N]                          # what a room is doing: holder, members, last handoff, notes, recent messages
 tt room adopt [path] [--name NAME]                        # declare an existing nested room, keeping its id
 tt room remove [path]                                     # remove a declaration and delete its agent-free room
 tt join [path] [--in ROOM] [--force-new]                  # join the room for path (--force-new is deprecated)
@@ -169,6 +170,19 @@ activity was over an hour ago are removed automatically, except the stick holder
 recipient. Unknown or remote process liveness is preserved. For a stuck holder, follow the
 takeover eligibility reported by `tt wait`; a single process-gone observation does not
 immediately revoke a live lease.
+
+### Observing rooms from outside
+
+Any agent or person on the host can see what each room is doing without joining it.
+`tt room list --all` lists every room with a live agent or console, most recent room activity
+first. Room activity includes lease renewals, so it means the room is in use, not that its
+conversation moved. `tt room brief <room>` then shows one room: the stick holder (marked stale
+once the lease has expired) or the reservation, members and whether each is live, the latest
+handoff in full, up to ten open notes, and the last 20 messages and handoffs. `--limit N` (up to
+200) changes how many recent events to show, and message bodies are cut at 1,000 characters. The
+brief ends with a `tt events --in <room id> --after <cursor> --target any` command that reads
+the full events after it. Name the room by short name, id, path suffix, or directory, from any
+folder. Neither command joins a room or refreshes anyone's presence.
 
 ### Non-owner notes
 

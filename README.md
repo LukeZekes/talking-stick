@@ -118,6 +118,7 @@ tt chat                  operator console
 tt up                    open agents and a console in Herdr panes (experimental)
 tt room                  list, declare, adopt, or remove a repository's rooms
 tt room list --all       every room on this host with live members
+tt room brief <room>     what a room is doing, without joining it
 tt state / tt health     room state and a concise safety check
 tt events --follow       watch a room live, as JSON lines
 ```

@@ -3622,6 +3622,53 @@ describe("tt room", () => {
     for (const dir of registry) fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  test("brief summarizes another room for an outsider without joining it", async () => {
+    const registry: string[] = [];
+    const { project } = setupIsolatedCli(registry);
+    const outside = path.join(path.dirname(project), "outside");
+    fs.mkdirSync(outside);
+    await seedCliLease(project, "claude:brief", ["codex:brief"]);
+    await captureStdout(["msg", "send", "codex:brief", `long ${"y".repeat(1500)}`, "--agent", "claude:brief", "--path", project, "--json"]);
+    await captureStdout(["notes", "add", "Watch the migration", "--agent", "claude:brief", "--path", project, "--json"]);
+    const fullStatus = `Built the parser. ${"z".repeat(300)}`;
+    await captureStdout(["release", project, "--agent", "claude:brief", "--status", fullStatus, "--next-action", "Review the parser.", "--json"]);
+    for (const n of [1, 2, 3]) {
+      await captureStdout(["msg", "send", "room", `update ${n}`, "--agent", "codex:brief", "--path", project, "--json"]);
+    }
+    const before = JSON.parse(await captureStdout(["state", project, "--agent", "human:observer", "--json"]));
+
+    const cwd = process.cwd();
+    process.chdir(outside);
+    try {
+      process.env.TT_HARNESS_AGENT_ID = "claude:outsider";
+      const brief = JSON.parse(await captureStdout(["room", "brief", "project", "--json"]));
+      expect(brief).toMatchObject({ room_id: before.room.room_id, canonical_path: project, owner: null, notes_total: 1 });
+      expect(brief.members.map((member: { agent_id: string; kind: string; live: boolean }) => [member.agent_id, member.kind, member.live]).sort())
+        .toEqual([["claude:brief", "agent", true], ["codex:brief", "agent", true]]);
+      // The latest handoff is whole; the listing only excerpts it.
+      expect(brief.last_handoff.handoff).toMatchObject({ status: fullStatus, next_action: "Review the parser." });
+      expect(brief.notes.map((note: { body: string }) => note.body)).toEqual(["Watch the migration"]);
+      expect(brief.recent.map((event: { event_type: string; body?: string }) => event.body?.slice(0, 8) ?? event.event_type))
+        .toEqual(["long yyy", "release", "update 1", "update 2", "update 3"]);
+      expect(brief.recent[0]).toMatchObject({ truncated: true, to: "codex:brief" });
+      expect(brief.recent[0].body).toHaveLength(1000);
+      expect(brief.cursor_event_seq).toBe(before.cursor_event_seq);
+      expect(brief.more).toBe(`tt events --in ${before.room.room_id} --after ${before.cursor_event_seq} --target any --json`);
+      expect(JSON.parse(await captureStdout(["room", "brief", "project", "--limit", "2", "--json"])).recent
+        .map((event: { body: string }) => event.body)).toEqual(["update 2", "update 3"]);
+      expect(await captureStdout(["room", "brief", project, "--text"])).toContain("stick: nobody, reserved for codex:brief");
+      await expect(captureStdout(["room", "brief", "nope", "--json"])).rejects.toThrow(/No open room matches nope/);
+    } finally {
+      process.chdir(cwd);
+    }
+
+    // Reading joined nobody and refreshed nobody.
+    const after = JSON.parse(await captureStdout(["state", project, "--agent", "human:observer", "--json"]));
+    expect(after.members.map((member: { agent_id: string; last_seen_at: string }) => [member.agent_id, member.last_seen_at]))
+      .toEqual(before.members.map((member: { agent_id: string; last_seen_at: string }) => [member.agent_id, member.last_seen_at]));
+    for (const dir of registry) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   test("adopt declares a legacy nested room without changing its id", async () => {
     const registry: string[] = [];
     const { project } = setupIsolatedCli(registry);

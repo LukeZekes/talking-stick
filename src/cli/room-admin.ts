@@ -2,10 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { ROOM_DECLARATION_FILE, insideNestedRepository, isWithinOrSame, resolveContextPath } from "../path-resolution.js";
 import { HUMAN_CHAT_SESSION_KIND } from "../types.js";
-import type { PathRoom, RoomMember } from "../types.js";
+import type { PathRoom, RoomActivity, RoomMember } from "../types.js";
 import { formatRelativeTime, printResult } from "./output.js";
-import { getStringOption, hasOption, type ParsedCommand } from "./parser.js";
-import { roomShortName, selectedRoom } from "./room-selector.js";
+import { getStringOption, hasOption, parseOptionalInteger, type ParsedCommand } from "./parser.js";
+import { resolveRoomSelector, roomShortName, selectedRoom } from "./room-selector.js";
 import type { Runtime } from "./runtime.js";
 
 // `tt room create|list|adopt|remove`. Declarations are files in the checkout;
@@ -15,10 +15,11 @@ export function handleRoomCommand(runtime: Runtime, parsed: ParsedCommand): void
   switch (action) {
     case "create": return createRoom(runtime, parsed, target);
     case "list": return hasOption(parsed, "all") ? listHostRooms(runtime, parsed) : listRooms(runtime, parsed, target);
+    case "brief": return briefRoom(runtime, parsed, target);
     case "adopt": return adoptRoom(runtime, parsed, target);
     case "remove": return removeRoom(runtime, parsed, target);
     default:
-      throw new Error("Usage: tt room create [path] [--name NAME] | list [path] [--all] | adopt [path] | remove [path]");
+      throw new Error("Usage: tt room create [path] [--name NAME] | list [path] [--all] | brief [room] [--limit N] | adopt [path] | remove [path]");
   }
 }
 
@@ -143,6 +144,119 @@ function listHostRooms(runtime: Runtime, parsed: ParsedCommand): void {
       }
       return lines.join("\n");
     }).join("\n"));
+}
+
+// Bounds that keep a brief readable in one model turn; `tt events --after`
+// reads anything older or longer in full.
+const BRIEF_DEFAULT_MESSAGES = 20;
+const BRIEF_MAX_MESSAGES = 200;
+const BRIEF_BODY_CHARS = 1000;
+const BRIEF_NOTES = 10;
+const BRIEF_EVENT_TYPES = ["message_sent", "release", "pass", "takeover"] as const;
+
+function clip(text: string, limit: number): { text: string; truncated: boolean } {
+  return text.length > limit ? { text: `${text.slice(0, limit - 1)}…`, truncated: true } : { text, truncated: false };
+}
+
+// A room given by selector (name, id, path suffix), by --in/TT_ROOM, or by an
+// existing directory; the caller's own directory when nothing is given.
+function briefTarget(runtime: Runtime, parsed: ParsedCommand, target: string | undefined): PathRoom {
+  if (target !== undefined && !fs.statSync(target, { throwIfNoEntry: false })?.isDirectory()) {
+    return resolveRoomSelector(runtime.commands.listRooms({}).rooms, target);
+  }
+  const selected = target === undefined ? selectedRoom(runtime, parsed) : null;
+  if (selected) return selected;
+  const directory = resolveContextPath(target ?? process.cwd()).canonical_context_path;
+  const room = runtime.commands.listRooms({ context_path: directory }).rooms.find((candidate) => candidate.state !== "closed");
+  if (!room) throw new Error(`No open room covers ${directory}. Run \`tt room list --all\` to see rooms.`);
+  return room;
+}
+
+// What a room is doing, for an outsider: holder, members, the latest handoff
+// in full, open notes, and recent conversation. Reads only, like list --all.
+function briefRoom(runtime: Runtime, parsed: ParsedCommand, target: string | undefined): void {
+  const room = briefTarget(runtime, parsed, target);
+  const limit = Math.min(parseOptionalInteger(parsed, "limit") ?? BRIEF_DEFAULT_MESSAGES, BRIEF_MAX_MESSAGES);
+  const state = runtime.commands.getRoomState({ room_id: room.room_id });
+  const live = new Set(liveMembers(runtime, room.room_id).map((member) => member.agent_id));
+  const activity = runtime.commands.getRoomActivity({ room_id: room.room_id });
+  const notes = runtime.commands.listNotes(null, { room_id: room.room_id, limit: 200 }).notes;
+  const recent = runtime.commands.getRecentRoomEvents({ room_id: room.room_id, limit, event_types: [...BRIEF_EVENT_TYPES] })
+    .map((event) => {
+      const body = event.payload?.body === undefined ? null : clip(event.payload.body, BRIEF_BODY_CHARS);
+      return {
+        event_seq: event.event_seq,
+        event_type: event.event_type,
+        from_agent_id: event.from_agent_id,
+        to: event.to_agent_id ?? event.payload?.recipients ?? null,
+        created_at: event.created_at,
+        ...(body ? { body: body.text, ...(body.truncated ? { truncated: true } : {}) } : {}),
+        ...(event.handoff ? { status: excerpt(event.handoff.status), next_action: excerpt(event.handoff.next_action) } : {})
+      };
+    });
+  const brief = {
+    name: roomShortName(room),
+    room_id: room.room_id,
+    canonical_path: room.canonical_path,
+    state: state.room.state,
+    owner: state.room.owner,
+    reserved_for: state.room.reserved_for,
+    lease_expires_at: state.room.lease_expires_at,
+    members: state.members.map((member) => ({
+      agent_id: member.agent_id,
+      kind: member.session_kind === HUMAN_CHAT_SESSION_KIND ? "console" as const : "agent" as const,
+      live: live.has(member.agent_id),
+      wait_intent: member.wait_intent,
+      last_seen_at: member.last_seen_at
+    })),
+    last_handoff: activity.last_handoff,
+    notes: notes.slice(-BRIEF_NOTES).map((note) => ({
+      note_id: note.note_id, author_agent_id: note.author_agent_id, created_at: note.created_at,
+      body: clip(note.body, BRIEF_BODY_CHARS).text
+    })),
+    notes_total: notes.length,
+    recent,
+    cursor_event_seq: state.cursor_event_seq,
+    more: `tt events --in ${room.room_id} --after ${state.cursor_event_seq} --target any --json`
+  };
+  printResult(parsed, brief, () => formatBrief(brief));
+}
+
+function formatBrief(brief: {
+  name: string; canonical_path: string; room_id: string; state: string; owner: string | null; reserved_for: string | null;
+  members: { agent_id: string; kind: string; live: boolean; wait_intent: string | null }[];
+  last_handoff: RoomActivity["last_handoff"];
+  notes: { author_agent_id: string; body: string }[]; notes_total: number;
+  recent: { event_seq: number; event_type: string; from_agent_id: string | null; to: unknown; created_at: string;
+    body?: string; status?: string; next_action?: string }[];
+  more: string;
+}): string {
+  const lines = [`#${brief.name}  ${brief.canonical_path}  ${brief.room_id}`];
+  const stick = brief.owner ? `${brief.owner}${brief.state === "stale_owner" ? " (stale)" : ""}`
+    : brief.reserved_for ? `nobody, reserved for ${brief.reserved_for}` : `nobody (${brief.state})`;
+  lines.push(`stick: ${stick}`);
+  lines.push(`members: ${brief.members.map((member) =>
+    `${member.agent_id}${member.kind === "console" ? " (console)" : ""}${member.live ? "" : " (gone)"}`).join(", ") || "none"}`);
+  const handoff = brief.last_handoff;
+  if (handoff) {
+    lines.push("", `last handoff ${formatRelativeTime(handoff.created_at)}, ${handoff.event_type} from ${handoff.from_agent_id ?? "unknown"}${handoff.to_agent_id ? ` to ${handoff.to_agent_id}` : ""}:`,
+      `  status: ${handoff.handoff.status}`, `  next: ${handoff.handoff.next_action}`);
+  }
+  if (brief.notes.length > 0) {
+    lines.push("", `open notes (${brief.notes.length} of ${brief.notes_total}):`,
+      ...brief.notes.map((note) => `  ${note.author_agent_id}: ${note.body.replace(/\s+/g, " ")}`));
+  }
+  if (brief.recent.length > 0) {
+    lines.push("", "recent:");
+    for (const event of brief.recent) {
+      const to = Array.isArray(event.to) ? event.to.join(", ") : event.to ?? "room";
+      lines.push(`  #${event.event_seq} ${formatRelativeTime(event.created_at)} ${event.event_type === "message_sent" ? "" : `${event.event_type} `}${event.from_agent_id ?? "unknown"} → ${to}`);
+      const text = event.body ?? [event.status, event.next_action && `next: ${event.next_action}`].filter(Boolean).join(" ");
+      if (text.trim()) lines.push(...text.trimEnd().split("\n").map((line) => `    ${line}`));
+    }
+  }
+  lines.push("", `more: ${brief.more}`);
+  return lines.join("\n");
 }
 
 // One compact listing of the repository's rooms and who is in each, for an
