@@ -316,9 +316,8 @@ active evidence; guardian heartbeats and other members' observations do not. Evi
 five minutes without a hook or session command: a later dispatch can use the queue if a hook failed
 or the session stopped reporting. A long tool call without CLI activity can still receive a queued
 envelope. Unacknowledged Stop reservations also expire after five minutes; if a continuation was lost,
-a later dispatch can retry those events. The hooks run at turn boundaries rather than on every tool call.
-Explicit urgent delivery keeps
-its existing behavior. These hooks reduce duplicate delivery; they cannot retract a prompt that
+a later dispatch can retry those events. The hooks run at turn boundaries rather than on every tool
+call. Explicit urgent delivery keeps its existing behavior. These hooks reduce duplicate delivery; they cannot retract a prompt that
 was already submitted to Codex. Existing chats and harnesses need a restart after updating.
 
 Claude Code and Codex native wakes carry complete, attributed room events in a bounded plain-text
