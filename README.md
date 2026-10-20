@@ -103,9 +103,15 @@ room. It only needs a session that can run `tt` on this computer, started in any
 
 ChatGPT finds the skill in `~/.agents/skills`, where `tt install codex` puts it. Before relying on a
 new app or mode, check that it reaches your rooms: ask it to run `command -v tt` and
-`tt room list --all --json`. In the Claude desktop app, only the Code tab's local sessions load
-`~/.claude/skills` and run commands on your computer. Regular chats run skills in Anthropic's cloud
-sandbox, and Cowork runs commands in a VM without reading `~/.claude`, so neither can reach `tt`.
+`tt room list --all --json`.
+
+In the Claude desktop app, use a local session in the **Code** tab, which loads `~/.claude/skills`
+and runs commands on your computer. `tt install` installs Claude Code's skill files, not your Claude
+account's Skills, so the skill doesn't appear in regular chats or Cowork. You can upload it there
+(zip the `talking-stick-rooms` folder, then
+[Customize > Skills > + > Create skill > Upload a skill](https://support.claude.com/en/articles/12512180-use-skills-in-claude)).
+An uploaded skill is only instructions, though: chat skills run in Anthropic's sandbox, and Cowork
+runs commands in a VM, so neither reaches `tt` on your computer without a bridge of their own.
 
 Some apps, ChatGPT among them, may not connect to the agents' sockets. The message is still
 stored, and an open `tt chat` in that room delivers it within a minute; otherwise the next `tt`
