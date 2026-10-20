@@ -103,15 +103,20 @@ room. It only needs a session that can run `tt` on this computer, started in any
 
 ChatGPT finds the skill in `~/.agents/skills`, where `tt install codex` puts it. Before relying on a
 new app or mode, check that it reaches your rooms: ask it to run `command -v tt` and
-`tt room list --all --json`.
+`tt room list --all --json`. Your home folder or development parent is not required: a dedicated
+local manager folder works too, provided the session can access the host's `tt` and room data.
+See [ChatGPT Work](https://learn.chatgpt.com/docs/get-started-with-work) and
+[skill selection](https://learn.chatgpt.com/docs/build-skills).
 
-In the Claude desktop app, use a local session in the **Code** tab, which loads `~/.claude/skills`
+In the Claude desktop app, use a [local session in the **Code** tab](https://code.claude.com/docs/en/desktop#use-skills), which loads `~/.claude/skills`
 and runs commands on your computer. `tt install` installs Claude Code's skill files, not your Claude
 account's Skills, so the skill doesn't appear in regular chats or Cowork. You can upload it there
 (zip the `talking-stick-rooms` folder, then
 [Customize > Skills > + > Create skill > Upload a skill](https://support.claude.com/en/articles/12512180-use-skills-in-claude)).
-An uploaded skill is only instructions, though: chat skills run in Anthropic's sandbox, and Cowork
-runs commands in a VM, so neither reaches `tt` on your computer without a bridge of their own.
+An uploaded skill supplies instructions, not host command access. Chat/Cowork execution may run
+in the cloud or an isolated local environment; connecting a folder alone does not establish access
+to the host's `tt` and room database. That workflow needs its own host-tool bridge, which Talking
+Stick does not currently install. See [Cowork architecture](https://support.claude.com/en/articles/14479288-claude-cowork-architecture-overview).
 
 Some apps, ChatGPT among them, may not connect to the agents' sockets. The message is still
 stored, and an open `tt chat` in that room delivers it within a minute; otherwise the next `tt`
