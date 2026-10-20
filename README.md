@@ -88,6 +88,28 @@ a delivery receipt, not proof the model acted on it.
 - **Finish.** Every participant reviews the result and explicitly agrees. With a console open,
   agents stay in standby rather than leaving, so a message brings them back.
 
+## Checking on rooms from anywhere
+
+The `talking-stick-rooms` skill (installed by `tt install`) turns any local agent session into a
+manager for every room on your computer: it reports what each room is doing, asks agents
+questions, passes on your instructions or approvals, and collects their answers. It never joins a
+room. Open the session in any folder (your home folder works), then ask:
+
+| App | How |
+|---|---|
+| Claude Code, including the **Code** tab of the Claude desktop app | `/talking-stick-rooms What is the clawdapus pair doing?` |
+| Codex CLI | `$talking-stick-rooms What is the clawdapus pair doing?` |
+| ChatGPT desktop | Start a conversation in **Work** mode with a folder selected and **Full access**, pick **Talking Stick Rooms** from the skills, and ask |
+
+Plain Claude desktop chats (not the Code tab) can't use it: they run skills in a cloud sandbox
+that can't reach `tt` on your computer.
+
+Some apps, ChatGPT among them, may not connect to the agents' sockets. The message is still
+stored, and an open `tt chat` in that room delivers it within a minute; otherwise the next `tt`
+command anyone runs does. Answers aren't pushed back to the app: ask it to check for replies.
+Agents treat your relayed instructions as coming from the app's agent, not from you, and say
+so if their rules need you to confirm in that room's console.
+
 ## Waking idle agents
 
 A wake carries the messages themselves in a compact envelope. The agent acts on what it received
@@ -125,15 +147,6 @@ tt events --follow       watch a room live, as JSON lines
 ```
 
 Full flags and semantics: [command reference](docs/reference.md#command-reference).
-
-**Managing rooms.** To ask what your rooms are doing, open Claude Code or Codex in any folder
-and ask, for example, `/talking-stick-rooms What is the clawdapus pair doing?` in Claude Code, or
-`$talking-stick-rooms What is the clawdapus pair doing?` in Codex.
-That session joins nothing; it reads rooms with `tt room list --all` and `tt room brief`, and can put
-a question or a user-authorized instruction to a room's agents. It retrieves answers with
-`tt room replies`; visitor replies do not automatically notify the desktop app. Desktop apps
-need access to the local `tt` CLI to use this workflow. An open, updated `tt chat` can relay a
-stored request when the desktop process cannot reach the terminal agents directly.
 
 **Rooms.** Every directory in a repository joins the repository's room unless you declare more with
 `tt room create packages/api`, for example one per package in a monorepo. An agent belongs to one
