@@ -1922,7 +1922,9 @@ export class TalkingStickService {
   // The body of sendMessage, run inside the caller's write transaction so
   // another write (e.g. a role change) and its message commit together.
   private sendMessageLocked(input: SendMessageInput, body: string, deliveryHint: DeliveryHint, timestamp: string,
-    senderMayBeNonMember = false, link: { request_id?: string; in_reply_to?: string } = {}): {
+    // "known" lets a non-member send (role notices); "visitor" also leaves a
+    // member's presence untouched, since asking is not taking part.
+    sender: "member" | "known" | "visitor" = "member", link: { request_id?: string; in_reply_to?: string } = {}): {
     event_seq: number; event_id: string; created_at: string; wake_target_ids: AgentId[];
   } {
     // Validated by sendMessage before the transaction: checking a stored
@@ -1937,9 +1939,9 @@ export class TalkingStickService {
       );
     }
 
-    if (senderMayBeNonMember) {
+    if (sender === "known") {
       this.touchKnownMember(input.room_id, input.agent_id, timestamp, input.process_metadata);
-    } else {
+    } else if (sender === "member") {
       this.touchMember(
         input.room_id,
         input.agent_id,
@@ -2542,9 +2544,11 @@ export class TalkingStickService {
     if (input.request_key !== undefined && (input.request_key.length === 0 || input.request_key.length > 200)) {
       throw new ProtocolError("invalid_input", "request_key must be 1-200 characters.");
     }
-    const digest = createHash("sha256")
-      .update(JSON.stringify([input.room_id, input.to === "room" ? "room" : [...input.to].sort(), body]))
-      .digest("hex");
+    const selectors = input.to === "room" ? "room" : [...new Set(input.to.map((selector) => selector.trim()).filter(Boolean))].sort();
+    if (selectors !== "room" && selectors.length === 0) throw new ProtocolError("invalid_input", "Name at least one recipient.");
+    // The retry key matches what was asked, not who those names resolve to
+    // now, so a retry after the room changes still finds the original.
+    const digest = createHash("sha256").update(JSON.stringify([input.room_id, selectors, body])).digest("hex");
     const now = this.now();
     const timestamp = now.toISOString();
     this.purgeExpiredIdleRooms(now);
@@ -2564,24 +2568,36 @@ export class TalkingStickService {
       }
       const room = this.requireRoom(input.room_id);
       const members = this.getMembers(room.room_id);
+      const agents = members.filter((member) => !isObserverMember(member));
       let recipients: AgentId[];
-      if (input.to === "room") {
-        recipients = members
-          .filter((member) => member.agent_id !== input.agent_id && !isObserverMember(member) &&
-            !member.agent_id.startsWith("human:") && this.getMemberProcessLiveness(member) !== "gone")
+      if (selectors === "room") {
+        // Live as tt room list --all counts it: not gone, and either running
+        // or recently present.
+        recipients = agents
+          .filter((member) => {
+            if (member.agent_id === input.agent_id || member.agent_id.startsWith("human:")) return false;
+            const liveness = this.getMemberProcessLiveness(member);
+            return liveness !== "gone" && (liveness === "alive" || this.hasRecentPresence(member, now));
+          })
           .map((member) => member.agent_id);
         if (recipients.length === 0) {
           throw new ProtocolError("no_recipients", "No live agent is in this room to ask.", { room_id: room.room_id });
         }
       } else {
-        recipients = [...new Set(input.to)];
-        if (recipients.length === 0) throw new ProtocolError("invalid_input", "Name at least one recipient.");
-        for (const recipient of recipients) {
-          const member = members.find((candidate) => candidate.agent_id === recipient);
-          if (!member || isObserverMember(member)) {
-            throw new ProtocolError("unknown_recipient", "Recipient is not an agent in this room.", { to_agent_id: recipient });
+        // An exact id, or a display or harness name that matches one agent.
+        recipients = [...new Set(selectors.map((selector) => {
+          const exact = agents.find((member) => member.agent_id === selector);
+          if (exact) return exact.agent_id;
+          const matches = agents.filter((member) => member.display_name === selector || member.agent_id.startsWith(`${selector}:`));
+          if (matches.length > 1) {
+            throw new ProtocolError("ambiguous_recipient", `${selector} matches several agents in this room.`,
+              { candidates: matches.map((member) => member.agent_id) });
           }
-        }
+          if (matches.length === 0) {
+            throw new ProtocolError("unknown_recipient", `No agent named ${selector} is in this room.`, { to_agent_id: selector });
+          }
+          return matches[0].agent_id;
+        }))];
       }
       const taken = this.db.prepare<[string], { found: number }>("SELECT 1 AS found FROM visitor_requests WHERE request_id = ?");
       let requestId = newDeliveryToken();
@@ -2589,7 +2605,7 @@ export class TalkingStickService {
       const sent = this.sendMessageLocked({
         agent_id: input.agent_id, room_id: room.room_id, body,
         ...(recipients.length === 1 ? { to_agent_id: recipients[0] } : { to_agent_ids: recipients })
-      }, body, "normal", timestamp, true, { request_id: requestId });
+      }, body, "normal", timestamp, "visitor", { request_id: requestId });
       const request: VisitorRequestRow = {
         request_id: requestId, room_id: room.room_id, requester_agent_id: input.agent_id,
         request_key: input.request_key ?? null, payload_digest: digest, event_seq: sent.event_seq,
@@ -2629,7 +2645,7 @@ export class TalkingStickService {
       const request = this.requireVisitorRequest(input.request_id);
       const sent = this.sendMessageLocked({
         agent_id: input.agent_id, room_id: request.room_id, body, process_metadata: input.process_metadata
-      }, body, "normal", timestamp, false, { in_reply_to: request.request_id });
+      }, body, "normal", timestamp, "member", { in_reply_to: request.request_id });
       this.db.prepare("INSERT INTO visitor_replies (request_id, event_seq) VALUES (?, ?)").run(request.request_id, sent.event_seq);
       return { request_id: request.request_id, room_id: request.room_id, event_seq: sent.event_seq,
         event_id: sent.event_id, created_at: sent.created_at };
@@ -4120,7 +4136,7 @@ export class TalkingStickService {
         agent_id: input.agent_id, room_id: room.room_id, body: notice.body,
         ...(recipients.length === 1 ? { to_agent_id: recipients[0] } : { to_agent_ids: recipients }),
         process_metadata: input.process_metadata
-      }, notice.body, "normal", timestamp, true);
+      }, notice.body, "normal", timestamp, "known");
       return { room_id: room.room_id, version: state.version, event_seq: sent.event_seq, recipients };
     }));
   }

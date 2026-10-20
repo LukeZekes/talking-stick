@@ -37,7 +37,8 @@ function room(native?: (request: NativeWakeRequest) => NativeWakeResult) {
   const service = new TalkingStickService({
     dataDir: path.join(root, "data"),
     hostId: HOST,
-    processLivenessChecker: (process) => process.harness_session_id === "grok-gone" ? "gone" : "alive",
+    processLivenessChecker: (process) => process.harness_session_id === "grok-gone" ? "gone"
+      : process.harness_session_id?.startsWith("unknown") ? "unknown" : "alive",
     receiverLivenessChecker: () => "gone",
     nativeWakeTransport: {
       deliver(request) {
@@ -91,12 +92,34 @@ describe("visitor requests", () => {
       payload: { request_id: asked.request_id, recipients: expect.arrayContaining(["claude:aa", "codex:bb"]) } });
   });
 
+  test("asking leaves a member's own presence alone and counts only live agents", async () => {
+    const { service, roomId } = room();
+    for (const [agentId, session] of [["gemini:quiet", "unknown-quiet"], ["opencode:busy", "unknown-busy"], ["agy:parked", "agy-parked"]]) {
+      service.joinPath({ agent_id: agentId, context_path: service.listRooms({}).rooms[0].canonical_path, process_metadata: metadata(session) });
+    }
+    const db = (service as unknown as { db: { prepare(sql: string): { run(...args: unknown[]): unknown } } }).db;
+    // Long silent: unknown liveness drops out, a running process stays in.
+    db.prepare("UPDATE room_members SET last_seen_at = ?, last_wait_at = NULL WHERE agent_id IN (?, ?)")
+      .run("2001-01-01T00:00:00.000Z", "gemini:quiet", "agy:parked");
+    const before = members(service, roomId);
+
+    const asked = await service.askRoom({ agent_id: "claude:aa", room_id: roomId, to: "room", body: "who is around?" });
+    expect(asked.recipients.sort()).toEqual(["agy:parked", "codex:bb", "opencode:busy"]);
+    expect(members(service, roomId)).toEqual(before);
+  });
+
   test("named recipients must be agents in the room", async () => {
     const { service, roomId, requests } = room();
     const asked = await service.askRoom({ agent_id: "human:guest", room_id: roomId, to: ["codex:bb"], body: "status?" });
     expect(asked.recipients).toEqual(["codex:bb"]);
     expect(requests.map((request) => request.address)).toEqual(["/tmp/codex-bb"]);
     expect(requests[0].text.split("\n")[1]).toBe(`#${asked.event_seq} visitor human:guest → you · reply: tt msg reply ${asked.request_id} --stdin`);
+    // Harness names resolve to the one matching agent; repeats collapse.
+    expect((await service.askRoom({ agent_id: "human:guest", room_id: roomId, to: ["claude", "claude:aa"], body: "you?" })).recipients)
+      .toEqual(["claude:aa"]);
+    service.joinPath({ agent_id: "claude:cc", context_path: service.listRooms({}).rooms[0].canonical_path, process_metadata: metadata("claude-cc") });
+    await expect(service.askRoom({ agent_id: "human:guest", room_id: roomId, to: ["claude"], body: "which?" }))
+      .rejects.toMatchObject({ code: "ambiguous_recipient" });
     await expect(service.askRoom({ agent_id: "human:guest", room_id: roomId, to: ["human:op:chat:1"], body: "hi" }))
       .rejects.toMatchObject({ code: "unknown_recipient" });
     await expect(service.askRoom({ agent_id: "human:guest", room_id: roomId, to: ["claude:elsewhere"], body: "hi" }))
@@ -153,6 +176,19 @@ describe("visitor requests", () => {
     // Keys belong to their requester.
     const other = await service.askRoom({ agent_id: "human:other", room_id: roomId, to: ["claude:aa"], body: "status?", request_key: "k1" });
     expect(other.request_id).not.toBe(asked.request_id);
+  });
+
+  test("a retry matches what was asked even after the named agent left", async () => {
+    const { service, roomId, requests } = room();
+    const asked = await service.askRoom({ agent_id: "human:guest", room_id: roomId, to: ["codex"], body: "status?", request_key: "k" });
+    service.leaveRoom({ agent_id: "codex:bb", room_id: roomId });
+    const events = service.getRoomEvents({ room_id: roomId, include_all: true }).length;
+    const retried = await service.askRoom({ agent_id: "human:guest", room_id: roomId, to: ["codex", "codex"], body: "status?", request_key: "k" });
+    expect(retried).toMatchObject({ request_id: asked.request_id, recipients: ["codex:bb"], deduplicated: true });
+    expect(service.getRoomEvents({ room_id: roomId, include_all: true })).toHaveLength(events);
+    expect(requests).toHaveLength(1);
+    await expect(service.askRoom({ agent_id: "human:guest", room_id: roomId, to: ["codex"], body: "changed?", request_key: "k" }))
+      .rejects.toMatchObject({ code: "request_key_conflict" });
   });
 
   test("the question is stored even when no wake gets through", async () => {

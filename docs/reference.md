@@ -192,17 +192,20 @@ refreshes anyone's presence.
 
 A visitor can also ask a room's agents a question. `tt room ask <room> --to <agent|room>` takes
 the question as arguments or with `--stdin`. `--to` names agents by id, or by harness name when
-exactly one agent matches; `room` sends it to every live agent in the room. The recipients are
-fixed when the question is asked and are woken like any directed message. Their envelope header
-reads `visitor <id>` and ends with the reply command. The visitor never becomes a member, never
-holds the stick, and doesn't keep the room open. A member answers with
+exactly one agent matches; `room` sends it to every live agent in the room (not gone, and either
+running or recently present). A member asking its own room this way keeps its presence unchanged.
+The recipients are fixed when the question is asked and are woken like any directed message.
+Their envelope header reads `visitor <id>` and ends with the reply command. The visitor never
+becomes a member, never holds the stick, and doesn't keep the room open. A member answers with
 `tt msg reply <request-id>`; answers are room messages that wake nobody in the room. The visitor
 reads them with `tt room replies <request-id>`, oldest first, 20 at a time (`--limit` up to 200),
-continuing with `--after <cursor_event_seq>`. `--timeout S` (at most 60) waits for a first answer;
-an empty result with `timed_out: true` means no answer yet. `--request-key KEY` makes a retry
-return the original request instead of asking twice, and a different question under the same key
-is refused. Questions and answers are kept as long as their room: when the room closes, they are
-deleted with it, and later reads report `request_not_found`.
+continuing with `--after <cursor_event_seq>`. `--timeout` (up to 60 seconds, as `30`, `30s`, or
+`500ms`) waits for a first answer. An empty result with `timed_out: true` means no answer yet; a
+wait stopped by Ctrl-C reports `interrupted: true` and exits 130. `--request-key KEY` makes a
+retry return the original request instead of asking twice, even after its recipients leave, and
+a different question under the same key is refused. Questions and answers are kept as long as
+their room: when the room closes, they are deleted with it, and later reads report
+`request_not_found`.
 
 ### Non-owner notes
 

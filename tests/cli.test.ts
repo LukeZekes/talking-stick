@@ -3713,6 +3713,8 @@ describe("tt room", () => {
     const { project } = setupIsolatedCli(registry);
     const home = path.join(path.dirname(project), "home");
     fs.mkdirSync(home);
+    process.env.TT_HARNESS_AGENT_ID = "grok:stay";
+    await captureStdout(["join", project, "--json"]);
     process.env.TT_HARNESS_AGENT_ID = "codex:answer";
     const target = JSON.parse(await captureStdout(["join", project, "--json"]));
     // The visitor is an agent busy in its own room; asking must not move it.
@@ -3747,6 +3749,38 @@ describe("tt room", () => {
     expect(await captureStdout(["room", "replies", asked.request_id, "--text"])).toContain("codex:answer:\n  The parser.");
     expect(JSON.parse(await captureStdout(["state", home, "--agent", "human:observer", "--json"])).room.room_id).toBe(own.room_id);
     await expect(captureStdout(["room", "replies", "zzzzzzzz", "--json"])).rejects.toThrow(/No such request/);
+
+    // A keyed retry returns the original even after the named agent left.
+    const keyed = JSON.parse(await captureStdout(["room", "ask", "project", "--to", "codex:answer", "--request-key", "k", "Still", "there?", "--json"]));
+    process.env.TT_HARNESS_AGENT_ID = "codex:answer";
+    await captureStdout(["leave", project, "--json"]);
+    process.env.TT_HARNESS_AGENT_ID = "claude:visitor";
+    const cursor = JSON.parse(await captureStdout(["state", project, "--agent", "human:observer", "--json"])).cursor_event_seq;
+    const retried = JSON.parse(await captureStdout(["room", "ask", "project", "--to", "codex:answer,codex:answer", "--request-key", "k", "Still", "there?", "--json"]));
+    expect(retried).toMatchObject({ request_id: keyed.request_id, event_seq: keyed.event_seq, recipients: ["codex:answer"], deduplicated: true });
+    expect(JSON.parse(await captureStdout(["state", project, "--agent", "human:observer", "--json"])).cursor_event_seq).toBe(cursor);
+    await expect(captureStdout(["room", "ask", "project", "--to", "codex:answer", "--request-key", "k", "Other?", "--json"]))
+      .rejects.toThrow(/request_key was already used/);
+    await expect(captureStdout(["room", "ask", "project", "--to", "codex:answer", "Other?", "--json"])).rejects.toThrow(/No agent named codex:answer/);
+    for (const dir of registry) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a signal ends a replies wait as interrupted, not timed out", async () => {
+    const registry: string[] = [];
+    const { project } = setupIsolatedCli(registry);
+    process.env.TT_HARNESS_AGENT_ID = "codex:answer";
+    await captureStdout(["join", project, "--json"]);
+    process.env.TT_HARNESS_AGENT_ID = "claude:visitor";
+    const asked = JSON.parse(await captureStdout(["room", "ask", project, "--to", "codex", "status?", "--json"]));
+    const waiter = spawnCliProcess(["room", "replies", asked.request_id, "--timeout", "30", "--json"]);
+    // Long enough for the CLI to start and install its handler.
+    await delay(3_000);
+    const started = Date.now();
+    const closed = waitForProcessClose(waiter.child);
+    waiter.child.kill("SIGINT");
+    expect(await closed).toMatchObject({ code: 130, signal: null });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(JSON.parse(waiter.stdout())).toMatchObject({ replies: [], interrupted: true, timed_out: false, cursor_event_seq: asked.event_seq });
     for (const dir of registry) fs.rmSync(dir, { recursive: true, force: true });
   });
 

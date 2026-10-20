@@ -546,8 +546,9 @@ export interface SendMessageInput {
 export interface AskRoomInput {
   agent_id: AgentId;
   room_id: string;
-  /** "room" asks every live agent; otherwise exact member ids. */
-  to: "room" | AgentId[];
+  /** "room" asks every live agent; otherwise agent ids, or display or
+   * harness names that each match exactly one agent. */
+  to: "room" | string[];
   body: string;
   /** Deduplicates a retry by the same requester. */
   request_key?: string;
