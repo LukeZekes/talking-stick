@@ -11,6 +11,10 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+## [0.28.0] — 2026-10-20
+
+Full notes: [`docs/releases/0.28.0.md`](docs/releases/0.28.0.md).
+
 ### Changed
 
 - `talking-stick-rooms` is now a management workflow for overseeing rooms from outside, for example from a desktop app. It covers status from briefs; questions, instructions, follow-ups and relayed approvals sent with `tt room ask` and a reusable `--request-key`; relayed instructions that quote their source, time and scope without impersonating the user; and follow-up that reports stored, delivered, received and replied as separate facts. The main skill tells agents how to answer a visitor: accept, plan, or blocker, naming the rule when they need the operator's own confirmation.
@@ -794,6 +798,7 @@ Initial alpha. Core room protocol, SQLite-backed persistence, multi-process
 contention coverage, MCP smoke coverage, human guardian flow, harness
 installers, and the portable `talking-stick` skill.
 
+[0.28.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.28.0
 [0.27.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.27.0
 [0.26.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.26.0
 [0.25.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.25.0
