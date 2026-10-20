@@ -11,6 +11,14 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+## [0.28.1] — 2026-10-20
+
+Full notes: [`docs/releases/0.28.1.md`](docs/releases/0.28.1.md).
+
+### Documentation
+
+- Added per-app setup for the `talking-stick-rooms` manager skill, including ChatGPT desktop Work with local computer access, Claude desktop Code → This computer → a folder, and Codex CLI. The guide explains skill discovery, choosing a folder, checking access to the host's `tt`, and why uploading a skill into Claude account Skills does not install a host-tool bridge.
+
 ## [0.28.0] — 2026-10-20
 
 Full notes: [`docs/releases/0.28.0.md`](docs/releases/0.28.0.md).
@@ -798,6 +806,7 @@ Initial alpha. Core room protocol, SQLite-backed persistence, multi-process
 contention coverage, MCP smoke coverage, human guardian flow, harness
 installers, and the portable `talking-stick` skill.
 
+[0.28.1]: https://github.com/mostlydev/talking-stick/releases/tag/v0.28.1
 [0.28.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.28.0
 [0.27.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.27.0
 [0.26.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.26.0
