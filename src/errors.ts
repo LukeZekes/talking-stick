@@ -11,6 +11,7 @@ export type ProtocolErrorCode =
   | "cannot_kick_self"
   | "invalid_handoff"
   | "stale_lease"
+  | "stale_roles"
   | "turn_mismatch"
   | "takeover_not_available"
   | "takeover_ineligible"

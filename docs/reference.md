@@ -331,7 +331,7 @@ it. Scrolling, selection, and copying stay with the terminal.
 | `/help`, `/help keys` | Show chat commands, or keyboard shortcuts |
 | `/older` | Print an earlier page of saved messages; in fullscreen, scroll into older history |
 | Ctrl+V, `/attach <file>` | Attach an image: Ctrl+V reads the clipboard (macOS `osascript`; Linux `wl-paste` or `xclip`), and a pasted or dragged-in image path does the same. The draft shows `[Image #N]`; delete the marker to drop the image. See [Images](#images) |
-| `/roles` | Edit roles: ↑↓ member, ←→ role, Space toggle, `d` save as harness default, Enter apply, Esc cancel. `/roles set <agent|harness> <roles|none|clear>` and `/roles default <harness> <roles|none|clear>` work as text |
+| `/roles` | Edit roles: arrows select, Space toggles, Tab switches room assignments / harness defaults, Enter applies, Esc closes (confirms a draft). `e` edits a role, `n` adds one, `i` edits project instructions, `p` previews, `v` lists notifications, `?` shows all keys. `/roles set <agent|harness> <roles|none|clear>` and `/roles default <harness> <roles|none|clear>` work as text |
 | `/rooms`, Ctrl+T | Open the repository's directory tree with live members, unread counts, and rollups (see [Directory tree](#directory-tree)); without an interactive terminal, `/rooms` prints the room list. Chat joins listed rooms as an observer so agents there can address you; those messages show inline as `#room › agent → you: …` |
 | `/go` (↑↓ choose, Enter open; Tab fills) or Alt+←/→ | Switch to another open room, including one with no agents; Ctrl+PgUp/PgDn is a fallback when the terminal captures Alt+Arrow. Drafts and memberships are kept until chat exits. `/go <dir>` (relative to the active repository's checkout) opens a directory's room even if nobody has joined it yet, e.g. a committed declaration; `#name` never falls back to a directory |
 | `/bottom` or Ctrl+End | Fullscreen: return to latest messages. Default mode: use the terminal's scroll-to-bottom shortcut |
@@ -444,6 +444,39 @@ console in the room finish with `tt standby` instead of `tt leave`, so a directe
 can wake them. An agent that has left can't receive messages until it rejoins. Opening and closing
 the console do not emit agent join/leave wakes. Message text is stripped of terminal escape sequences
 before display.
+
+### Role assignments and harness defaults
+
+`/roles` opens a fixed-size keyboard grid. **This room** contains exact live
+sessions. **Harness defaults · all rooms** (Tab) contains harnesses even when no
+session is present. Defaults apply only when no room or session override exists;
+`r` removes the selected override, restoring inheritance (or bundled defaults).
+`u` undoes the draft. Enter applies both tabs together; Esc asks before discarding.
+
+In This room, `e` edits the focused definition, `n` creates a role, and `i` edits
+shared project instructions in `$VISUAL`, `$EDITOR`, or `vi`. Save and exit the
+editor to return to the draft; no file or assignment changes until Enter. The
+project file is `.talking-stick/instructions.md` at the repository root. Definitions
+use this Markdown form (user definitions can also live in the user instructions):
+
+```markdown
+## Roles
+
+### reviewer
+Review independently. Reproduce material claims before agreeing.
+```
+
+Definitions resolve bundled → user → project by name. The defaults tab uses only
+bundled/user definitions; project definitions are edited in This room. Existing
+custom role names remain visible even if their definition is missing.
+
+`p` previews the selected agent's instructions and `v` shows all pending chat
+notifications. Assignment changes notify affected sessions; definition edits
+notify holders; shared instructions notify all agents reading that project file.
+Harness-default changes also notify inheriting sessions in other open rooms.
+Explicit overrides are unchanged. Notifications are durable and apply from the
+agent's next turn; roles never grant the stick. Conflicting file or assignment
+changes keep the draft open with an error instead of overwriting newer work.
 
 ## Editable collaboration instructions
 

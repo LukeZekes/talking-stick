@@ -1,3 +1,4 @@
+import { definitionMap, loadRoleDefinitions } from "../role-definitions.js";
 import type { DerivedIdentity } from "../identity.js";
 import {
   BUNDLED_ROLE_DEFAULTS,
@@ -30,7 +31,9 @@ export function liveAgents(runtime: Runtime, roomId: string): string[] {
 /** The block `tt instructions show` and role notices share. */
 export function roomRoleBlock(runtime: Runtime, roomId: string, self: string | null): string {
   const { version, assignments } = runtime.commands.getRoomRoles({ room_id: roomId });
-  return renderRoleBlock({ self, agents: liveAgents(runtime, roomId), assignments, userDefaults: readUserRoleDefaults(), version });
+  const room = runtime.commands.getRoomState({ room_id: roomId }).room;
+  return renderRoleBlock({ self, agents: liveAgents(runtime, roomId), assignments, userDefaults: readUserRoleDefaults(), version,
+    definitions: definitionMap(loadRoleDefinitions({ contextPath: room.canonical_path })) });
 }
 
 // Parse `architect,reviewer`, `none` ([] = deliberately no role), or `clear`
@@ -63,6 +66,7 @@ export async function applyRoleChanges(runtime: Runtime, identity: DerivedIdenti
   changes: Array<{ subject: RoleSubject; roles: string[] | null }>) {
   const agents = liveAgents(runtime, roomId);
   const defaults = readUserRoleDefaults();
+  const definitions = definitionMap(loadRoleDefinitions({ contextPath: runtime.commands.getRoomState({ room_id: roomId }).room.canonical_path }));
   const key = (agent: string, assignments: readonly RoomRoleAssignment[]) =>
     JSON.stringify(effectiveRoles(agent, assignments, defaults).roles);
   const result = runtime.commands.setRoomRoles(identity, {
@@ -73,13 +77,18 @@ export async function applyRoleChanges(runtime: Runtime, identity: DerivedIdenti
       return {
         to_agent_ids: changed,
         body: `[roles v${version}] Your role in this room changed. It applies from your next turn; it never changes who holds the stick.\n` +
-          renderRoleBlock({ self: null, agents, assignments, userDefaults: defaults, version })
+          renderRoleBlock({ self: null, agents, assignments, userDefaults: defaults, version, definitions }) +
+          [...new Set(changed.flatMap(agent => effectiveRoles(agent, assignments, defaults).roles))]
+            .map(role => `\n\n### ${role}\n${definitions.get(role) ?? role}`).join("")
       };
     }
   });
   // Committed: wake parked recipients now rather than at some later flush.
   try { await runtime.commands.flushWakes(roomId); } catch { /* wakes stay durable */ }
-  return result;
+  const summary = result.recipients.length
+    ? `Roles v${result.version} applied; told ${result.recipients.join(", ")}.`
+    : `Roles v${result.version} applied; no agent's roles changed.`;
+  return { ...result, summary };
 }
 
 function targetRoom(runtime: Runtime, parsed: ParsedCommand): PathRoom {
@@ -96,6 +105,13 @@ export async function handleRolesCommand(runtime: Runtime, parsed: ParsedCommand
   if (action === "default") {
     if (!target || target.includes(":")) throw new Error("Usage: tt roles default <harness> <roles|none|clear>");
     const roles = parseRoleList(rest.join(" "));
+    const open = runtime.commands.listRooms({}).rooms.find(room => room.state !== "closed");
+    if (open) {
+      const { applyRoleDraft } = await import("./role-draft.js");
+      const result = await applyRoleDraft(runtime, deriveCliIdentity(parsed), open.room_id, { defaults: { [target]: roles } });
+      printResult(parsed, { status: roles === null ? "cleared" : "saved", harness: target, roles: roles ?? BUNDLED_ROLE_DEFAULTS[target] ?? [], ...result }, () => result.summary);
+      return;
+    }
     writeUserRoleDefault(target, roles);
     const effective = roles ?? BUNDLED_ROLE_DEFAULTS[target] ?? [];
     printResult(parsed, { status: roles === null ? "cleared" : "saved", harness: target, roles: effective },
@@ -116,7 +132,7 @@ export async function handleRolesCommand(runtime: Runtime, parsed: ParsedCommand
   const { version, assignments } = runtime.commands.getRoomRoles({ room_id: room.room_id });
   const defaults = readUserRoleDefaults();
   const agents = liveAgents(runtime, room.room_id).map((agent) => ({ agent_id: agent, harness: harnessOf(agent), ...effectiveRoles(agent, assignments, defaults) }));
-  printResult(parsed, { room_id: room.room_id, version, assignments, agents, palette: ROLE_PALETTE },
+  printResult(parsed, { room_id: room.room_id, version, assignments, agents, palette: Object.fromEntries(definitionMap(loadRoleDefinitions({ contextPath: room.canonical_path }))) },
     () => renderRoleBlock({ self: agents.some((agent) => agent.agent_id === identity.agent_id) ? identity.agent_id : null,
-      agents: agents.map((agent) => agent.agent_id), assignments, userDefaults: defaults, version }));
+      agents: agents.map((agent) => agent.agent_id), assignments, userDefaults: defaults, version, definitions: definitionMap(loadRoleDefinitions({ contextPath: room.canonical_path })) }));
 }

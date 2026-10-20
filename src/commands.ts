@@ -1,7 +1,7 @@
 import os from "node:os";
 import type { MessageAttachment } from "./attachments.js";
 import { detectNativeWakeEndpoints } from "./native-wake.js";
-import { TalkingStickService } from "./service.js";
+import { TalkingStickService, type RoleNotifier } from "./service.js";
 import type { RoleSubject, RoomRoleAssignment } from "./roles.js";
 import type {
   PathRoom,
@@ -177,6 +177,12 @@ export class TalkingStickCommands {
     notify: (state: { version: number; assignments: RoomRoleAssignment[]; before: RoomRoleAssignment[] }) => { body: string; to_agent_ids: string[] };
   }) {
     return this.service.setRoomRoles({ ...input, agent_id: identity.agent_id, process_metadata: identity.process_metadata });
+  }
+
+  setRoomRolesBatch(identity: DerivedIdentity, input: {
+    rooms: Array<{ room_id: string; expected_version?: number; changes: Array<{ subject: RoleSubject; roles: string[] | null }>; notify: RoleNotifier }>;
+  }) {
+    return this.service.setRoomRolesBatch({ ...input, agent_id: identity.agent_id, process_metadata: identity.process_metadata });
   }
 
   globalEventSeq(): number {

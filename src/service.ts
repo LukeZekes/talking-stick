@@ -312,6 +312,9 @@ interface NativeWakeEndpointRow {
   last_error: string | null;
 }
 
+/** Builds a room's role notice from its new state; no recipients means no message. */
+export type RoleNotifier = (state: { version: number; assignments: RoomRoleAssignment[]; before: RoomRoleAssignment[] }) => { body: string; to_agent_ids: AgentId[] };
+
 export class TalkingStickService {
   readonly db: SqliteDatabase;
   readonly policy: Policy;
@@ -3687,47 +3690,69 @@ export class TalkingStickService {
     agent_id: AgentId;
     room_id: string;
     changes: Array<{ subject: RoleSubject; roles: string[] | null }>;
-    notify: (state: { version: number; assignments: RoomRoleAssignment[]; before: RoomRoleAssignment[] }) => { body: string; to_agent_ids: AgentId[] };
+    notify: RoleNotifier;
     process_metadata?: ProcessMetadata;
   }): { version: number; event_seq: number | null; recipients: AgentId[] } {
+    const [result] = this.setRoomRolesBatch({ agent_id: input.agent_id, process_metadata: input.process_metadata,
+      rooms: [{ room_id: input.room_id, changes: input.changes, notify: input.notify }] });
+    return { version: result.version, event_seq: result.event_seq, recipients: result.recipients };
+  }
+
+  /**
+   * setRoomRoles for several rooms in one transaction: a change that reaches
+   * more than one room (a harness default, a shared instructions file) either
+   * commits and is announced everywhere, or nowhere.
+   */
+  setRoomRolesBatch(input: {
+    agent_id: AgentId;
+    rooms: Array<{ room_id: string; expected_version?: number; changes: Array<{ subject: RoleSubject; roles: string[] | null }>; notify: RoleNotifier }>;
+    process_metadata?: ProcessMetadata;
+  }): Array<{ room_id: string; version: number; event_seq: number | null; recipients: AgentId[] }> {
     assertNonEmpty(input.agent_id, "agent_id");
-    assertNonEmpty(input.room_id, "room_id");
     // Roles are the operator's to assign: an agent could otherwise reassign
     // its peers. Reading them stays open to everyone.
     if (!input.agent_id.startsWith("human:")) {
       throw new ProtocolError("operator_only", "Only the operator assigns roles (tt chat /roles, or tt roles set as a human).");
     }
-    const timestamp = this.now().toISOString();
-    const result = withImmediateTransaction(this.db, () => {
-      this.requireRoom(input.room_id);
-      // The notification must compare against the state protected by this
-      // write transaction, including changes committed by another process.
-      const before = this.getRoomRoles({ room_id: input.room_id }).assignments;
-      for (const change of input.changes) {
+    for (const room of input.rooms) {
+      assertNonEmpty(room.room_id, "room_id");
+      for (const change of room.changes) {
         if (!/^(agent|harness):\S+$/.test(change.subject)) {
           throw new ProtocolError("invalid_input", `Invalid role subject ${change.subject}.`);
         }
+      }
+    }
+    const timestamp = this.now().toISOString();
+    return withImmediateTransaction(this.db, () => input.rooms.map((room) => {
+      this.requireRoom(room.room_id);
+      // The notification must compare against the state protected by this
+      // write transaction, including changes committed by another process.
+      const current = this.getRoomRoles({ room_id: room.room_id });
+      if (room.expected_version !== undefined && current.version !== room.expected_version) {
+        throw new ProtocolError("stale_roles", "Roles changed since the editor opened; reopen /roles.");
+      }
+      const before = current.assignments;
+      for (const change of room.changes) {
         if (change.roles === null) {
-          this.db.prepare("DELETE FROM room_roles WHERE room_id = ? AND subject = ?").run(input.room_id, change.subject);
+          this.db.prepare("DELETE FROM room_roles WHERE room_id = ? AND subject = ?").run(room.room_id, change.subject);
         } else {
           this.db.prepare(`INSERT INTO room_roles (room_id, subject, roles_json, set_by, set_at) VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(room_id, subject) DO UPDATE SET roles_json = excluded.roles_json, set_by = excluded.set_by, set_at = excluded.set_at`)
-            .run(input.room_id, change.subject, JSON.stringify(change.roles), input.agent_id, timestamp);
+            .run(room.room_id, change.subject, JSON.stringify(change.roles), input.agent_id, timestamp);
         }
       }
-      this.db.prepare("UPDATE path_rooms SET roles_version = roles_version + 1 WHERE room_id = ?").run(input.room_id);
-      const state = this.getRoomRoles({ room_id: input.room_id });
-      const notice = input.notify({ ...state, before });
+      this.db.prepare("UPDATE path_rooms SET roles_version = roles_version + 1 WHERE room_id = ?").run(room.room_id);
+      const state = this.getRoomRoles({ room_id: room.room_id });
+      const notice = room.notify({ ...state, before });
       const recipients = [...new Set(notice.to_agent_ids)].filter((id) => id !== input.agent_id);
-      if (recipients.length === 0) return { version: state.version, event_seq: null, recipients };
+      if (recipients.length === 0) return { room_id: room.room_id, version: state.version, event_seq: null, recipients };
       const sent = this.sendMessageLocked({
-        agent_id: input.agent_id, room_id: input.room_id, body: notice.body,
+        agent_id: input.agent_id, room_id: room.room_id, body: notice.body,
         ...(recipients.length === 1 ? { to_agent_id: recipients[0] } : { to_agent_ids: recipients }),
         process_metadata: input.process_metadata
       }, notice.body, "normal", timestamp, true);
-      return { version: state.version, event_seq: sent.event_seq, recipients };
-    });
-    return result;
+      return { room_id: room.room_id, version: state.version, event_seq: sent.event_seq, recipients };
+    }));
   }
 
   /** Highest event seq in any room; event_seq is one global sequence. */
