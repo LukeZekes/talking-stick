@@ -13,7 +13,7 @@ tt room brief <room> --json                   # holder, members, latest handoff,
 tt room ask <room> --to <agent|room> --request-key <key> --stdin --json <<'EOF'
 Your question or instruction.
 EOF
-tt room replies <request-id> --timeout 30 --json   # answers, plus each recipient's delivery and read state
+tt room replies <request-id> --timeout 30 --json   # answers, plus each recipient's delivery, receipt, and reply state
 ```
 
 Do not run `tt join`, `tt wait`, `tt standby`, `tt take`, `tt release`, or `tt msg send` for this work, and never edit files in another room's checkout. If `tt` is not available, say so; do not guess at a room's state.
@@ -45,8 +45,8 @@ Give every message a `--request-key` you can reuse (for example `wojtek-release-
 `tt room replies <request-id> --timeout 30 --json` waits up to 30 seconds (at most 60) for answers and reports each recipient separately in `recipient_status`. Report these as distinct facts, never one as another, and note a recipient with `in_room: false`:
 
 - **Stored**: the request exists in the room; true once `tt room ask` returned.
-- **Delivery** (`delivery`): whether a wake attempt was accepted by the agent's transport (`delivery.status`, `delivery.state`), or is still pending. `queued` or `ambiguous` does not prove the agent saw it.
-- **Received**: the agent's `tt` took in the message (`received_at`): its wait returned it or it acknowledged the envelope. Not proof the model read it, and not agreement.
+- **Delivery** (`delivery`, null once a later attempt replaced it): whether a wake attempt was accepted by the agent's transport (`delivery.status`, `delivery.state`), or is still pending. `queued` or `ambiguous` does not prove the agent saw it.
+- **Received**: the agent's `tt` took in the message (`received_at`): its wait returned it or it acknowledged the envelope. Not proof the model read it, and not agreement. Null means no receipt is on record, not that it never arrived: receipts go when an agent leaves.
 - **Replied** (`replied`, and the text in `replies`): an answer exists. What it says (accepted, blocked, done) is the agent's word, not proof the work happened; check the room brief for evidence.
 
 Empty `replies` with `timed_out: true` means no answer yet, not that the request is closed. Tell the user, and check again later with the returned `cursor_event_seq` as `--after`. For this visitor workflow, replies appear when you run `tt room replies`; there is no automatic notification to you.

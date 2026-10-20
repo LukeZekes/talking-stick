@@ -587,10 +587,12 @@ export interface RequestRecipientStatus {
   agent_id: AgentId;
   /** Still a member of the request's room. */
   in_room: boolean;
-  /** The last wake attempt for this request, which never proves it was read. */
-  delivery: MessageDelivery;
+  /** The wake attempt that dispatched this request, while still on record;
+   * null when a later attempt replaced it. Never proof it was read. */
+  delivery: MessageDelivery | null;
   /** When this agent's tt received the request (its wait, or an acknowledged
-   * envelope); not proof the model read or acted on it. */
+   * envelope); not proof the model read or acted on it. Null means no receipt
+   * is on record: receipts go when a member leaves. */
   received_at: string | null;
   /** Whether this agent has answered with tt msg reply. */
   replied: boolean;

@@ -3748,7 +3748,7 @@ describe("tt room", () => {
       .toEqual([["codex:answer", "The parser."]]);
     const repliesText = await captureStdout(["room", "replies", asked.request_id, "--text"]);
     expect(repliesText).toContain("codex:answer:\n  The parser.");
-    expect(repliesText).toMatch(/Recipients:\n  codex:answer: delivery \S+; (?:received \S+|not received yet); replied/);
+    expect(repliesText).toMatch(/Recipients:\n  codex:answer: delivery \S+; (?:received \S+|no receipt on record); replied/);
     expect(answers.recipient_status).toEqual([expect.objectContaining({ agent_id: "codex:answer", in_room: true, replied: true })]);
     // The brief tells a correlated answer (to null) apart from a room broadcast.
     process.env.TT_HARNESS_AGENT_ID = "codex:answer";

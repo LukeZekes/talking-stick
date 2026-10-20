@@ -2707,7 +2707,7 @@ export class TalkingStickService {
     const recipientStatus = recipients.map((agentId) => ({
       agent_id: agentId,
       in_room: Boolean(this.getMember(request.room_id, agentId)),
-      delivery: this.describeDelivery(request.room_id, agentId, request.event_seq, "normal"),
+      delivery: this.requestDelivery(request.room_id, agentId, request.event_seq),
       received_at: receipt.get(request.room_id, agentId, request.event_seq)?.consumed_at ?? null,
       replied: repliedBy.has(agentId)
     }));
@@ -2722,6 +2722,14 @@ export class TalkingStickService {
       cursor_event_seq: replies.at(-1)?.event_seq ?? after,
       has_more: rows.length > limit
     };
+  }
+
+  // The endpoint row holds only its latest attempt. Report it only when that
+  // attempt dispatched this request; a later request may have replaced it, so
+  // anything else is unknown, never "pending".
+  private requestDelivery(roomId: string, agentId: AgentId, eventSeq: number): MessageDelivery | null {
+    const delivery = this.describeDelivery(roomId, agentId, eventSeq, "normal");
+    return delivery.state ? delivery : null;
   }
 
   private requireVisitorRequest(requestId: string): VisitorRequestRow {
