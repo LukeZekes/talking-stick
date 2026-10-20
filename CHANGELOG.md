@@ -11,20 +11,25 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
-### Added
+## [0.25.0] — 2026-10-20
 
-- Installer-managed releases check daily for updates at interactive human startup, install newer stable releases, and request a restart before opening the room. Agent commands, hooks, JSON output, previews, and development checkouts skip updates; `TT_NO_AUTO_UPDATE=1` opts out. Automatic and explicit updates share a lock, and automatic installs keep the npm copy without prompting.
+Full notes: [`docs/releases/0.25.0.md`](docs/releases/0.25.0.md).
+
+### Breaking changes
+
+- **Installed releases now update themselves.** Once a day, an interactive human command such as `tt chat` checks GitHub (at most three seconds, through `curl`). If a newer stable release exists, `tt` installs it and asks you to rerun the command, so an old process never opens a database the new version has migrated. Agent commands, hooks, JSON output, redirected terminals, previews, and source checkouts never update. `TT_NO_AUTO_UPDATE=1` turns it off; automatic and explicit updates share one lock, and an automatic install keeps any npm copy without asking (#82).
 
 ### Changed
 
-- Native delivery envelopes use eight-character ack tokens, and the header command drops `--json`: `tt ack k3f9x2qd` instead of a 36-character UUID with a flag. Harness calls already print JSON. Tokens from earlier envelopes still acknowledge by exact match.
+- Ack tokens are eight characters, and the envelope header drops the redundant `--json`: `tt ack k3f9x2qd` instead of a 36-character UUID with a flag. Tokens from earlier envelopes still work.
+- The README is shorter and current. The detailed `tt up` notes moved to the reference.
 
 ### Fixed
 
-- Trusted Codex turn hooks defer ordinary native delivery during active work and deliver only unread events at Stop, avoiding queued stale envelopes after `tt wait` consumes the same events. Includes an acknowledgement loop guard, cancellation handling, and native fallback for missing or expired hooks. Re-run `tt install codex` and trust the hooks in `/hooks`.
-- `tt events --follow` and `tt msg recv --follow` stop within a poll interval of SIGINT or SIGTERM instead of finishing a long-poll of up to 110 seconds first.
-- Documented how to watch a room live with `tt events --follow`: it starts at the head, prints one JSON event per line, and reports its cursor on stderr. `tt state --json` gives the head sequence (#66).
-- Added a subprocess regression test that keeps `--json` stdout parseable when `cmux` prints socket errors (#67).
+- Codex no longer receives stale queued prompts for messages it already read with `tt wait`. Trusted turn hooks hold ordinary deliveries while a Codex turn is running, and at the end of the turn they deliver only the messages still unread, once. Run `tt install codex`, then trust the new hooks in `/hooks` (#93).
+- `tt events --follow` and `tt msg recv --follow` stop within a quarter second of Ctrl+C or SIGTERM, instead of finishing a long-poll of up to 110 seconds first.
+- The reference documents watching a room live with `tt events --follow`: it starts at the head, prints one JSON event per line, and reports its cursor on stderr. `tt state --json` gives the head sequence (#66).
+- `--json` stdout stays parseable when `cmux` reports socket errors; this is now covered by a subprocess test (#67).
 
 ## [0.24.1] — 2026-10-20
 
@@ -753,6 +758,7 @@ Initial alpha. Core room protocol, SQLite-backed persistence, multi-process
 contention coverage, MCP smoke coverage, human guardian flow, harness
 installers, and the portable `talking-stick` skill.
 
+[0.25.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.25.0
 [0.24.1]: https://github.com/mostlydev/talking-stick/releases/tag/v0.24.1
 [0.24.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.24.0
 [0.23.1]: https://github.com/mostlydev/talking-stick/releases/tag/v0.23.1

@@ -58,13 +58,6 @@ tt uninstall <harness...|agents> | --all | --shared [--print]
 tt self-update [--print] [--manager npm|pnpm|yarn|bun]
 ```
 
-In Herdr, `tt up` defaults to installed Claude, Codex, and Antigravity launchers. The invoking
-terminal becomes chat; agent panes split to its right with equal shares of the
-side column. Grok and OpenCode launchers require an explicit `--agents` list.
-`--print` shows the selected agents and any
-installed experimental launchers. `--json`, redirected terminals, and harness
-tool calls return a manual `tt chat --in` step instead of attaching chat.
-
 `[path]` defaults to the current working directory. Pass it only when you intentionally
 want a different room.
 
@@ -83,7 +76,8 @@ Installer-managed standalone releases check for newer stable versions once daily
 interactive startup (for example `tt chat`), install under a per-install lock, then ask you to restart
 before the command opens the database. Agent RPCs, hooks, JSON/redirected output, `--print`, and
 development checkouts never auto-install. `TT_NO_AUTO_UPDATE=1` disables automatic checks.
-Network checks have a three-second deadline; failures go to stderr and leave the command usable.
+The version check runs through `curl` with a three-second deadline; installing a newer release then
+takes as long as its download. Failures go to stderr and leave the command usable.
 Previous release directories remain available for running processes. Explicit and automatic updates
 share the same lock. Automatic installs keep any npm copy without prompting.
 
@@ -103,6 +97,34 @@ harness has recent `tt` activity, the lease is retained and keeps heartbeating; 
 and silent owner is surrendered as `harness_gone`. Human CLI `take` works without a required
 reason so an operator can step into a stuck room quickly; harness-aware CLI takeovers still
 require `--reason` unless the command includes `--operator-requested`.
+
+### Herdr launch (`tt up`)
+
+Experimental. In Herdr, `tt up` defaults to installed Claude, Codex, and Antigravity launchers
+whose executable and Talking Stick skill are both present. The invoking pane becomes chat; agent
+panes split to its right with equal shares of the side column. Grok and OpenCode launchers
+require an explicit `--agents` list. `--print` previews the selected agents and any installed
+experimental launchers; `--new-tab` or `--new-workspace` opens a separate tab or workspace.
+
+- Each agent receives the skill bootstrap prompt, and its join to the exact room is verified.
+  `--timeout 120s` bounds that join observation in addition to each startup timeout.
+- Panes start in the directory you launch from and are pinned to one room (`TT_ROOM`, and
+  `tt chat --in` for the console): the room an ordinary `tt join` there selects, or the one named
+  with `--in`. A room that does not exist yet is created only after preflight passes.
+- Progress, including the created tab or workspace and the join wait, goes to stderr; JSON results
+  stay on stdout. `--json`, redirected terminals, and harness tool calls report chat as ready and
+  print a `tt chat --in` step instead of attaching chat. Current-tab splits keep focus; a requested
+  new tab or workspace is shown after startup.
+- Reruns are idempotent. Repeated launches in the current pane reopen chat there without
+  duplicating confirmed agent panes. A new tab or workspace gets its own console, reusing a
+  recorded one only after verifying its pane. If agents exist but their layout lacks a console,
+  the command asks for inspection instead of creating a console-only tab. Verified members are
+  reused; uncertain launches require inspection and are never blindly retried.
+- After checking old panes and confirming exited agents, `--forget` discards this command's
+  launch record without closing panes; `--print --forget` previews that fresh plan.
+- Codex starts with `--no-daemon` so its tools and hooks keep the new pane's process identity for
+  join verification. Escape in chat interrupts an active Codex turn in that pane through Herdr after
+  matching its session and process. Grok stays unconfirmed when Herdr omits its session identity.
 
 ### Rooms and paths
 
@@ -251,7 +273,7 @@ keystrokes are typed and no model polls while idle.
 | Harness | Transport | Registered from |
 | --- | --- | --- |
 | Claude Code (v2.1.224+, macOS/Linux) | The session's inbox socket | `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN` |
-| Codex (tested with 0.157.1) | `codex queue --thread <id>`; start the stored submission through the local app server when the thread has no active turn | `CODEX_THREAD_ID` |
+| Codex (tested with 0.157.1) | `codex queue --thread <id>`; start the stored submission through the local app server when the thread has no active turn. With trusted turn hooks, messages that arrive mid-turn wait for the turn's end instead | `CODEX_THREAD_ID` |
 | Any harness in cmux | `cmux send` plus Enter, only for parked standby or an explicit interrupt | `cmux identify` |
 
 Grok Build receives events through active-turn hooks while its session is running, which is not an
@@ -564,6 +586,9 @@ or fails its version gate, `tt` uses the built-in TypeScript fallback. Set
   read `~/.agents/skills`
 - Codex, Antigravity (`agy`), Grok Build, and OpenCode: copied or linked once into the shared
   `~/.agents/skills/talking-stick`
+- Codex: also merges lifecycle (`SessionStart`, `SessionEnd`) and turn (`UserPromptSubmit`, `Stop`,
+  `Interrupt`) hooks into `~/.codex/hooks.json`, leaving other entries alone. Codex runs them only
+  after you trust them in `/hooks`; see [Native event delivery](#native-event-delivery).
 - Grok Build: also installs a trusted global session hook at
   `~/.grok/hooks/talking-stick-session.json`, a stop guard at `~/.grok/hooks/talking-stick-stop.json`,
   and active-turn delivery hooks at `~/.grok/hooks/talking-stick-inbox.json`
