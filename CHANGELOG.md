@@ -11,6 +11,10 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+## [0.24.0] — 2026-10-20
+
+Full notes: [`docs/releases/0.24.0.md`](docs/releases/0.24.0.md).
+
 ### Added
 
 - `/roles` now has a stable keyboard grid with separate room assignments and harness defaults, editable Markdown role definitions and project instructions through `$VISUAL`/`$EDITOR`, and instruction/notification previews. Enter applies the draft; Tab changes scope. Changes notify affected agents in chat, including inheriting sessions in other rooms when defaults change.
@@ -726,6 +730,7 @@ Initial alpha. Core room protocol, SQLite-backed persistence, multi-process
 contention coverage, MCP smoke coverage, human guardian flow, harness
 installers, and the portable `talking-stick` skill.
 
+[0.24.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.24.0
 [0.23.1]: https://github.com/mostlydev/talking-stick/releases/tag/v0.23.1
 [0.23.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.23.0
 [0.22.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.22.0
