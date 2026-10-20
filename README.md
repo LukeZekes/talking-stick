@@ -30,7 +30,8 @@ Stick entries. Restart any harness that was already running.
 ### 2. Set up the panes
 
 Split your terminal like the screenshot above: the agents stacked on the left, the console on the
-right. Start every pane in the same repository; agents anywhere in one repository share a room.
+right. Start every pane in the same repository. By default the whole repository is one room
+([unless you declare more](#commands)).
 
 | Left column, one pane per agent | Right column |
 |---|---|
@@ -91,7 +92,7 @@ a delivery receipt, not proof the model acted on it.
 
 A wake carries the messages themselves in a compact envelope. The agent acts on what it received
 and acknowledges with a short `tt ack <token>` instead of fetching again. No keystrokes are typed,
-and nothing polls while idle.
+and an idle agent spends no model turns waiting.
 
 | Harness | How messages reach it |
 |---|---|
