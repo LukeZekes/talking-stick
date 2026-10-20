@@ -232,6 +232,12 @@ const WAKE_DETAIL_CODES = new Set(["ENOENT", "ECONNREFUSED", "ECONNRESET", "EACC
   "timeout", "closed", "unknown"]);
 const WAKE_DETAIL_SIGNALS = new Set(["SIGKILL", "SIGTERM", "SIGINT", "SIGHUP", "SIGABRT", "SIGSEGV", "SIGPIPE"]);
 
+// Older tt processes record outcomes without touching last_error_detail, so a
+// detail counts only beside the failure it explains.
+function currentWakeDetail(row: { last_status: string | null; last_error_detail: string | null }): boolean {
+  return Boolean(row.last_error_detail) && (row.last_status === "ambiguous" || row.last_status === "failed");
+}
+
 function safeWakeDetail(detail: string | undefined): string | undefined {
   const match = detail === undefined ? null : /^(connect|write|spawn|exit|signal):(\S+)(?: rpc:(-?\d{1,6}))?$/.exec(detail);
   if (!match) return undefined;
@@ -2405,7 +2411,8 @@ export class TalkingStickService {
         SELECT *, ROW_NUMBER() OVER (PARTITION BY agent_id, transport ORDER BY last_attempt_at DESC) AS rank
         FROM attempts
       )
-      SELECT agent_id, transport, recorded_at, last_attempt_at, last_status, last_error, last_error_detail
+      SELECT agent_id, transport, recorded_at, last_attempt_at, last_status, last_error,
+        CASE WHEN last_status IN ('ambiguous', 'failed') THEN last_error_detail END AS last_error_detail
       FROM ranked WHERE rank = 1 ORDER BY agent_id, transport
     `).all(roomId, roomId);
   }
@@ -3230,13 +3237,13 @@ export class TalkingStickService {
       transport: attempted.transport,
       state: attempted.dispatch_event_seq === eventSeq ? attempted.last_status ?? undefined : undefined,
       ...(attempted.last_error ? { error: attempted.last_error } : {}),
-      ...(attempted.last_error_detail ? { error_detail: attempted.last_error_detail } : {})
+      ...(currentWakeDetail(attempted) && attempted.dispatch_event_seq === eventSeq ? { error_detail: attempted.last_error_detail! } : {})
     };
     const failed = endpoints.find((row) => row.dispatch_event_seq === eventSeq && row.last_status === "failed");
     if (failed) return {
       status: "unreachable", transport: failed.transport, state: "failed",
       ...(failed.last_error ? { error: failed.last_error } : {}),
-      ...(failed.last_error_detail ? { error_detail: failed.last_error_detail } : {})
+      ...(currentWakeDetail(failed) ? { error_detail: failed.last_error_detail! } : {})
     };
     if (endpoints.length > 0) return { status: "pending" };
     if (member.standby_transport === "manual") return { status: "pending", error: "manual_standby" };

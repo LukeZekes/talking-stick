@@ -81,6 +81,9 @@ const DEFAULT_POLL_MS = 250;
 const PRESENCE_REFRESH_MS = 30_000;
 const STATUS_REFRESH_MS = 10_000;
 const STRIP_REFRESH_MS = 2_000;
+// A running console delivers wakes that a restricted sender (a desktop app
+// denied the agents' sockets) left pending, and retries unconfirmed ones.
+const WAKE_RELAY_MS = 60_000;
 const RECEIPT_POLL_MS = 1_000;
 const RECEIPT_BATCH = 200;
 const MAX_AWAITED_RECEIPTS = 1_000;
@@ -1584,6 +1587,7 @@ export async function runChatSession(
     if (savedDraft) editor?.setDraft(savedDraft);
     if (refreshStrip()) redraw();
     let busyAttempts = 0;
+    let lastWakeRelay = Date.now();
     while (!closed) {
       try {
         let result;
@@ -1632,6 +1636,10 @@ export async function runChatSession(
         }
         cursor = result.cursor_event_seq;
         viewedSeq = cursor;
+        if (!closed && (result.events.length > 0 || Date.now() - lastWakeRelay >= WAKE_RELAY_MS)) {
+          lastWakeRelay = Date.now();
+          await runtime.commands.flushWakes(roomId).catch(() => { /* pending wakes stay durable */ });
+        }
         if (!closed) checkReceipts();
         const interruptChanged = (interruptIndicators.size > 0 || interruptHint !== null) &&
           interruptSignature() !== lastInterruptSignature;

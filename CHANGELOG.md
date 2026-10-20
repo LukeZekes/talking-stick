@@ -15,6 +15,8 @@ changes will be called out under **Breaking changes**.
 
 - A wake that failed in the sending process no longer strands the message. When a failure is the sender's own (a denied socket connect, or a `codex` it could not launch), the work stays pending, and the next `tt` command on the host retries it. A delivery that could not be confirmed is retried after five minutes by the next `tt` command if its events are still unread, instead of only when another message arrives. Delivered batches still wait for the agent. Before this, a visitor question sent from ChatGPT reached the room but never woke its agents, and a quick follow-up didn't help.
 - Any socket error before Claude's inbox connects now counts as a definite failure, since nothing was sent.
+- An open `tt chat` delivers its room's pending wakes as new events arrive, and at least once a minute, instead of only when it closes. A question from ChatGPT, whose process may not open the agents' sockets, now reaches them within a minute while a console is open, usually within seconds.
+- `tt room brief` marks visitor questions (`request_id`) and answers (`in_reply_to`), so an answer is no longer mistaken for a room broadcast.
 - Delivery results and `tt health` show where a wake failed and the system's code (`connect:EPERM`, `spawn:ENOENT`, `exit:1 rpc:-32603`), drawn from a fixed list, so the next failure explains itself.
 
 ## [0.27.0] — 2026-10-20

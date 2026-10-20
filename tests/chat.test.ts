@@ -695,6 +695,44 @@ describe("tt chat session", () => {
     ).toEqual(["codex:aa"]);
   });
 
+  test("a running console delivers a wake its sender could not", async () => {
+    const delivered: string[] = [];
+    const { root, service } = setupService({ hostId: "host-a", processLivenessChecker: () => "alive",
+      receiverLivenessChecker: () => "gone",
+      nativeWakeTransport: { deliver(request) { delivered.push(request.text); return { outcome: "queued" }; } } });
+    const agent: ProcessMetadata = { host_id: "host-a", pid: 4001, process_started_at: "t", session_kind: "human_guardian",
+      display_name: "claude", harness_name: "claude", harness_session_id: "claude-session", harness_host_id: "host-a",
+      harness_pid: 5001, harness_process_started_at: "t" };
+    const { room_id: roomId } = service.joinPath({ agent_id: "claude:aa", context_path: root, process_metadata: agent });
+    service.registerNativeWakeEndpoint({ agent_id: "claude:aa", room_id: roomId, transport: "claude_inbox",
+      address: "/tmp/claude.sock", secret: "s", harness_session_id: "claude-session", host_id: "host-a" });
+
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let transcript = "";
+    output.on("data", (chunk) => { transcript += chunk.toString(); });
+    const session = runChatSession({
+      runtime: { commands: new TalkingStickCommands(service), close: () => {} },
+      identity: createChatIdentity(), context_path: root, input, output,
+      terminal: false, color: false, history: 10, show_turn_events: false, poll_ms: 5
+    });
+    await until(() => transcript.includes("In the room: claude"));
+
+    // A visitor whose process may not open the agent's socket.
+    const restricted = new TalkingStickService({ dbPath: path.join(root, ".state", "rooms.sqlite"), hostId: "host-a",
+      processLivenessChecker: () => "alive", receiverLivenessChecker: () => "gone",
+      nativeWakeTransport: { deliver: () => ({ outcome: "failed", error: "claude_inbox_unreachable", detail: "connect:EPERM", local: true }) } });
+    cleanups.push(() => restricted.close());
+    const asked = await restricted.askRoom({ agent_id: "codex:desktop", room_id: roomId, to: ["claude:aa"], body: "status?" });
+    expect(asked.deliveries?.[0]).toMatchObject({ error_detail: "connect:EPERM" });
+
+    await until(() => delivered.length === 1);
+    expect(delivered[0]).toContain(`#${asked.event_seq} visitor codex:desktop → you`);
+    input.write("/quit\n");
+    await session;
+    expect(delivered).toHaveLength(1);
+  });
+
   test("room activity counts unread and directed messages and ignores consoles", () => {
     const { root, service } = setupService();
     const room = service.joinPath({ agent_id: "codex:aa", context_path: root });

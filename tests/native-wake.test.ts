@@ -778,6 +778,21 @@ test("wake failure detail is shown only from known codes", async () => {
   }
 });
 
+test("a stale failure detail from an older process never explains a later delivery", async () => {
+  const { service, project } = harness();
+  const roomId = joinPair(service, project);
+  // An older tt recorded success without knowing the detail column.
+  const db = (service as unknown as { db: { prepare(sql: string): { run(...args: unknown[]): unknown } } }).db;
+  db.prepare("UPDATE member_wake_endpoints SET last_status = 'queued', last_error = NULL, last_error_detail = 'connect:EPERM', awaiting_wait = 1, dispatch_event_seq = 1, last_attempt_at = ? WHERE agent_id = 'claude:aa'")
+    .run(new Date().toISOString());
+  const sent = await service.sendMessageAndWake({ agent_id: "human:op:chat:1", room_id: roomId, to_agent_id: "claude:aa", body: "later" });
+  expect(sent.deliveries?.[0]).toMatchObject({ status: "pending" });
+  expect(sent.deliveries?.[0]?.error_detail).toBeUndefined();
+  const health = service.getRoomHealth({ context_path: project, agent_id: "claude:aa" }).wake_endpoints
+    .find((row) => row.agent_id === "claude:aa");
+  expect(health).toMatchObject({ last_status: "queued", last_error_detail: null });
+});
+
 test("a local wake failure stays pending for the next process, once per process", async () => {
   let attempts = 0;
   const { service, project } = harness({ native: () => { attempts += 1; return { outcome: "failed", error: "claude_inbox_unreachable", detail: "connect:EPERM", local: true }; } });
