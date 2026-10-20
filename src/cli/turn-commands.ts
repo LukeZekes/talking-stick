@@ -356,7 +356,7 @@ export function handleStandbyCommand(
       if (result.can_self_wake) {
         return `Standby registered. This turn may end; Talking Stick will wake this session through ${result.wake_transports.join(", ")} for a directed update.`;
       }
-      return "Manual standby registered. It cannot self-wake; run `tt wait --json` to resume.";
+      return "Manual standby registered. It cannot self-wake; run `tt wait --park --json` to stay reachable without claiming a turn.";
     }
   );
 }

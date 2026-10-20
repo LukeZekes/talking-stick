@@ -910,6 +910,55 @@ test("standby reports the transports that can wake the session", () => {
     .toMatchObject({ can_self_wake: true, wake_transports: ["claude_inbox", "cmux"] });
 });
 
+test.each(["success", "replacement"])("standby stops promising an unknown Codex thread until %s", async (recovery) => {
+  let result: NativeWakeResult = { outcome: "failed", error: "codex_thread_not_found", detail: "exit:1 rpc:-32603" };
+  const { service, project, nativeRequests } = harness({ native: () => result });
+  const roomId = joinPair(service, project);
+  service.joinPath({ agent_id: "codex:bb", context_path: project, process_metadata: metadata("codex", "thread-b") });
+  const endpoint = { room_id: roomId, agent_id: "codex:bb", transport: "codex_queue" as const,
+    address: "thread-b", secret: null, harness_session_id: "thread-b", host_id: HOST };
+  service.registerNativeWakeEndpoint(endpoint);
+  const standby = () => service.registerStandby({ room_id: roomId, agent_id: "codex:bb", transport: "manual" });
+  const send = (body: string) => service.sendMessageAndWake({ agent_id: "human:op:chat:1", room_id: roomId,
+    to_agent_id: "codex:bb", body });
+  expect(standby()).toMatchObject({ can_self_wake: true, wake_transports: ["codex_queue"] });
+  await send("missing thread");
+  expect(standby()).toMatchObject({ can_self_wake: false, wake_transports: [] });
+  service.registerNativeWakeEndpoint(endpoint);
+  expect(standby()).toMatchObject({ can_self_wake: false, wake_transports: [] });
+  if (recovery === "success") {
+    result = { outcome: "queued" };
+    await send("retry through the retained endpoint");
+    expect(nativeRequests).toHaveLength(2);
+  } else {
+    service.joinPath({ agent_id: "codex:bb", context_path: project, process_metadata: metadata("codex", "thread-new") });
+    service.registerNativeWakeEndpoint({ ...endpoint, address: "thread-new", harness_session_id: "thread-new" });
+  }
+  expect(standby()).toMatchObject({ can_self_wake: true, wake_transports: ["codex_queue"] });
+});
+
+test("standby keeps a cmux fallback when the Codex thread is unknown", async () => {
+  const { service, project } = harness({ native: () => ({ outcome: "failed", error: "codex_thread_not_found" }) });
+  const roomId = joinPair(service, project);
+  service.joinPath({ agent_id: "codex:bb", context_path: project, process_metadata: metadata("codex", "thread-b") });
+  service.registerNativeWakeEndpoint({ room_id: roomId, agent_id: "codex:bb", transport: "codex_queue",
+    address: "thread-b", secret: null, harness_session_id: "thread-b", host_id: HOST });
+  await service.sendMessageAndWake({ agent_id: "human:op:chat:1", room_id: roomId, to_agent_id: "codex:bb", body: "probe" });
+  expect(service.registerStandby({ room_id: roomId, agent_id: "codex:bb", transport: "cmux", workspace_id: "w", surface_id: "s" }))
+    .toMatchObject({ can_self_wake: true, wake_transports: ["cmux"] });
+});
+
+test("standby retains Codex capability after a sender-local permission denial", async () => {
+  const { service, project } = harness({ native: () => ({ outcome: "failed", error: "codex_unavailable", detail: "spawn:EPERM", local: true }) });
+  const roomId = joinPair(service, project);
+  service.joinPath({ agent_id: "codex:bb", context_path: project, process_metadata: metadata("codex", "thread-b") });
+  service.registerNativeWakeEndpoint({ room_id: roomId, agent_id: "codex:bb", transport: "codex_queue",
+    address: "thread-b", secret: null, harness_session_id: "thread-b", host_id: HOST });
+  await service.sendMessageAndWake({ agent_id: "human:op:chat:1", room_id: roomId, to_agent_id: "codex:bb", body: "probe" });
+  expect(service.registerStandby({ room_id: roomId, agent_id: "codex:bb", transport: "manual" }))
+    .toMatchObject({ can_self_wake: true, wake_transports: ["codex_queue"] });
+});
+
 test("explicit standby rearms the next message without consuming unread events", async () => {
   const { service, project, nativeRequests } = harness();
   const roomId = joinPair(service, project);

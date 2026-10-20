@@ -13,6 +13,7 @@ changes will be called out under **Breaking changes**.
 
 ### Fixed
 
+- `tt standby` no longer promises an automatic Codex wake after the local CLI reports that the session's thread is unknown. It keeps any working cmux fallback; a new session or successful native delivery restores the native capability.
 - A wake that failed in the sending process no longer strands the message. When a failure is the sender's own (a denied socket connect, or a `codex` it could not launch), the work stays pending, and the next `tt` command on the host retries it. A delivery that could not be confirmed is retried after five minutes by the next `tt` command if its events are still unread, instead of only when another message arrives. Delivered batches still wait for the agent. Before this, a visitor question sent from ChatGPT reached the room but never woke its agents, and a quick follow-up didn't help.
 - Any socket error before Claude's inbox connects now counts as a definite failure, since nothing was sent.
 - An open `tt chat` delivers its room's pending wakes as new events arrive, and at least once a minute, instead of only when it closes. A question from ChatGPT, whose process may not open the agents' sockets, now reaches them within a minute while a console is open, usually within seconds.

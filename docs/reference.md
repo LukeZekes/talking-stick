@@ -365,7 +365,11 @@ OpenCode, and Antigravity wake only through cmux.
   wake's `delivery_state`. This does not imply a new wake was submitted.
 - `tt standby` reports `wake_transports`, such as `["claude_inbox"]`, and `can_self_wake`. Its
   `transport` field names only the cmux-or-manual fallback, so `transport: manual` with
-  `can_self_wake: true` means native wake is active.
+  `can_self_wake: true` means a native wake route is registered and has not been ruled out by a
+  definite missing-thread failure. A Codex endpoint whose latest attempt returned
+  `codex_thread_not_found` is omitted until the endpoint changes or delivery succeeds; use one
+  `tt wait --park --json` while `can_self_wake` is false. Sender-local permission failures do not
+  disable the route, because another process on the host may deliver it.
 - `tt health` shows a `Wake:` line with the last delivery status and a fixed error code.
   `last_error_detail` and `delivery_error_detail` add where it failed and the system's code, such as
   `connect:EPERM`, `write:EPIPE`, `spawn:ENOENT`, or `exit:1 rpc:-32603`; only known codes are
