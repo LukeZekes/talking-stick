@@ -11,6 +11,10 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+## [0.24.1] — 2026-10-20
+
+Full notes: [`docs/releases/0.24.1.md`](docs/releases/0.24.1.md).
+
 ### Fixed
 
 - Inline chat keeps the composer anchored at the bottom when closing `/rooms`, `/members`, or `/roles`. New messages reclaim the space left by a closed menu without unnecessary scrolling.
@@ -734,6 +738,7 @@ Initial alpha. Core room protocol, SQLite-backed persistence, multi-process
 contention coverage, MCP smoke coverage, human guardian flow, harness
 installers, and the portable `talking-stick` skill.
 
+[0.24.1]: https://github.com/mostlydev/talking-stick/releases/tag/v0.24.1
 [0.24.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.24.0
 [0.23.1]: https://github.com/mostlydev/talking-stick/releases/tag/v0.23.1
 [0.23.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.23.0
