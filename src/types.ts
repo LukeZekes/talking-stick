@@ -601,6 +601,8 @@ export interface MessageDelivery {
   transport?: NativeWakeTransportName;
   state?: "woken" | "queued" | "ambiguous" | "failed";
   error?: string;
+  /** Where delivery failed and why, e.g. "connect:EPERM" or "exit:1 rpc:-32603". */
+  error_detail?: string;
   interrupt_status?: "injected" | "unsupported";
 }
 
@@ -623,6 +625,7 @@ export interface SendMessageResult {
   delivery_status?: MessageDeliveryStatus;
   delivery_target?: AgentId;
   delivery_error?: string;
+  delivery_error_detail?: string;
   delivery_transport?: NativeWakeTransportName;
   delivery_state?: "woken" | "queued" | "ambiguous" | "failed";
   interrupt_status?: "injected" | "unsupported";
@@ -655,6 +658,8 @@ export interface NativeWakeEndpointSummary {
   last_attempt_at: string | null;
   last_status: NativeWakeState | "failed" | null;
   last_error: string | null;
+  /** Where the last attempt failed and the system's code, e.g. "connect:EPERM". */
+  last_error_detail: string | null;
 }
 
 export interface RegisterWakeEndpointInput {

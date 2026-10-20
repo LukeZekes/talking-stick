@@ -11,6 +11,12 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+### Fixed
+
+- A wake that failed in the sending process no longer strands the message. When a failure is the sender's own (a denied socket connect, or a `codex` it could not launch), the work stays pending, and the next `tt` command on the host retries it. A delivery that could not be confirmed is retried after five minutes by the next `tt` command if its events are still unread, instead of only when another message arrives. Delivered batches still wait for the agent. Before this, a visitor question sent from ChatGPT reached the room but never woke its agents, and a quick follow-up didn't help.
+- Any socket error before Claude's inbox connects now counts as a definite failure, since nothing was sent.
+- Delivery results and `tt health` show where a wake failed and the system's code (`connect:EPERM`, `spawn:ENOENT`, `exit:1 rpc:-32603`), drawn from a fixed list, so the next failure explains itself.
+
 ## [0.27.0] — 2026-10-20
 
 Full notes: [`docs/releases/0.27.0.md`](docs/releases/0.27.0.md).

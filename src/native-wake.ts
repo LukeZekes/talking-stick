@@ -38,6 +38,12 @@ export interface NativeWakeRequest extends NativeWakeRegistration {
 export interface NativeWakeResult {
   outcome: NativeWakeState | "failed";
   error?: string;
+  /** Where it failed and the system's reason, e.g. "connect:EPERM" or
+   * "exit:1 rpc:-32603"; never message text or credentials. */
+  detail?: string;
+  /** A definite failure caused by this sender's own environment (permission
+   * denied, codex not launchable), which another local process may not hit. */
+  local?: boolean;
 }
 
 export interface NativeWakeTransport {
@@ -184,11 +190,19 @@ export function deliverClaudeInbox(request: NativeWakeRequest, options: NativeWa
       socket.destroy();
       resolve(result);
     };
-    const timer = setTimeout(() => finish({ outcome: "ambiguous", error: "claude_inbox_timeout" }),
+    const phase = () => written ? "write" : "connect";
+    // Before the socket connects, no byte can have reached Claude. A missing or
+    // refusing socket means the session is gone; any other early failure (a
+    // denied connect, a hung one) may be this sender's own, so another local
+    // process may still get through.
+    const unsent = (code: string): NativeWakeResult => ({ outcome: "failed", error: "claude_inbox_unreachable",
+      detail: `connect:${code}`, ...(code === "ENOENT" || code === "ECONNREFUSED" ? {} : { local: true }) });
+    const timer = setTimeout(() => finish(written
+      ? { outcome: "ambiguous", error: "claude_inbox_timeout", detail: "write:timeout" } : unsent("timeout")),
       options.timeout_ms ?? CLAUDE_INBOX_TIMEOUT_MS);
     socket.on("error", (error: NodeJS.ErrnoException) => {
-      const definite = !written && ["ENOENT", "ECONNREFUSED", "EACCES"].includes(error.code ?? "");
-      finish({ outcome: definite ? "failed" : "ambiguous", error: definite ? "claude_inbox_unreachable" : "claude_inbox_write_failed" });
+      const code = error.code ?? "unknown";
+      finish(written ? { outcome: "ambiguous", error: "claude_inbox_write_failed", detail: `write:${code}` } : unsent(code));
     });
     socket.on("connect", () => {
       written = true;
@@ -201,7 +215,8 @@ export function deliverClaudeInbox(request: NativeWakeRequest, options: NativeWa
         () => finish({ outcome: "queued" })
       );
     });
-    socket.on("close", () => finish({ outcome: "ambiguous", error: "claude_inbox_closed" }));
+    socket.on("close", () => finish(written
+      ? { outcome: "ambiguous", error: "claude_inbox_closed", detail: "write:closed" } : unsent("closed")));
   });
 }
 
@@ -222,14 +237,18 @@ export function deliverCodexQueue(request: NativeWakeRequest, options: NativeWak
           .catch(() => resolve({ outcome: "queued" }));
         return;
       }
-      if (error.code === "ENOENT" || error.code === "EACCES") {
-        resolve({ outcome: "failed", error: "codex_unavailable" }); return;
+      // A child that never started cannot have queued anything.
+      if (typeof error.code === "string" && ["ENOENT", "EACCES", "EPERM"].includes(error.code)) {
+        resolve({ outcome: "failed", error: "codex_unavailable", detail: `spawn:${error.code}`, local: true }); return;
       }
+      const rpc = /\(code (-?\d{1,6})\)/.exec(stderr)?.[1];
+      const detail = error.killed || error.signal ? `signal:${error.signal ?? "SIGKILL"}`
+        : `exit:${String(error.code)}${rpc ? ` rpc:${rpc}` : ""}`;
       if (!error.killed && !error.signal && typeof error.code === "number" &&
         /thread\/queue\/add failed: failed to read thread: (?:invalid thread-store request: )?no rollout found for thread id [0-9a-f-]{36}(?:\s|$)/i.test(stderr)) {
-        resolve({ outcome: "failed", error: "codex_thread_not_found" }); return;
+        resolve({ outcome: "failed", error: "codex_thread_not_found", detail }); return;
       }
-      resolve({ outcome: "ambiguous", error: error.killed || error.signal ? "codex_queue_timeout" : "codex_queue_failed" });
+      resolve({ outcome: "ambiguous", error: error.killed || error.signal ? "codex_queue_timeout" : "codex_queue_failed", detail });
     });
     child.stdin?.end();
   });

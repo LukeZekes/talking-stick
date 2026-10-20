@@ -350,7 +350,10 @@ OpenCode, and Antigravity wake only through cmux.
   `codex queue` exited 0; Claude may still hold or refuse it per its inbound settings), `woken`
   when Codex accepted a queued submission as a new turn, `ambiguous`
   when a timeout or cut-off write left it unknown, and `failed` when every eligible transport
-  definitely failed. A definite failure releases the batch so a later sender can retry. Neither
+  definitely failed. A definite failure releases the batch so a later sender can retry. When a
+  failure is this sender's own (a socket connect it was denied, or a `codex` it could not launch),
+  the work stays pending, so the next `tt` command on this host, from any process, retries it
+  without another message; the failing process never repeats the same attempt. Neither
   Claude does not confirm that a turn started; a Codex `woken` result confirms turn creation,
   not that the agent read or acted on the message.
 - A message coalesced behind an earlier wake reports `delivery_status: pending` without reusing that
@@ -359,6 +362,9 @@ OpenCode, and Antigravity wake only through cmux.
   `transport` field names only the cmux-or-manual fallback, so `transport: manual` with
   `can_self_wake: true` means native wake is active.
 - `tt health` shows a `Wake:` line with the last delivery status and a fixed error code.
+  `last_error_detail` and `delivery_error_detail` add where it failed and the system's code, such as
+  `connect:EPERM`, `write:EPIPE`, `spawn:ENOENT`, or `exit:1 rpc:-32603`; only known codes are
+  shown, never transport output or message text.
 - Limits: same machine and OS user only. Claude's `crossSessionInbound: refuse` setting drops the
   prompt silently. Codex needs a live local harness process for the app-server start attempt;
   unavailable or unloaded threads keep the queued message. The start call is an experimental
@@ -397,7 +403,9 @@ from later self waits, while audit and history views retain them.
 The token is bound to the receiving member, harness session, and host. Repeated acknowledgement is
 safe; events arriving behind a pending normal batch are delivered after its acknowledgement.
 Interrupt acknowledgement leaves any unrelated normal batch outstanding. New directed work rearms a
-batch unaccepted for five minutes; quiet rooms do not retry on a timer. The room path plus `#seq`
+batch unaccepted for five minutes. A batch whose delivery was never confirmed (`ambiguous`, or its
+sender died first) is also retried after five minutes by the next `tt` command on the host, if its
+events are still unread; a delivered batch keeps waiting for the agent, and nothing retries on a timer. The room path plus `#seq`
 identifies an event for deduplication if an urgent prompt races a running receiver. A handoff
 envelope never substitutes for acquiring a lease and live guardian. Oversized envelopes and cmux use
 the existing body-free pull notification.
