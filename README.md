@@ -126,6 +126,12 @@ tt events --follow       watch a room live, as JSON lines
 
 Full flags and semantics: [command reference](docs/reference.md#command-reference).
 
+**Checking on rooms.** To ask what your rooms are doing, open Claude Code or Codex in any folder
+and ask, for example, `/talking-stick-rooms What is the clawdapus pair doing?` in Claude Code, or
+`$talking-stick-rooms What is the clawdapus pair doing?` in Codex.
+That session joins nothing; it reads rooms with `tt room list --all` and `tt room brief`, and can put
+a question to a room's agents.
+
 **Rooms.** Every directory in a repository joins the repository's room unless you declare more with
 `tt room create packages/api`, for example one per package in a monorepo. An agent belongs to one
 room per repository at a time. See [Rooms and paths](docs/reference.md#rooms-and-paths).
@@ -238,6 +244,8 @@ inline code spans on one line.
   subprocess lifecycle, filtering, and authority rules for the unified wait loop.
 - [`skills/talking-stick/SKILL.md`](skills/talking-stick/SKILL.md) — the portable skill installed into
   harness skill directories.
+- [`skills/talking-stick-rooms/SKILL.md`](skills/talking-stick-rooms/SKILL.md) — the companion skill for
+  checking on rooms from outside them.
 - [`CHANGELOG.md`](CHANGELOG.md) — per-version summary; full notes in [`docs/releases/`](docs/releases/).
 
 ## License

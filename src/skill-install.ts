@@ -28,6 +28,9 @@ import {
 } from "./install.js";
 
 export const DEFAULT_SKILL_NAME = "talking-stick";
+// Installed alongside the default skill wherever it goes.
+export const COMPANION_SKILL_NAMES = ["talking-stick-rooms"] as const;
+export const BUNDLED_SKILL_NAMES: readonly string[] = [DEFAULT_SKILL_NAME, ...COMPANION_SKILL_NAMES];
 export { FILE_SKILL_HARNESSES } from "./harness-model.js";
 export type { FileSkillHarness } from "./harness-model.js";
 
@@ -37,6 +40,8 @@ export interface SkillInstallOptions extends InstallOptions {
   link?: boolean;
   replace?: boolean;
   markOffers?: boolean;
+  /** Sync only: install a missing skill where the default skill is installed. */
+  installBesideDefault?: boolean;
 }
 
 export interface SkillSyncTargetResult {
@@ -62,7 +67,7 @@ export interface RemoveDuplicateSkillOptions extends SkillInstallOptions {
 }
 
 export function resolveBundledSkillPath(options: SkillInstallOptions = {}): string {
-  return options.sourcePath ?? path.resolve(currentPackageDir(), "skills", DEFAULT_SKILL_NAME);
+  return options.sourcePath ?? path.resolve(currentPackageDir(), "skills", options.skillName ?? DEFAULT_SKILL_NAME);
 }
 
 export function resolveSharedAgentsSkillsDir(
@@ -472,6 +477,14 @@ function syncInstalledFileSkill(
       : resolveHarnessConfigDir(harness, options);
 
   try {
+    // A companion skill appears beside an existing default install, so an
+    // update brings it without another tt install.
+    const defaultTarget = path.join(path.dirname(targetPath), DEFAULT_SKILL_NAME);
+    if (options.installBesideDefault && fs.existsSync(harnessRootPath) && !fs.existsSync(targetPath) &&
+        fs.lstatSync(targetPath, { throwIfNoEntry: false }) === undefined && fs.existsSync(defaultTarget)) {
+      installSkillDirectory(sourcePath, targetPath, undefined, fs.lstatSync(defaultTarget).isSymbolicLink(), options);
+      return { harness, targetPath, status: "updated", message: `installed beside ${DEFAULT_SKILL_NAME}` };
+    }
     if (!fs.existsSync(harnessRootPath) || !fs.existsSync(targetPath)) {
       return {
         harness,

@@ -122,6 +122,7 @@ export {
 } from "./grok-session-store.js";
 export {
   FILE_SKILL_HARNESSES,
+  BUNDLED_SKILL_NAMES,
   DEFAULT_SKILL_NAME,
   removeDuplicateSkillInstalls,
   planSkillInstall,
