@@ -1,4 +1,5 @@
 import { runGrokInboxHookCommand } from "./grok-inbox-hook.js";
+import { runCodexInboxHookCommand } from "./codex-inbox-hook.js";
 import { runSessionHookCommand } from "./session-hook.js";
 import { runInterruptHookCommand } from "./interrupt-hook.js";
 import { handleRoomCommand } from "./room-admin.js";
@@ -58,6 +59,11 @@ export interface CommandEntry {
 }
 
 export const COMMAND_REGISTRY: CommandEntry[] = [
+  {
+    name: "codex-inbox-hook", needsRuntime: false, startupMaintenance: false, internal: true,
+    usage: "tt codex-inbox-hook", description: "Deliver unread room events at Codex turn end.",
+    handler: () => runCodexInboxHookCommand()
+  },
   {
     name: "session-hook", needsRuntime: false, startupMaintenance: false, internal: true,
     usage: "tt session-hook <claude|codex|grok>", description: "Track exact harness session lifecycle.",

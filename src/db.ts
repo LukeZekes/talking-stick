@@ -380,6 +380,17 @@ const migrations: Migration[] = [
       PRIMARY KEY (room_id, subject)
     );
     ALTER TABLE path_rooms ADD COLUMN roles_version INTEGER NOT NULL DEFAULT 0;`
+  },
+  {
+    id: 22,
+    name: "codex_turn_activity",
+    up: `CREATE TABLE codex_turn_activity (
+      session_id TEXT NOT NULL, host_id TEXT NOT NULL, pid INTEGER NOT NULL,
+      process_started_at TEXT NOT NULL, turn_id TEXT NOT NULL,
+      active INTEGER NOT NULL, updated_at TEXT NOT NULL,
+      last_hook_event_seq INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (session_id, host_id, pid, process_started_at)
+    );`
   }
 ];
 

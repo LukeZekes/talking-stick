@@ -317,6 +317,11 @@ export function mergeSessionHooks(existing: string | null, harness: string, remo
   const marker = `talking-stick-lifecycle-${harness}`;
   const lifecycle = mergeMarkedHooks(existing, marker, ["SessionStart", "SessionEnd"],
     `: ${marker}; if command -v tt >/dev/null 2>&1; then tt session-hook ${harness} >/dev/null 2>/dev/null || true; fi`, remove);
+  if (harness === "codex" && lifecycle !== null) {
+    const inbox = "talking-stick-inbox-codex";
+    return mergeMarkedHooks(lifecycle, inbox, ["UserPromptSubmit", "Stop", "Interrupt"],
+      `: ${inbox}; if command -v tt >/dev/null 2>&1; then tt codex-inbox-hook 2>/dev/null || true; fi`, remove);
+  }
   if (harness !== "claude" || lifecycle === null) return lifecycle;
   // Tool-boundary interrupts from tt chat. A shell glob keeps the common case
   // (no pending flag) free of a node process on every tool call.

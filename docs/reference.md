@@ -304,6 +304,23 @@ OpenCode, and Antigravity wake only through cmux.
 
 ## Native event delivery
 
+`tt install codex` also installs turn hooks; review and trust the new entries in Codex `/hooks`.
+Once a session's `UserPromptSubmit` hook has run, ordinary room events stay in the unread store
+while Codex is active. At `Stop`, the hook continues the turn with only events still unread and
+unreserved; events already read by `tt wait` do not produce stale queued prompts. A high-water
+mark prevents repeated continuations for an unacknowledged envelope. `Interrupt` clears active
+state. Hooks never join rooms, claim the stick, create a database, or migrate it.
+
+Without trusted hooks, native queue delivery works as before. The session's own CLI calls refresh
+active evidence; guardian heartbeats and other members' observations do not. Evidence expires after
+five minutes without a hook or session command: a later dispatch can use the queue if a hook failed
+or the session stopped reporting. A long tool call without CLI activity can still receive a queued
+envelope. Unacknowledged Stop reservations also expire after five minutes; if a continuation was lost,
+a later dispatch can retry those events. The hooks run at turn boundaries rather than on every tool call.
+Explicit urgent delivery keeps
+its existing behavior. These hooks reduce duplicate delivery; they cannot retract a prompt that
+was already submitted to Codex. Existing chats and harnesses need a restart after updating.
+
 Claude Code and Codex native wakes carry complete, attributed room events in a bounded plain-text
 envelope: a `[talking-stick] room <path> · ack: tt ack <token>` header, one
 `#seq sender → you|room` line per event with its content indented two spaces beneath, and a closing

@@ -540,6 +540,10 @@ export class TalkingStickService {
     const key = [input.harness, `harness:${input.sessionId}`, this.hostId,
       input.pid, input.processStartedAt.trim()] as const;
     return withImmediateTransaction(this.db, () => {
+      if (input.harness === "codex") {
+        this.db.prepare(`DELETE FROM codex_turn_activity WHERE session_id = ? AND host_id = ?
+          AND pid = ? AND process_started_at = ?`).run(key[1], key[2], key[3], key[4]);
+      }
       if (input.event === "SessionStart") {
         this.db.prepare(`DELETE FROM ended_harness_sessions WHERE harness_name = ?
           AND session_id = ? AND host_id = ? AND pid = ? AND process_started_at = ?`).run(...key);
@@ -2519,6 +2523,13 @@ export class TalkingStickService {
     const reservation = withImmediateTransaction(this.db, () => {
       const member = this.getMember(roomId, agentId);
       if (!member) return null;
+      if (member.harness_name === "codex" && !this.hasQueueableCodexEvent(roomId, agentId)) {
+        this.clearReadWake(roomId, agentId);
+        return null;
+      }
+      // A trusted hook will read still-unconsumed events at turn end. Queuing
+      // them now would leave an unretractable stale prompt if tt wait reads first.
+      if (this.codexTurnActive(member)) return null;
       const receiver = this.db.prepare<[string, string], RoomReceiverRow>(
         "SELECT * FROM room_receivers WHERE room_id = ? AND agent_id = ?"
       ).get(roomId, agentId);
@@ -2558,6 +2569,17 @@ export class TalkingStickService {
       if (current?.batch_id !== batchId || current.generation !== endpoint.generation) return;
       const member = this.getMember(roomId, agentId);
       if (!member || !this.usableNativeWakeEndpoints(roomId, member).some((row) => row.transport === endpoint.transport)) return;
+      if (this.codexTurnActive(member)) {
+        // A prompt started after our reservation (or during a failed transport).
+        // Return only our batch to pending so the Stop hook can reserve it.
+        withImmediateTransaction(this.db, () => {
+          const changed = this.db.prepare(`UPDATE member_wake_endpoints SET awaiting_wait = 0,
+            wake_pending = 1, batch_id = NULL WHERE room_id = ? AND agent_id = ? AND batch_id = ?`)
+            .run(roomId, agentId, batchId);
+          if (changed.changes) this.db.prepare("DELETE FROM native_delivery_batches WHERE token = ?").run(batchId);
+        });
+        return;
+      }
       if (endpoint.transport === "cmux" && wakeReason !== "interrupt" &&
           !(member.wait_intent === "parked" && member.standby_transport === "cmux")) return;
       const result = await this.deliverWakeEndpoint(endpoint, text, false, steer);
@@ -2620,6 +2642,120 @@ export class TalkingStickService {
     return { outcome: result.outcome, ...(safeError ? { error: safeError } : {}) };
   }
 
+  private codexTurnActive(member: RoomMemberRow): boolean {
+    if (member.harness_name !== "codex" || !member.harness_session_id || !member.harness_pid ||
+        !member.harness_process_started_at) return false;
+    const row = this.db.prepare(`SELECT active, updated_at FROM codex_turn_activity
+      WHERE session_id = ? AND host_id = ? AND pid = ? AND process_started_at = ?`)
+      .get(member.harness_session_id, member.harness_host_id ?? member.host_id ?? this.hostId,
+        member.harness_pid, member.harness_process_started_at.trim()) as { active: number; updated_at: string } | undefined;
+    const age = row ? this.now().getTime() - Date.parse(row.updated_at) : NaN;
+    // Missed/disabled hooks must not suppress native wakes indefinitely.
+    return row?.active === 1 && age >= 0 && age < 5 * 60_000;
+  }
+
+  private hasQueueableCodexEvent(roomId: string, agentId: string): boolean {
+    return !!this.db.prepare(`SELECT 1 FROM native_event_receipts n
+      WHERE n.room_id = ? AND n.agent_id = ? AND n.consumed_at IS NULL AND NOT EXISTS (
+        SELECT 1 FROM native_delivery_batches b, json_each(b.event_seqs_json) j
+        WHERE b.room_id = n.room_id AND b.agent_id = n.agent_id AND j.value = n.event_seq
+          AND b.source = 'codex_hook' AND b.acknowledged_at IS NULL AND b.created_at > ?)
+      LIMIT 1`).get(roomId, agentId, new Date(this.now().getTime() - 5 * 60_000).toISOString());
+  }
+
+  private clearReadWake(roomId: string, agentId: string): void {
+    this.db.prepare(`UPDATE member_wake_endpoints SET wake_pending = 0, wake_event_seq = NULL,
+      wake_reason = NULL, wake_from_agent_id = NULL WHERE room_id = ? AND agent_id = ?
+        AND awaiting_wait = 0 AND NOT EXISTS (SELECT 1 FROM native_event_receipts
+          WHERE room_id = ? AND agent_id = ? AND consumed_at IS NULL)`)
+      .run(roomId, agentId, roomId, agentId);
+  }
+
+  /** Records trusted Codex hooks without joining rooms or acquiring a turn. */
+  handleCodexTurnHook(input: {
+    sessionId: string; pid: number; processStartedAt: string; turnId: string;
+    event: "UserPromptSubmit" | "Stop" | "Interrupt";
+  }): string | null {
+    if (!input.sessionId.trim() || !input.turnId.trim() || !input.processStartedAt.trim() ||
+        !Number.isSafeInteger(input.pid) || input.pid <= 1) return null;
+    const key = [`harness:${input.sessionId}`, this.hostId, input.pid, input.processStartedAt.trim()] as const;
+    return withImmediateTransaction(this.db, () => {
+      const timestamp = this.now().toISOString();
+      if (input.event === "UserPromptSubmit") {
+        this.db.prepare(`INSERT INTO codex_turn_activity
+          (session_id, host_id, pid, process_started_at, turn_id, active, updated_at)
+          VALUES (?, ?, ?, ?, ?, 1, ?) ON CONFLICT(session_id, host_id, pid, process_started_at)
+          DO UPDATE SET turn_id = excluded.turn_id, active = 1, updated_at = excluded.updated_at`)
+          .run(...key, input.turnId, timestamp);
+        return null;
+      }
+      const activity = this.db.prepare(`SELECT * FROM codex_turn_activity
+        WHERE session_id = ? AND host_id = ? AND pid = ? AND process_started_at = ? AND turn_id = ?`)
+        .get(...key, input.turnId) as { last_hook_event_seq: number; active: number } | undefined;
+      if (!activity || activity.active !== 1) return null;
+      const idle = () => this.db.prepare(`UPDATE codex_turn_activity SET active = 0, updated_at = ?
+        WHERE session_id = ? AND host_id = ? AND pid = ? AND process_started_at = ? AND turn_id = ?`)
+        .run(timestamp, ...key, input.turnId);
+      if (input.event === "Interrupt") { idle(); return null; }
+      const members = this.db.prepare(`SELECT m.* FROM room_members m JOIN path_rooms r ON r.room_id = m.room_id
+        WHERE m.harness_name = 'codex' AND m.harness_session_id = ? AND m.harness_host_id = ?
+          AND m.harness_pid = ? AND trim(m.harness_process_started_at) = ? AND r.state != 'closed'`)
+        .all(...key) as RoomMemberRow[];
+      const pending: Array<{ member: RoomMemberRow; event: RoomEventRow }> = [];
+      for (const member of members) {
+        // Ambiguous local identities never receive one another's hook feedback.
+        if (members.filter(candidate => candidate.room_id === member.room_id).length !== 1) continue;
+        const events = this.db.prepare(`SELECT e.* FROM room_events e JOIN native_event_receipts n
+          ON n.room_id = e.room_id AND n.event_seq = e.event_seq
+          WHERE n.room_id = ? AND n.agent_id = ? AND n.consumed_at IS NULL AND e.event_seq > ?
+            AND NOT EXISTS (
+              SELECT 1 FROM native_delivery_batches b, json_each(b.event_seqs_json) j
+              WHERE b.room_id = n.room_id AND b.agent_id = n.agent_id AND j.value = n.event_seq
+                AND b.acknowledged_at IS NULL AND (
+                  (b.source = 'codex_hook' AND b.created_at > ?)
+                  OR (b.source = 'native' AND (EXISTS (SELECT 1 FROM member_wake_endpoints w
+                  WHERE w.room_id = b.room_id AND w.agent_id = b.agent_id AND w.batch_id = b.token AND w.awaiting_wait = 1)
+                  OR EXISTS (SELECT 1 FROM interrupt_deliveries i WHERE i.room_id = n.room_id
+                    AND i.agent_id = n.agent_id AND i.event_seq = n.event_seq
+                    AND i.status IN ('dispatching', 'queued', 'woken', 'ambiguous')))))
+            ) ORDER BY e.event_seq LIMIT 32`)
+          .all(member.room_id, member.agent_id, activity.last_hook_event_seq,
+            new Date(this.now().getTime() - 5 * 60_000).toISOString()) as RoomEventRow[];
+        pending.push(...events.map(event => ({ member, event })));
+      }
+      const selected = pending.sort((a, b) => a.event.event_seq - b.event.event_seq).slice(0, 32);
+      if (!selected.length) {
+        for (const member of members) this.clearReadWake(member.room_id, member.agent_id);
+        idle();
+        return null;
+      }
+      const grouped = new Map<string, { member: RoomMemberRow; seqs: number[] }>();
+      for (const { member, event } of selected) {
+        const group = grouped.get(member.room_id) ?? { member, seqs: [] };
+        group.seqs.push(event.event_seq);
+        grouped.set(member.room_id, group);
+      }
+      const texts: string[] = [];
+      for (const [roomId, { member, seqs }] of grouped) {
+        const token = this.newDeliveryToken();
+        const text = this.prepareNativeEnvelope(roomId, member.agent_id, seqs, token);
+        if (text) {
+          this.db.prepare("UPDATE native_delivery_batches SET source = 'codex_hook', created_at = ? WHERE token = ?")
+            .run(timestamp, token);
+          texts.push(text);
+        } else {
+          texts.push(`[talking-stick] A room event exceeds hook capacity. Run tt wait --in ${roomId} --json to read it.`);
+        }
+      }
+      // Keep active across the Stop→continuation gap. The high-water survives
+      // continuation prompts, so an unacknowledged envelope never loops.
+      this.db.prepare(`UPDATE codex_turn_activity SET active = 1, updated_at = ?, last_hook_event_seq = ?
+        WHERE session_id = ? AND host_id = ? AND pid = ? AND process_started_at = ?`)
+        .run(timestamp, selected.at(-1)!.event.event_seq, ...key);
+      return texts.join("\n\n");
+    });
+  }
+
   private newDeliveryToken(): string {
     const taken = this.db.prepare<[string], { found: number }>(
       "SELECT 1 AS found FROM native_delivery_batches WHERE token = ?");
@@ -2634,10 +2770,13 @@ export class TalkingStickService {
     const rows = exactSeqs
       ? exactSeqs.map(seq => this.db.prepare<[number, string], RoomEventRow>(
           "SELECT * FROM room_events WHERE event_seq = ? AND room_id = ?").get(seq, roomId)).filter((row): row is RoomEventRow => !!row)
-      : this.db.prepare<[string, string], RoomEventRow>(`SELECT e.* FROM room_events e
+      : this.db.prepare<[string, string, string], RoomEventRow>(`SELECT e.* FROM room_events e
           JOIN native_event_receipts n ON n.event_seq = e.event_seq AND n.room_id = e.room_id
           WHERE n.room_id = ? AND n.agent_id = ? AND n.consumed_at IS NULL
-          ORDER BY e.event_seq LIMIT 33`).all(roomId, agentId);
+            AND NOT EXISTS (SELECT 1 FROM native_delivery_batches b, json_each(b.event_seqs_json) j
+              WHERE b.room_id = n.room_id AND b.agent_id = n.agent_id AND j.value = n.event_seq
+                AND b.source = 'codex_hook' AND b.acknowledged_at IS NULL AND b.created_at > ?)
+          ORDER BY e.event_seq LIMIT 33`).all(roomId, agentId, new Date(this.now().getTime() - 5 * 60_000).toISOString());
     const text = formatNativeEventText({ token, room_id: roomId, path: this.requireRoom(roomId).canonical_path,
       recipient: agentId, events: rows.map(row => this.mapEvent(row)) });
     if (!text) return null;
@@ -2720,7 +2859,7 @@ export class TalkingStickService {
     });
   }
 
-  acknowledgeNativeDelivery(input: { agent_id: string; token: string; harness_session_id?: string | null; host_id?: string | null }) {
+  acknowledgeNativeDelivery(input: { agent_id: string; token: string; harness_session_id?: string | null; host_id?: string | null; process_metadata?: ProcessMetadata }) {
     return withImmediateTransaction(this.db, () => {
       const batch = this.db.prepare<[string], { room_id: string; agent_id: string; harness_session_id: string;
         host_id: string; event_seqs_json: string; acknowledged_at: string | null }>(
@@ -2733,7 +2872,7 @@ export class TalkingStickService {
           batch.host_id !== (member.harness_host_id ?? member.host_id ?? this.hostId)) {
         throw new ProtocolError("invalid_input", "Delivery token does not belong to this harness session.");
       }
-      this.touchKnownMember(batch.room_id, input.agent_id, this.now().toISOString());
+      this.touchKnownMember(batch.room_id, input.agent_id, this.now().toISOString(), input.process_metadata);
       const seqs = JSON.parse(batch.event_seqs_json) as number[];
       if (batch.acknowledged_at) return { status: "already_acknowledged", event_seqs: seqs };
       const events = seqs.map(seq => this.db.prepare<[number, string], RoomEventRow>(
@@ -2753,6 +2892,14 @@ export class TalkingStickService {
       this.db.prepare(`UPDATE member_wake_endpoints SET awaiting_wait = 0, wake_pending = ?, batch_id = NULL,
         wake_event_seq = ?, wake_reason = ?, wake_from_agent_id = NULL WHERE room_id = ? AND agent_id = ? AND batch_id = ?`)
         .run(pending ? 1 : 0, pending ?? null, pending ? "room_update" : null, batch.room_id, input.agent_id, input.token);
+      if (!pending) {
+        // A hook batch has no endpoint batch_id. Clear leftover pending flags
+        // after its exact receipts are consumed, preserving native reservations.
+        this.db.prepare(`UPDATE member_wake_endpoints SET wake_pending = 0,
+          wake_event_seq = NULL, wake_reason = NULL, wake_from_agent_id = NULL
+          WHERE room_id = ? AND agent_id = ? AND awaiting_wait = 0`)
+          .run(batch.room_id, input.agent_id);
+      }
       if (pending) this.wakeRooms.add(batch.room_id);
       return { status: "acknowledged", event_seqs: seqs };
     });
@@ -3961,6 +4108,17 @@ export class TalkingStickService {
       hasExactProcessIdentity(normalized) ||
       hasHarnessProcessIdentity(normalized);
 
+    // Only that session's own CLI use refreshes turn evidence. Guardians and
+    // observations of another member must not keep a missed Stop alive forever.
+    if ((existing || options.allowCreate) && normalized.session_kind === "harness_cli" &&
+        normalized.harness_name === "codex" && normalized.harness_host_id === this.hostId &&
+        normalized.harness_session_id && normalized.harness_pid && normalized.harness_process_started_at) {
+      this.db.prepare(`UPDATE codex_turn_activity SET updated_at = ? WHERE session_id = ?
+        AND host_id = ? AND pid = ? AND process_started_at = ? AND active = 1`)
+        .run(timestamp, normalized.harness_session_id, this.hostId, normalized.harness_pid,
+          normalized.harness_process_started_at.trim());
+    }
+
     if (existing && hasIdentity && normalized.harness_session_id &&
       (normalized.harness_session_id !== existing.harness_session_id ||
        normalized.harness_host_id !== existing.harness_host_id)) {
@@ -5047,6 +5205,15 @@ export class TalkingStickService {
   }
 
   private purgeExpiredIdleRooms(now: Date): void {
+    // Hook state can precede enrollment. Bound abandoned, unjoined sessions;
+    // enrolled sessions keep their high-water until their lifecycle hook ends.
+    this.db.prepare(`DELETE FROM codex_turn_activity WHERE updated_at < ? AND NOT EXISTS (
+      SELECT 1 FROM room_members m WHERE m.harness_name = 'codex'
+        AND m.harness_session_id = codex_turn_activity.session_id
+        AND m.harness_host_id = codex_turn_activity.host_id
+        AND m.harness_pid = codex_turn_activity.pid
+        AND trim(m.harness_process_started_at) = codex_turn_activity.process_started_at)`)
+      .run(new Date(now.getTime() - 30 * 24 * 60 * 60_000).toISOString());
     // A timestamp alone is not evidence that a still-running old listener is
     // harmless. Reclaim process tombstones only after exact process death;
     // room/agent tombstones continue to block metadata-less old receivers.
