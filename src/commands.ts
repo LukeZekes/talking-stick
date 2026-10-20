@@ -20,6 +20,7 @@ import type {
   ListNotesResult,
   ListRoomsInput,
   ListRoomsResult,
+  Note,
   RoomActivity,
   PassStickInput,
   PassStickResult,
@@ -208,6 +209,10 @@ export class TalkingStickCommands {
 
   getRoomActivity(input: { room_id: string }): RoomActivity {
     return this.service.getRoomActivity(input);
+  }
+
+  getOpenNotes(input: { room_id: string; limit: number }): { notes: Note[]; total: number } {
+    return this.service.getOpenNotes(input);
   }
 
   joinPath(

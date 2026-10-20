@@ -412,6 +412,21 @@ export class TalkingStickService {
     };
   }
 
+  // The newest open notes, oldest first, with the true open count; read-only
+  // like getRoomActivity.
+  getOpenNotes(input: { room_id: string; limit: number }): { notes: Note[]; total: number } {
+    this.requireRoom(input.room_id);
+    const rows = this.db
+      .prepare<[string, number], NoteRow>(
+        "SELECT * FROM notes WHERE room_id = ? AND resolved_at IS NULL ORDER BY created_at DESC, note_id DESC LIMIT ?"
+      )
+      .all(input.room_id, Math.max(input.limit, 0));
+    const total = this.db
+      .prepare<[string], { total: number }>("SELECT COUNT(*) AS total FROM notes WHERE room_id = ? AND resolved_at IS NULL")
+      .get(input.room_id)!.total;
+    return { notes: rows.reverse().map((row) => mapNoteRow(row)), total };
+  }
+
   joinPath(input: JoinPathInput): JoinPathResult {
     assertNonEmpty(input.agent_id, "agent_id");
     assertNonEmpty(input.context_path, "context_path");
