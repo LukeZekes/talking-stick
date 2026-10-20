@@ -206,6 +206,7 @@ export {
   detectNativeWakeEndpoints,
   formatNativeWakeText,
   formatNativeEventText,
+  newDeliveryToken,
   type NativeWakeOptions,
   type NativeWakeReason,
   type NativeWakeRegistration,

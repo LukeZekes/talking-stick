@@ -26,6 +26,7 @@ import {
   NATIVE_WAKE_TRANSPORTS,
   formatNativeWakeText,
   formatNativeEventText,
+  newDeliveryToken,
   type NativeWakeReason,
   type NativeWakeResult,
   type NativeWakeState,
@@ -2530,7 +2531,7 @@ export class TalkingStickService {
         return null;
       }
       if (!endpoints.some((row) => row.wake_pending && !row.awaiting_wait)) return null;
-      const batchId = randomUUID();
+      const batchId = this.newDeliveryToken();
       this.db.prepare(`UPDATE member_wake_endpoints SET wake_pending = 0, awaiting_wait = 1,
         batch_id = ?, batch_started_at = ?, dispatch_event_seq = wake_event_seq, last_status = NULL, last_error = NULL
         WHERE room_id = ? AND agent_id = ?`).run(batchId, this.now().toISOString(), roomId, agentId);
@@ -2619,7 +2620,15 @@ export class TalkingStickService {
     return { outcome: result.outcome, ...(safeError ? { error: safeError } : {}) };
   }
 
-  private prepareNativeEnvelope(roomId: string, agentId: string, exactSeqs?: number[], token = randomUUID()): string | null {
+  private newDeliveryToken(): string {
+    const taken = this.db.prepare<[string], { found: number }>(
+      "SELECT 1 AS found FROM native_delivery_batches WHERE token = ?");
+    let token = newDeliveryToken();
+    while (taken.get(token)) token = newDeliveryToken();
+    return token;
+  }
+
+  private prepareNativeEnvelope(roomId: string, agentId: string, exactSeqs?: number[], token = this.newDeliveryToken()): string | null {
     const member = this.getMember(roomId, agentId);
     if (!member) return null;
     const rows = exactSeqs
@@ -2682,7 +2691,7 @@ export class TalkingStickService {
         WHERE n.room_id = ? AND n.agent_id = ? AND n.consumed_at IS NULL ORDER BY e.event_seq LIMIT 32`)
         .all(room.room_id, member.agent_id);
       if (pending.length === 0) return null;
-      const token = randomUUID();
+      const token = this.newDeliveryToken();
       const selected: RoomEventRow[] = [];
       for (const row of pending) {
         const candidate = formatNativeEventText({ token, room_id: room.room_id, path: room.canonical_path,
@@ -2836,6 +2845,7 @@ export class TalkingStickService {
     const deadline = Date.now() + maxWaitMs;
 
     while (true) {
+      if (input.signal?.aborted) return { events: [], cursor_event_seq: afterEventSeq };
       const events = this.queryEvents({
         room_id: input.room_id,
         after_event_seq: afterEventSeq,

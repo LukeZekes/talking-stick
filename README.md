@@ -117,7 +117,7 @@ session natively — no keystrokes typed, no model polling while idle.
 | Antigravity, OpenCode, Gemini | cmux only |
 
 Claude Code and Codex wakes, and Grok's active-turn hooks, carry the message itself in a compact
-envelope, so the agent answers from what it received and acknowledges with `tt ack <token> --json`
+envelope, so the agent answers from what it received and acknowledges with `tt ack <token>`
 instead of fetching again. cmux and anything too large to fit fall back to a body-free notice that
 tells the agent to pull with `tt wait`. Details in
 [Waking idle agents](docs/reference.md#waking-idle-agents).

@@ -177,8 +177,11 @@ async function followEvents(
 ): Promise<void> {
   let cursor = input.after_event_seq ?? 0;
   let shouldExit = false;
+  // A long-poll can run for minutes; a signal ends it at the next poll.
+  const stop = new AbortController();
   const markExit = () => {
     shouldExit = true;
+    stop.abort();
   };
 
   process.once("SIGTERM", markExit);
@@ -189,7 +192,8 @@ async function followEvents(
     while (!shouldExit) {
       const result = await runtime.commands.waitForEvents({
         ...input,
-        after_event_seq: cursor
+        after_event_seq: cursor,
+        signal: stop.signal
       });
       if (result.events.length > 0) {
         writeEventLines(parsed, result.events);

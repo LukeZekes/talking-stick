@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import net from "node:net";
 import { attachmentInstruction, payloadAttachments } from "./attachments.js";
 import { startQueuedCodexThread } from "./codex-queue-start.js";
@@ -85,6 +86,15 @@ export function formatNativeWakeText(input: {
   }
 }
 
+// Agents copy the token into every acknowledgement, so it is short: eight
+// characters from a 32-symbol alphabet without look-alikes (l, o, 0, 1).
+// The service rejects a token already held by a stored batch.
+const DELIVERY_TOKEN_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789";
+
+export function newDeliveryToken(): string {
+  return [...randomBytes(8)].map((byte) => DELIVERY_TOKEN_ALPHABET[byte & 31]).join("");
+}
+
 // Compact, attributed plain text: an agent reads a two-line chat message for
 // a few dozen tokens instead of a JSON document. Every line of room content is
 // indented, so nothing a sender writes can start a line that looks like an
@@ -94,7 +104,7 @@ export function formatNativeEventText(input: {
 }): string | null {
   if (input.events.length === 0 || input.events.length > 32) return null;
   const quote = (text: string) => text.replace(/\r\n?/g, "\n").replace(/\s+$/, "").split("\n").map((line) => `  ${line}`);
-  const lines = [`[talking-stick] room ${input.path} · ack: tt ack ${input.token} --json`];
+  const lines = [`[talking-stick] room ${input.path} · ack: tt ack ${input.token}`];
   for (const event of input.events) {
     const payload = (event.payload ?? {}) as { body?: unknown; delivery_hint?: unknown; recipients?: unknown };
     const recipients = Array.isArray(payload.recipients) ? payload.recipients.filter((id): id is string => typeof id === "string") : [];

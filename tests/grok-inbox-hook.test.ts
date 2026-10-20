@@ -30,7 +30,7 @@ function setup() {
     return output ? JSON.parse(output).hookSpecificOutput : null;
   };
   const ack = (text: string) => service.acknowledgeNativeDelivery({ agent_id: "grok:test",
-    token: text.match(/tt ack ([a-f0-9-]+) --json/)![1], harness_session_id: "harness:grok-session", host_id: "test-host" });
+    token: text.match(/tt ack ([a-km-np-z2-9]{8})\n/)![1], harness_session_id: "harness:grok-session", host_id: "test-host" });
   return { root, service, room, send, hook, ack };
 }
 

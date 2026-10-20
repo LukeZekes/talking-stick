@@ -1364,6 +1364,31 @@ describe("tt turn commands", () => {
     ])).rejects.toThrow("No cmux caller context is available");
   });
 
+  // Issue #67: an unreachable cmux socket must never reach JSON stdout, even
+  // when the cmux binary itself writes its error there. Real subprocesses,
+  // so a child inheriting the CLI's stdout would show up here.
+  test("--json stdout stays parseable when cmux prints socket errors", async () => {
+    const { project } = setupIsolatedCli(tempDirs);
+    const fakeBin = path.join(path.dirname(project), "fake-bin");
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "cmux"),
+      "#!/bin/sh\necho 'Error: cmux socket not found'\necho 'Error: cmux socket not found' >&2\nexit 1\n");
+    fs.chmodSync(path.join(fakeBin, "cmux"), 0o755);
+    const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`, CMUX_TAB_ID: "tab-1", CMUX_AGENT_LAUNCH_KIND: "claude" };
+    const agent = ["--agent", "human:watcher", "--json"];
+
+    for (const argv of [["join", project], ["standby", project], ["msg", "send", "room", "hello", "--in", project], ["state", project], ["health", project]]) {
+      const { stdout } = await runCliProcess([...argv, ...agent], "", env);
+      expect(stdout).not.toContain("cmux socket");
+      expect(() => JSON.parse(stdout)).not.toThrow();
+    }
+
+    const strict = spawnCliProcess(["standby", project, "--wake", "cmux", ...agent], "", env);
+    expect((await waitForProcessClose(strict.child)).code).not.toBe(0);
+    expect(strict.stdout()).toBe("");
+    expect(strict.stderr()).toContain("Unable to verify the caller's cmux surface");
+  });
+
   test("tt standby rejects an active owner until the turn is released", async () => {
     const { project } = setupIsolatedCli(tempDirs);
     await seedCliLease(project, "human:owner");
@@ -2938,6 +2963,28 @@ describe("tt msg", () => {
     expect(watcher.stderr()).toContain(
       `cursor_event_seq=${event.event_seq}`
     );
+  });
+
+  test("tt events --follow stops promptly mid long-poll and reports its cursor", async () => {
+    const { project } = setupIsolatedCli(tempDirs);
+    const roomId = seedCliRoomMembers(project, [{ agent_id: "human:sender", display_name: "sender" }]);
+    sendCliTestMessage(roomId, "human:sender", null, "before the watch");
+    const service = new TalkingStickService();
+    const head = service.getLatestEventSeq({ room_id: roomId });
+    service.close();
+    // No --timeout: the default long-poll lasts 110s, which SIGTERM must cut short.
+    const watcher = spawnCliProcess(["events", project, "--follow", "--after", String(head), "--target", "any",
+      "--agent", "human:watcher", "--json"]);
+    sendCliTestMessage(roomId, "human:sender", null, "live");
+    const event = JSON.parse(await waitForFirstStdoutLine(watcher));
+    expect(event.payload.body).toBe("live");
+
+    const started = Date.now();
+    const closePromise = waitForProcessClose(watcher.child);
+    watcher.child.kill("SIGTERM");
+    expect(await closePromise).toMatchObject({ code: 0, signal: null });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(watcher.stderr()).toContain(`cursor_event_seq=${event.event_seq}`);
   });
 
   test("tt msg recv stays messages-only when a turn is passed", async () => {

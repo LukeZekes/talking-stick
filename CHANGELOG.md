@@ -11,6 +11,16 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+### Changed
+
+- Native delivery envelopes use eight-character ack tokens, and the header command drops `--json`: `tt ack k3f9x2qd` instead of a 36-character UUID with a flag. Harness calls already print JSON. Tokens from earlier envelopes still acknowledge by exact match.
+
+### Fixed
+
+- `tt events --follow` and `tt msg recv --follow` stop within a poll interval of SIGINT or SIGTERM instead of finishing a long-poll of up to 110 seconds first.
+- Documented how to watch a room live with `tt events --follow`: it starts at the head, prints one JSON event per line, and reports its cursor on stderr. `tt state --json` gives the head sequence (#66).
+- Added a subprocess regression test that keeps `--json` stdout parseable when `cmux` prints socket errors (#67).
+
 ## [0.24.1] — 2026-10-20
 
 Full notes: [`docs/releases/0.24.1.md`](docs/releases/0.24.1.md).

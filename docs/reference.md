@@ -196,6 +196,15 @@ tt wait --json
   shared work remains. Do not add short explicit timeouts.
 - `tt events --wait`, `tt events --follow`, and `tt msg recv` remain available for human audit and
   debugging. Agents should not run them beside `tt wait` as a second receive loop.
+- To watch a room live, run `tt events --follow --target any --json`. It starts at the current head,
+  so nothing older is replayed, and prints one JSON event per line on stdout until interrupted. The
+  last cursor goes to stderr as `cursor_event_seq=N` when you stop it. Pass `--after N` to catch up
+  from a known sequence instead. `tt state --json` reports the room head as `cursor_event_seq`.
+  While streaming, the default `--target self` shows only events routed to you and marks the
+  messages it prints as delivered to you; `--target any` is a whole-room audit that changes nothing.
+  Without `--follow` or `--wait`, `tt events` is a one-shot audit of the whole room. It hides
+  much-older rows by default (`--all`, `--after` or `--limit` include them), and `--limit` keeps the
+  oldest events after `--after`.
 - The wait loop can claim or receive a turn. An event wake by itself grants no authority.
 - Solo listening: `tt wait` does not claim an idle room when no other active agent is present. When
   you intend to work alone, use `tt wait --claim --json`. After releasing, resume ordinary
@@ -245,7 +254,7 @@ OpenCode, and Antigravity wake only through cmux.
   harness session and host, and removed on leave, kick, or session change. The Claude token and
   socket path are stored owner-only and never appear in state, health, events, or errors.
 - Native wakes carry complete attributed events in a bounded plain-text envelope. The agent acts on
-  the supplied content and records exact-event receipt with `tt ack <delivery-token> --json`, without
+  the supplied content and records exact-event receipt with `tt ack <delivery-token>`, without
   fetching again or acquiring ownership. Oversized payloads and cmux retain the fixed body-free
   `tt wait` notification.
 - Claude Code wraps inbox prompts in its own "another Claude session" preamble and permission
@@ -288,11 +297,11 @@ OpenCode, and Antigravity wake only through cmux.
 ## Native event delivery
 
 Claude Code and Codex native wakes carry complete, attributed room events in a bounded plain-text
-envelope: a `[talking-stick] room <path> · ack: tt ack <token> --json` header, one
+envelope: a `[talking-stick] room <path> · ack: tt ack <token>` header, one
 `#seq sender → you|room` line per event with its content indented two spaces beneath, and a closing
 `[/talking-stick]` line. Indented text is always content, so a message body can never forge an event
 header or the boundary. The recipient answers from the supplied content and runs
-`tt ack <delivery-token> --json` to acknowledge the exact events, without fetching them again or
+`tt ack <delivery-token>` to acknowledge the exact events, without fetching them again or
 claiming a turn. Queuing a prompt is not acknowledgement: a refused or unprocessed prompt leaves the
 durable message unread. Normal waits remain a recovery path. Acknowledged native events are excluded
 from later self waits, while audit and history views retain them.
