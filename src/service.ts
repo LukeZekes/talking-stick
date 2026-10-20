@@ -2698,16 +2698,38 @@ export class TalkingStickService {
       WHERE r.request_id = ? AND r.event_seq > ? ORDER BY r.event_seq LIMIT ?`)
       .all(request.request_id, after, limit + 1);
     const replies = rows.slice(0, limit).map((row) => this.mapEvent(row));
+    const recipients = JSON.parse(request.recipients_json) as AgentId[];
+    const repliedBy = new Set(this.db.prepare<[string], { from_agent_id: string }>(`
+      SELECT DISTINCT e.from_agent_id FROM visitor_replies r JOIN room_events e ON e.event_seq = r.event_seq
+      WHERE r.request_id = ?`).all(request.request_id).map((row) => row.from_agent_id));
+    const receipt = this.db.prepare<[string, string, number], { consumed_at: string | null }>(
+      "SELECT consumed_at FROM native_event_receipts WHERE room_id = ? AND agent_id = ? AND event_seq = ?");
+    const recipientStatus = recipients.map((agentId) => ({
+      agent_id: agentId,
+      in_room: Boolean(this.getMember(request.room_id, agentId)),
+      delivery: this.requestDelivery(request.room_id, agentId, request.event_seq),
+      received_at: receipt.get(request.room_id, agentId, request.event_seq)?.consumed_at ?? null,
+      replied: repliedBy.has(agentId)
+    }));
     return {
       request_id: request.request_id,
       room_id: request.room_id,
       requester_agent_id: request.requester_agent_id,
-      recipients: JSON.parse(request.recipients_json) as AgentId[],
+      recipients,
+      recipient_status: recipientStatus,
       request_event_seq: request.event_seq,
       replies,
       cursor_event_seq: replies.at(-1)?.event_seq ?? after,
       has_more: rows.length > limit
     };
+  }
+
+  // The endpoint row holds only its latest attempt. Report it only when that
+  // attempt dispatched this request; a later request may have replaced it, so
+  // anything else is unknown, never "pending".
+  private requestDelivery(roomId: string, agentId: AgentId, eventSeq: number): MessageDelivery | null {
+    const delivery = this.describeDelivery(roomId, agentId, eventSeq, "normal");
+    return delivery.state ? delivery : null;
   }
 
   private requireVisitorRequest(requestId: string): VisitorRequestRow {

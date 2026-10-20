@@ -163,6 +163,46 @@ describe("visitor requests", () => {
     expect(service.getRequestReplies({ request_id: asked.request_id, after_event_seq: rest.cursor_event_seq }).replies).toEqual([]);
   });
 
+  test("replies report each recipient's delivery, receipt, and answer separately", async () => {
+    const { service, roomId } = room();
+    const asked = await service.askRoom({ agent_id: "human:guest", room_id: roomId, to: "room", body: "status?" });
+    const status = () => Object.fromEntries(service.getRequestReplies({ request_id: asked.request_id }).recipient_status
+      .map((row) => [row.agent_id, { in_room: row.in_room, state: row.delivery?.state ?? null, received: row.received_at !== null, replied: row.replied }]));
+    expect(status()).toEqual({
+      "claude:aa": { in_room: true, state: "queued", received: false, replied: false },
+      "codex:bb": { in_room: true, state: "queued", received: false, replied: false }
+    });
+    // Claude's wait takes the request in without answering; Codex takes it in,
+    // answers, then leaves, which drops its receipt: no receipt on record.
+    await service.waitForEvents({ room_id: roomId, agent_id: "claude:aa", after_event_seq: asked.event_seq - 1, max_wait_ms: 0 });
+    await service.waitForEvents({ room_id: roomId, agent_id: "codex:bb", after_event_seq: asked.event_seq - 1, max_wait_ms: 0 });
+    expect(status()["codex:bb"]).toMatchObject({ received: true });
+    service.replyToRequest({ agent_id: "codex:bb", request_id: asked.request_id, body: "On it." });
+    service.leaveRoom({ agent_id: "codex:bb", room_id: roomId });
+    expect(status()).toMatchObject({
+      "claude:aa": { in_room: true, received: true, replied: false },
+      "codex:bb": { in_room: false, received: false, replied: true }
+    });
+  });
+
+  test("a later request's attempt never stands in for an earlier one's delivery", async () => {
+    const outcomes: NativeWakeResult[] = [{ outcome: "queued" }, { outcome: "failed", error: "claude_inbox_unreachable", detail: "connect:ENOENT" }];
+    const tokens: string[] = [];
+    const { service, roomId } = room((request) => {
+      tokens.push(/ · ack: tt ack (\S+)$/m.exec(request.text)![1]);
+      return outcomes.shift()!;
+    });
+    const first = await service.askRoom({ agent_id: "human:guest", room_id: roomId, to: ["claude:aa"], body: "A" });
+    // Claude acknowledges A's envelope, closing that batch.
+    service.acknowledgeNativeDelivery({ agent_id: "claude:aa", token: tokens[0], harness_session_id: "claude-aa", host_id: HOST });
+    const second = await service.askRoom({ agent_id: "human:guest", room_id: roomId, to: ["claude:aa"], body: "B" });
+    const statusOf = (requestId: string) => service.getRequestReplies({ request_id: requestId }).recipient_status[0];
+    expect(statusOf(second.request_id).delivery).toMatchObject({ state: "failed", error_detail: "connect:ENOENT" });
+    // A's attempt is no longer on record: unknown, not pending and not B's failure.
+    expect(statusOf(first.request_id)).toMatchObject({ delivery: null, replied: false });
+    expect(statusOf(first.request_id).received_at).not.toBeNull();
+  });
+
   test("a request key makes a retry return the original question", async () => {
     const { service, roomId, requests } = room();
     const asked = await service.askRoom({ agent_id: "human:guest", room_id: roomId, to: ["claude:aa"], body: "status?", request_key: "k1" });
