@@ -11,6 +11,10 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+### Fixed
+
+- Inline chat keeps the composer anchored at the bottom when closing `/rooms`, `/members`, or `/roles`. New messages reclaim the space left by a closed menu without unnecessary scrolling.
+
 ## [0.24.0] — 2026-10-20
 
 Full notes: [`docs/releases/0.24.0.md`](docs/releases/0.24.0.md).

@@ -700,6 +700,7 @@ export async function runChatSession(
   // Erasing walks back up every row it drew, so a wrapped draft never leaves
   // fragments behind in the scrollback.
   let inlineFrame: ChatFrame | null = null;
+  let inlinePanelRows = 0;
   let inlineFrameColumns = { columns: 80, rows: 24 };
   let inlineActive = false;
   let inlineOutputRows = 0;
@@ -728,6 +729,14 @@ export async function runChatSession(
       completion_index: editor?.completionIndex ?? 0,
       ...dimensions()
     });
+    // A modal may scroll the normal screen as it grows. Keep its bottom
+    // anchored when it shrinks; subsequent transcript output reclaims the gap.
+    inlinePanelRows = Math.max(inlinePanelRows, frame.lines.length);
+    const padding = inlinePanelRows - frame.lines.length;
+    if (padding) {
+      frame.lines.unshift(...Array<string>(padding).fill(""));
+      frame.cursor.row += padding;
+    }
     if (inlineFrame && JSON.stringify(inlineFrame) === JSON.stringify(frame)) return;
     output.write("\u001b[?2026h");
     eraseComposer();
@@ -747,6 +756,7 @@ export async function runChatSession(
     const lines = text.split(/\r?\n/).flatMap(line => wrapStyledLine(line, Math.max(1, dimensions().columns - 1)));
     output.write(lines.join("\r\n") + "\r\n");
     inlineOutputRows += lines.length;
+    inlinePanelRows = Math.max(0, inlinePanelRows - lines.length);
     drawComposer();
   };
   const redraw = () => {
@@ -883,6 +893,7 @@ export async function runChatSession(
     // in some terminals, and ED3 would erase history.
     if (inline) {
       inlineFrame = null;
+      inlinePanelRows = 0;
       editor?.resize(dimensions().columns - 1);
       const draft = editor?.draft ?? { line: "", cursor: 0 };
       const panel = renderInlinePanel({ room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), transcript, format: formatContext(),
