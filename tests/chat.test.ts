@@ -1652,6 +1652,48 @@ test("inline incoming messages erase from the actual draft cursor and restore pa
   expect(rawModes).toEqual([true, false, true, false]);
 });
 
+test("inline menus keep the footer pinned and new output reclaims their blank rows", async () => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:anchor", context_path: root });
+  const input = Object.assign(new PassThrough(), { setRawMode() {} });
+  const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+  const vt = new Terminal({ cols: 100, rows: 28, allowProposedApi: true });
+  vt.onData(data => input.write(data)); // Answer the startup cursor-position query.
+  let bytes = "";
+  output.on("data", chunk => { bytes += chunk.toString(); vt.write(chunk.toString()); });
+  const flush = () => new Promise<void>(resolve => vt.write("\u001b[0m", resolve));
+  const screen = () => Array.from({ length: 28 }, (_, i) =>
+    vt.buffer.active.getLine(vt.buffer.active.baseY + i)?.translateToString(true) ?? "");
+  const session = runChatConsole({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline: true,
+    color: false, history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => bytes.includes("Type to message the room"));
+    await flush();
+    const footer = screen()[27];
+    expect(footer, JSON.stringify(screen())).not.toBe("");
+    for (const command of ["rooms", "members", "roles", "rooms"]) {
+      input.write(`/${command}\r`);
+      await flush();
+      expect(screen()[27]).not.toBe("");
+      input.write("\u001b");
+      await new Promise(resolve => setTimeout(resolve, 60));
+      await flush();
+      expect(screen()[27]).toBe(footer);
+      expect(screen().filter(line => line.startsWith("> "))).toHaveLength(1);
+    }
+    const base = vt.buffer.active.baseY;
+    service.sendMessage({ agent_id: "codex:anchor", room_id: joined.room_id, body: "fills-menu-gap" });
+    await until(() => bytes.includes("fills-menu-gap"));
+    await flush();
+    expect(screen().join("\n")).toContain("fills-menu-gap");
+    expect(screen()[27]).toBe(footer);
+    expect(vt.buffer.active.baseY).toBe(base);
+  } finally {
+    input.end(); await session; vt.dispose();
+  }
+});
+
 test("inline terminal retains history, bars and draft across incoming messages and resize", async () => {
   const { root, service } = setupService();
   const joined = service.joinPath({ agent_id: "codex:aa", context_path: root });
