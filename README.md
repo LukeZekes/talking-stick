@@ -127,7 +127,8 @@ tt events --follow       watch a room live, as JSON lines
 Full flags and semantics: [command reference](docs/reference.md#command-reference).
 
 **Checking on rooms.** To ask what your rooms are doing, open Claude Code or Codex in any folder
-and say `Use the /talking-stick-rooms $talking-stick-rooms skill. What is the clawdapus pair doing?`
+and ask, for example, `/talking-stick-rooms What is the clawdapus pair doing?` in Claude Code, or
+`$talking-stick-rooms What is the clawdapus pair doing?` in Codex.
 That session joins nothing; it reads rooms with `tt room list --all` and `tt room brief`, and can put
 a question to a room's agents.
 

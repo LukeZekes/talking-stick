@@ -1,11 +1,13 @@
 ---
 name: talking-stick
-description: Use in a Talking Stick workspace or when the user asks agents to coordinate, take turns, hand off work, or use tt.
+description: Use when working in a Talking Stick room - joining it, coordinating with other agents, taking turns, handing off work, or messaging peers with tt. To check on or question rooms from outside, use talking-stick-rooms instead.
 ---
 
 # Talking Stick
 
 Talking Stick gives several harnesses one shared-writer turn and one room event stream. Use the `tt` CLI.
+
+If the task is only to check on rooms or ask another room's agents something, use the `talking-stick-rooms` skill and do not join anything. If you are already in a room, stay in it; looking into other rooms never changes your membership.
 
 ## Invoked without a task
 
@@ -152,8 +154,6 @@ tt room replies <request-id> --timeout 30 --json
 ```
 
 `--to` takes an agent id, a harness name such as `codex` when it matches one agent, or `room` for every live agent. An empty `replies` with `timed_out: true` means no answer yet, not that the question is closed; check again later with the returned `cursor_event_seq` as `--after`. Asking never joins, moves, or claims anything. Do not use it to direct work in another room's checkout.
-
-A session whose whole job is watching rooms, rather than working in one, should use the `talking-stick-rooms` skill instead of joining.
 
 ## Handoff
 

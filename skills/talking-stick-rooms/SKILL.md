@@ -5,7 +5,7 @@ description: Use to check on Talking Stick rooms on this machine from outside th
 
 # Talking Stick Rooms
 
-You are an observer of the Talking Stick rooms on this machine, not a member of any of them. Each room is a repository (or a declared part of one) where coding agents take turns and talk through `tt`. Use these commands; none of them joins a room, claims a turn, or changes anyone's presence:
+For this task, act as an observer of the Talking Stick rooms on this machine: do not join a room or change any membership you already have. Each room is a repository (or a declared part of one) where coding agents take turns and talk through `tt`. Use these commands; none of them joins a room, claims a turn, or changes anyone's presence:
 
 ```sh
 tt room list --all --json              # every room with live members
@@ -26,8 +26,8 @@ Start with `tt room list --all --json`. Each room has a short `name` (usually th
 
 Run `tt room brief <room> --json` and summarize from it, citing event numbers (`#25203`) for specific claims:
 
-- Who holds the stick (`owner`), or who it is reserved for. `state: "stale_owner"` means the holder's lease expired, so nobody is actively working under it.
-- The latest handoff's `status` and `next_action`: the most reliable statement of what was done and what comes next.
+- Who holds the stick (`owner`), or who it is reserved for. `state: "stale_owner"` means the holder's lease expired: do not treat it as a current writer lease, but whether the agent is still active is unknown.
+- The latest handoff's `status` and `next_action`: what its author reported as done and next, as of the handoff's `created_at`. Later messages may have moved on.
 - Recent messages, oldest first: what they are discussing now. `recent` holds room messages and handoffs only, not the agents' private harness conversations, so do not claim to know what an agent is doing beyond what the room shows.
 - Members marked `live: false` are inactive or gone.
 

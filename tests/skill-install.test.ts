@@ -392,6 +392,23 @@ describe("talking-stick skill install", () => {
     expect(fs.existsSync(path.join(tempRoot, ".claude/skills/talking-stick-rooms"))).toBe(false);
   });
 
+  test("the rooms skill copies beside a copied install and never replaces a dangling link", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "talking-stick-skill-"));
+    tempRoots.push(tempRoot);
+    const roomsSource = resolveBundledSkillPath({ skillName: "talking-stick-rooms" });
+    fs.cpSync(resolveBundledSkillPath(), path.join(tempRoot, ".claude/skills/talking-stick"), { recursive: true });
+    fs.mkdirSync(path.join(tempRoot, ".agents/skills"), { recursive: true });
+    fs.symlinkSync(resolveBundledSkillPath(), path.join(tempRoot, ".agents/skills/talking-stick"), "dir");
+    const dangling = path.join(tempRoot, ".agents/skills/talking-stick-rooms");
+    fs.symlinkSync(path.join(tempRoot, "missing"), dangling, "dir");
+
+    syncInstalledSkills({ homeDir: tempRoot, skillName: "talking-stick-rooms", installBesideDefault: true });
+    const copied = path.join(tempRoot, ".claude/skills/talking-stick-rooms");
+    expect(fs.lstatSync(copied).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(path.join(copied, "SKILL.md"), "utf8")).toBe(fs.readFileSync(path.join(roomsSource, "SKILL.md"), "utf8"));
+    expect(fs.readlinkSync(dangling)).toBe(path.join(tempRoot, "missing"));
+  });
+
   test("planSkillInstall installs a named bundled skill from its own directory", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "talking-stick-skill-"));
     tempRoots.push(tempRoot);

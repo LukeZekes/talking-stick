@@ -13,7 +13,7 @@ changes will be called out under **Breaking changes**.
 
 ### Added
 
-- A second bundled skill, `talking-stick-rooms`, for a session that checks on rooms from outside: it never joins a room, and it teaches the session to find a room, summarize it from `tt room brief`, and ask its agents with `tt room ask`. Start one in any folder with `Use the /talking-stick-rooms $talking-stick-rooms skill.` `tt install` installs it wherever `talking-stick` goes, `tt uninstall` removes it, and an update adds it beside an existing `talking-stick` install.
+- A second bundled skill, `talking-stick-rooms`, for a session that checks on rooms from outside: it never joins a room, and it teaches the session to find a room, summarize it from `tt room brief`, and ask its agents with `tt room ask`. Start one in any folder with `/talking-stick-rooms` in Claude Code or `$talking-stick-rooms` in Codex. The main skill's description now covers working in a room, and points observers to the new skill. `tt install` installs it wherever `talking-stick` goes, `tt uninstall` removes it, and an update adds it beside an existing `talking-stick` install.
 
 ## [0.26.0] — 2026-10-20
 
