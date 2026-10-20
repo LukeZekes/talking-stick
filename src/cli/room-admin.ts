@@ -217,6 +217,10 @@ function briefRoom(runtime: Runtime, parsed: ParsedCommand, target: string | und
       created_at: event.created_at,
       ...(body ? { body: body.text } : {}),
       ...(handoff ? { status: handoff.status.text, next_action: handoff.next_action.text } : {}),
+      // A visitor's question, or an answer to one (sent to the visitor, so
+      // its to is null like a room message).
+      ...(event.payload?.request_id ? { request_id: event.payload.request_id } : {}),
+      ...(event.payload?.in_reply_to ? { in_reply_to: event.payload.in_reply_to } : {}),
       ...(truncated ? { truncated: true, full: readOne(event.event_seq) } : {})
     };
   });
@@ -260,7 +264,7 @@ function formatBrief(brief: {
   last_handoff: RoomActivity["last_handoff"];
   notes: { author_agent_id: string; body: string }[]; notes_total: number;
   recent: { event_seq: number; event_type: string; from_agent_id: string | null; to: unknown; created_at: string;
-    body?: string; status?: string; next_action?: string; full?: string }[];
+    body?: string; status?: string; next_action?: string; full?: string; request_id?: string; in_reply_to?: string }[];
   older: string | null; updates_since: string;
 }): string {
   const lines = [`#${brief.name}  ${brief.canonical_path}  ${brief.room_id}`];
@@ -281,8 +285,10 @@ function formatBrief(brief: {
   if (brief.recent.length > 0) {
     lines.push("", "recent:");
     for (const event of brief.recent) {
-      const to = Array.isArray(event.to) ? event.to.join(", ") : event.to ?? "room";
-      lines.push(`  #${event.event_seq} ${formatRelativeTime(event.created_at)} ${event.event_type === "message_sent" ? "" : `${event.event_type} `}${event.from_agent_id ?? "unknown"} → ${to}`);
+      const to = event.in_reply_to ? `visitor (reply to request ${event.in_reply_to})`
+        : Array.isArray(event.to) ? event.to.join(", ") : event.to ?? "room";
+      const kind = event.request_id ? "visitor " : event.event_type === "message_sent" ? "" : `${event.event_type} `;
+      lines.push(`  #${event.event_seq} ${formatRelativeTime(event.created_at)} ${kind}${event.from_agent_id ?? "unknown"} → ${to}${event.request_id ? ` (request ${event.request_id})` : ""}`);
       const text = event.body ?? [event.status, event.next_action && `next: ${event.next_action}`].filter(Boolean).join(" ");
       if (text.trim()) lines.push(...text.trimEnd().split("\n").map((line) => `    ${line}`));
       if (event.full) lines.push(`    (clipped; full: ${event.full})`);

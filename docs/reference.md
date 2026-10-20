@@ -189,7 +189,9 @@ live, inactive, or gone, the latest handoff in full, the newest ten open notes w
 count, and the last 20 messages and handoffs. `--limit N` (up to 200) changes how many recent
 events to show. Message bodies are cut at 1,000 characters and handoffs at 160; each clipped
 event carries a `full` command that reads it whole. `older` pages back with `--before <seq>`, and
-`updates_since` reads everything after the brief's cursor. Name the room by short name, id, or
+`updates_since` reads everything after the brief's cursor. A visitor's question carries its
+`request_id`, and an answer carries `in_reply_to`; an answer goes to the visitor, so its `to` is
+null like a room message. Name the room by short name, id, or
 path suffix from any folder; a directory needs explicit path syntax (`.`, `./dir`, `../dir`, or an
 absolute path), so a local folder never shadows a room name. Neither command joins a room or
 refreshes anyone's presence.
@@ -353,7 +355,10 @@ OpenCode, and Antigravity wake only through cmux.
   definitely failed. A definite failure releases the batch so a later sender can retry. When a
   failure is this sender's own (a socket connect it was denied, or a `codex` it could not launch),
   the work stays pending, so the next `tt` command on this host, from any process, retries it
-  without another message; the failing process never repeats the same attempt.
+  without another message; the failing process never repeats the same attempt. An open `tt chat`
+  delivers its room's pending wakes whenever a new event arrives, and at least once a minute, so a
+  question sent from a desktop app that may not open the agents' sockets reaches them within
+  seconds while a console is open.
   Claude does not confirm that a turn started; a Codex `woken` result confirms turn creation,
   not that the agent read or acted on the message.
 - A message coalesced behind an earlier wake reports `delivery_status: pending` without reusing that

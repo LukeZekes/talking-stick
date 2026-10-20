@@ -3747,6 +3747,22 @@ describe("tt room", () => {
     expect(answers.replies.map((reply: { from_agent_id: string; payload: { body: string } }) => [reply.from_agent_id, reply.payload.body]))
       .toEqual([["codex:answer", "The parser."]]);
     expect(await captureStdout(["room", "replies", asked.request_id, "--text"])).toContain("codex:answer:\n  The parser.");
+    // The brief tells a correlated answer (to null) apart from a room broadcast.
+    process.env.TT_HARNESS_AGENT_ID = "codex:answer";
+    await captureStdout(["msg", "send", "room", "Just a broadcast.", "--path", project, "--json"]);
+    process.env.TT_HARNESS_AGENT_ID = "claude:visitor";
+    const brief = JSON.parse(await captureStdout(["room", "brief", "project", "--json"]));
+    const bySeq = (seq: number) => brief.recent.find((event: { event_seq: number }) => event.event_seq === seq);
+    expect(bySeq(asked.event_seq)).toMatchObject({ request_id: asked.request_id, from_agent_id: "claude:visitor" });
+    expect(bySeq(replied.event_seq)).toMatchObject({ in_reply_to: asked.request_id, to: null });
+    const broadcast = brief.recent.at(-1);
+    expect(broadcast).toMatchObject({ body: "Just a broadcast.", to: null });
+    expect(broadcast.in_reply_to).toBeUndefined();
+    expect(broadcast.request_id).toBeUndefined();
+    const briefText = await captureStdout(["room", "brief", "project", "--text"]);
+    expect(briefText).toContain(`visitor claude:visitor → codex:answer (request ${asked.request_id})`);
+    expect(briefText).toContain(`codex:answer → visitor (reply to request ${asked.request_id})`);
+    expect(briefText).toMatch(/codex:answer → room\n    Just a broadcast\./);
     expect(JSON.parse(await captureStdout(["state", home, "--agent", "human:observer", "--json"])).room.room_id).toBe(own.room_id);
     await expect(captureStdout(["room", "replies", "zzzzzzzz", "--json"])).rejects.toThrow(/No such request/);
 
