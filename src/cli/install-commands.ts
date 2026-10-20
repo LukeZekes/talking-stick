@@ -23,6 +23,7 @@ import {
 import {
   removeDuplicateSkillInstalls,
   planSkillInstall,
+  BUNDLED_SKILL_NAMES,
   planSkillUninstall,
   planSharedSkillUninstall,
   resolveDuplicateSkillTargetPaths
@@ -160,7 +161,7 @@ export async function runUninstallCommand(
   const installOptions = { skipMissing: true };
   const actions = [
     ...planUninstallActions(harnesses, installOptions),
-    ...(removeShared ? [planSharedSkillUninstall(installOptions)] : [])
+    ...(removeShared ? BUNDLED_SKILL_NAMES.map((skillName) => planSharedSkillUninstall({ ...installOptions, skillName })) : [])
   ];
 
   if (dryRun) {
@@ -260,7 +261,9 @@ export async function runUninstallCommand(
         )
       ).flat();
   if (!skillerResults && removeShared) {
-    results.push(await runAction(planSharedSkillUninstall(installOptions), installOptions));
+    for (const skillName of BUNDLED_SKILL_NAMES) {
+      results.push(await runAction(planSharedSkillUninstall({ ...installOptions, skillName }), installOptions));
+    }
   }
   reportInstallResults(results, "uninstall");
   printSharedSkillLeftHint(harnesses, removeShared);
@@ -279,7 +282,7 @@ export async function runInstallSkillCommand(
     skipMissing: true
   };
   const actions = dedupeInstallActions(
-    harnesses.map((harness) => planSkillInstall(harness, installOptions))
+    harnesses.flatMap((harness) => BUNDLED_SKILL_NAMES.map((skillName) => planSkillInstall(harness, { ...installOptions, skillName })))
   );
 
   if (dryRun) {
@@ -301,8 +304,8 @@ export async function runUninstallSkillCommand(
   const dryRun = hasOption(parsed, "print");
   const installOptions = { skipMissing: true };
   const actions = [
-    ...harnesses.map((harness) => planSkillUninstall(harness, installOptions)),
-    ...(removeShared ? [planSharedSkillUninstall(installOptions)] : [])
+    ...harnesses.flatMap((harness) => BUNDLED_SKILL_NAMES.map((skillName) => planSkillUninstall(harness, { ...installOptions, skillName }))),
+    ...(removeShared ? BUNDLED_SKILL_NAMES.map((skillName) => planSharedSkillUninstall({ ...installOptions, skillName })) : [])
   ];
 
   if (dryRun) {
@@ -430,10 +433,11 @@ function planUninstallActions(
 ): InstallAction[] {
   return harnesses.flatMap((harness) => [
     ...planSessionHooks(harness, "uninstall", installOptions),
-    planSkillUninstall(harness, {
+    ...BUNDLED_SKILL_NAMES.map((skillName) => planSkillUninstall(harness, {
       ...installOptions,
-      skipMissing: false
-    }),
+      skipMissing: false,
+      skillName
+    })),
     ...(harness === "claude-code"
       ? [
           planClaudeStopGuardUninstall({
@@ -471,10 +475,11 @@ async function runSkillUninstall(
 ): Promise<InstallResult[]> {
   const actions = [
     ...planSessionHooks(harness, "uninstall", { ...installOptions, skipMissing: false }),
-    planSkillUninstall(harness, {
+    ...BUNDLED_SKILL_NAMES.map((skillName) => planSkillUninstall(harness, {
       ...installOptions,
-      skipMissing: false
-    }),
+      skipMissing: false,
+      skillName
+    })),
     ...(harness === "claude-code"
       ? [
           planClaudeStopGuardUninstall({
@@ -505,7 +510,7 @@ function planInstallActionsForHarness(
   installOptions: { link: boolean; skipMissing: boolean; guard?: boolean }
 ): InstallAction[] {
   return [
-    planSkillInstall(harness, installOptions),
+    ...BUNDLED_SKILL_NAMES.map((skillName) => planSkillInstall(harness, { ...installOptions, skillName })),
     ...planSessionHooks(harness, "install", installOptions),
     ...(harness === "grok"
       ? [

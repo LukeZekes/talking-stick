@@ -1,4 +1,4 @@
-import { syncInstalledSkills } from "../skill-install.js";
+import { BUNDLED_SKILL_NAMES, DEFAULT_SKILL_NAME, syncInstalledSkills } from "../skill-install.js";
 import { updateInstructions } from "../instructions.js";
 import { getCommand } from "./registry.js";
 import type { ParsedCommand } from "./parser.js";
@@ -38,12 +38,14 @@ export async function runStartupMaintenance(
     if (!shouldAutoSyncInstalledSkills(parsed, env)) {
       return;
     }
-    const sync = syncInstalledSkills({
+    const targets = BUNDLED_SKILL_NAMES.flatMap((skillName) => syncInstalledSkills({
       skipMissing: true,
       env,
-      homeDir: env.HOME
-    });
-    for (const target of sync.targets) {
+      homeDir: env.HOME,
+      skillName,
+      installBesideDefault: skillName !== DEFAULT_SKILL_NAME
+    }).targets);
+    for (const target of targets) {
       if (target.status === "update_available" && target.offer) {
         process.stderr.write(`Talking Stick preserved customized skill instructions at ${target.targetPath}. Run \`tt install ${target.harness} --replace\` to replace them.\n`);
       }

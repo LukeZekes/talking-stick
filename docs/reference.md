@@ -176,6 +176,10 @@ immediately revoke a live lease.
 
 ### Observing rooms from outside
 
+For a session whose whole job is watching rooms, such as a Claude Code or Codex session started
+in your home folder, use the `talking-stick-rooms` skill: it never joins a room, and it teaches the
+session to find a room, summarize it, and ask its agents.
+
 Any agent or person on the host can see what each room is doing without joining it.
 `tt room list --all` lists every room with a live agent or console, most recent room activity
 first. Room activity includes lease renewals, so it means the room is in use, not that its
@@ -613,17 +617,20 @@ edit, so installing `tt` does not litter repositories or harness config director
 
 ## Install behavior per harness
 
-`tt install` installs or refreshes the bundled `talking-stick` skill. Skill directory writes are
+`tt install` installs or refreshes the bundled skills: `talking-stick`, which agents working in a
+room use, and `talking-stick-rooms`, for a session that watches rooms from outside (see
+[Observing rooms from outside](#observing-rooms-from-outside)). Both go to the same places, and an
+update adds `talking-stick-rooms` beside any existing `talking-stick` install. Skill directory writes are
 delegated to the `skiller` binary when available; package postinstall bootstraps skiller from the
 published release and verifies `checksums.txt` before installation. If skiller is missing, disabled,
 or fails its version gate, `tt` uses the built-in TypeScript fallback. Set
 `TALKING_STICK_DISABLE_SKILLER_BOOTSTRAP=1` to skip the postinstall bootstrap, or
 `TALKING_STICK_DISABLE_SKILLER=1` to force the TypeScript fallback.
 
-- Claude Code: copied or linked into `~/.claude/skills/talking-stick`, because Claude Code does not
+- Claude Code: copied or linked into `~/.claude/skills/<skill>`, because Claude Code does not
   read `~/.agents/skills`
 - Codex, Antigravity (`agy`), Grok Build, and OpenCode: copied or linked once into the shared
-  `~/.agents/skills/talking-stick`
+  `~/.agents/skills/<skill>`
 - Codex: also merges lifecycle (`SessionStart`, `SessionEnd`) and turn (`UserPromptSubmit`, `Stop`,
   `Interrupt`) hooks into `~/.codex/hooks.json`, leaving other entries alone. Codex runs them only
   after you trust them in `/hooks`; see [Native event delivery](#native-event-delivery).

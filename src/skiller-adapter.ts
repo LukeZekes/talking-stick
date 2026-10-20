@@ -18,6 +18,7 @@ import type { AuditLog, AuditReason } from "./install-audit.js";
 import type { CleanupResult } from "./install-audit.js";
 import { isStandalone, standaloneRoot } from "./standalone-mode.js";
 import {
+  BUNDLED_SKILL_NAMES,
   DEFAULT_SKILL_NAME,
   resolveBundledSkillPath,
   type SkillSyncResult
@@ -277,23 +278,27 @@ function skillerArgs(
 
 function renderManifest(targets: string[], options: SkillerRunOptions): string {
   const mode = options.link === false ? "copy" : "link";
-  const sourcePath = fs.realpathSync(resolveBundledSkillPath(options));
   const lines = [
     'schema = "skiller-install.v1"',
     'owner = "talking-stick"',
     'namespace = "mostlydev"',
     `version = ${tomlString(readLocalPackageVersion())}`,
     `default_mode = ${tomlString(mode)}`,
-    "",
-    "[[skills]]",
-    `name = ${tomlString(DEFAULT_SKILL_NAME)}`,
-    'canonical_id = "mostlydev:talking-stick"',
-    `install_slug = ${tomlString(DEFAULT_SKILL_NAME)}`,
-    `source = ${tomlString(sourcePath)}`,
-    `targets = [${targets.map(tomlString).join(", ")}]`,
-    `mode = ${tomlString(mode)}`,
     ""
   ];
+  for (const skillName of BUNDLED_SKILL_NAMES) {
+    const sourcePath = fs.realpathSync(resolveBundledSkillPath({ ...options, skillName }));
+    lines.push(
+      "[[skills]]",
+      `name = ${tomlString(skillName)}`,
+      `canonical_id = ${tomlString(`mostlydev:${skillName}`)}`,
+      `install_slug = ${tomlString(skillName)}`,
+      `source = ${tomlString(sourcePath)}`,
+      `targets = [${targets.map(tomlString).join(", ")}]`,
+      `mode = ${tomlString(mode)}`,
+      ""
+    );
+  }
   return lines.join("\n");
 }
 

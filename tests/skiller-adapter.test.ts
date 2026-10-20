@@ -126,6 +126,9 @@ describe("skiller adapter", () => {
     expect(calls.some((call) => call.args.includes("--dry-run"))).toBe(true);
     expect(calls.some((call) => call.args[0] === "cleanup-duplicates")).toBe(true);
     expect(calls[0].manifest).toContain('targets = ["codex"]');
+    expect(calls[0].manifest).toContain('name = "talking-stick"');
+    expect(calls[0].manifest).toContain('name = "talking-stick-rooms"');
+    expect(calls[0].manifest).toContain('canonical_id = "mostlydev:talking-stick-rooms"');
     expect(calls[0].manifest).toContain('source = "');
   });
 

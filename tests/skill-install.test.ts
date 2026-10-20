@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   DEFAULT_SKILL_NAME,
   HARNESS_SKILL_MODELS,
+  BUNDLED_SKILL_NAMES,
   removeDuplicateSkillInstalls,
   planSkillInstall,
   planSkillUninstall,
@@ -351,6 +352,59 @@ describe("talking-stick skill install", () => {
     });
     expect(fs.existsSync(path.join(tempRoot, ".claude"))).toBe(false);
     expect(fs.existsSync(path.join(tempRoot, ".codex"))).toBe(false);
+  });
+
+  test("every bundled skill ships with a frontmatter name matching its directory", () => {
+    expect(BUNDLED_SKILL_NAMES).toEqual(["talking-stick", "talking-stick-rooms"]);
+    for (const skillName of BUNDLED_SKILL_NAMES) {
+      const source = resolveBundledSkillPath({ skillName });
+      expect(path.basename(source)).toBe(skillName);
+      expect(fs.readFileSync(path.join(source, "SKILL.md"), "utf8")).toMatch(new RegExp(`^---\nname: ${skillName}\ndescription: .+\n---\n`));
+    }
+  });
+
+  test("the rooms skill installs beside an existing talking-stick install and nowhere else", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "talking-stick-skill-"));
+    tempRoots.push(tempRoot);
+    const mainSource = resolveBundledSkillPath();
+    const roomsSource = resolveBundledSkillPath({ skillName: "talking-stick-rooms" });
+    // Claude Code and the shared folder have talking-stick; Gemini's folder exists without it.
+    for (const dir of [".claude/skills", ".agents/skills"]) {
+      fs.mkdirSync(path.join(tempRoot, dir), { recursive: true });
+      fs.symlinkSync(mainSource, path.join(tempRoot, dir, "talking-stick"), "dir");
+    }
+    fs.mkdirSync(path.join(tempRoot, ".gemini", "skills"), { recursive: true });
+    const sync = () => syncInstalledSkills({ homeDir: tempRoot, skillName: "talking-stick-rooms", installBesideDefault: true });
+
+    const first = sync();
+    for (const dir of [".claude/skills", ".agents/skills"]) {
+      expect(fs.readlinkSync(path.join(tempRoot, dir, "talking-stick-rooms"))).toBe(roomsSource);
+    }
+    expect(fs.existsSync(path.join(tempRoot, ".gemini", "skills", "talking-stick-rooms"))).toBe(false);
+    expect(first.targets.filter((target) => target.status === "updated").map((target) => target.targetPath).sort())
+      .toEqual([path.join(tempRoot, ".agents/skills/talking-stick-rooms"), path.join(tempRoot, ".claude/skills/talking-stick-rooms")]);
+    expect(sync().targets.filter((target) => target.status === "updated")).toEqual([]);
+
+    // Without the flag a missing skill stays missing, as before.
+    fs.unlinkSync(path.join(tempRoot, ".claude/skills/talking-stick-rooms"));
+    expect(syncInstalledSkills({ homeDir: tempRoot, skillName: "talking-stick-rooms" }).targets
+      .find((target) => target.harness === "claude-code")).toMatchObject({ status: "missing" });
+    expect(fs.existsSync(path.join(tempRoot, ".claude/skills/talking-stick-rooms"))).toBe(false);
+  });
+
+  test("planSkillInstall installs a named bundled skill from its own directory", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "talking-stick-skill-"));
+    tempRoots.push(tempRoot);
+    fs.mkdirSync(path.join(tempRoot, ".claude"), { recursive: true });
+    const action = planSkillInstall("claude-code", { homeDir: tempRoot, skillName: "talking-stick-rooms" });
+    if (action.kind !== "file-patch") throw new Error("unreachable");
+    action.apply();
+    expect(fs.readlinkSync(path.join(tempRoot, ".claude", "skills", "talking-stick-rooms")))
+      .toBe(resolveBundledSkillPath({ skillName: "talking-stick-rooms" }));
+    const remove = planSkillUninstall("claude-code", { homeDir: tempRoot, skillName: "talking-stick-rooms" });
+    if (remove.kind !== "file-patch") throw new Error("unreachable");
+    remove.apply();
+    expect(fs.existsSync(path.join(tempRoot, ".claude", "skills", "talking-stick-rooms"))).toBe(false);
   });
 
   test("syncInstalledSkills leaves current symlinks alone and preserves unknown symlinks", () => {
