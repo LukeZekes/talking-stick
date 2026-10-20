@@ -11,6 +11,10 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+### Added
+
+- Installer-managed releases check daily for updates at interactive human startup, install newer stable releases, and request a restart before opening the room. Agent commands, hooks, JSON output, previews, and development checkouts skip updates; `TT_NO_AUTO_UPDATE=1` opts out. Automatic and explicit updates share a lock, and automatic installs keep the npm copy without prompting.
+
 ### Changed
 
 - Native delivery envelopes use eight-character ack tokens, and the header command drops `--json`: `tt ack k3f9x2qd` instead of a 36-character UUID with a flag. Harness calls already print JSON. Tokens from earlier envelopes still acknowledge by exact match.

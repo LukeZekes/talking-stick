@@ -51,6 +51,7 @@ import {
 import { shouldUseJson } from "./output.js";
 import { isInstalledRelease, isStandalone, standaloneRoot } from "../standalone-mode.js";
 import { advanceCurrentLink, findRemovableNpmCopy, repointManagedSkillLinks, skillLinksInto } from "../standalone-migration.js";
+import { acquireUpdateLock } from "../auto-update.js";
 import {
   getStringOption,
   hasOption,
@@ -332,9 +333,14 @@ export async function runSelfUpdateCommand(
       process.stdout.write(`${plan.description}\n`);
       return;
     }
-    process.stdout.write(`Updating via: ${plan.description}\n`);
-    await runInheritIo(plan.command, plan.args);
-    process.stdout.write("Done. Restart any long-running harness sessions to pick up the new tt.\n");
+    const release = acquireUpdateLock(standaloneRoot());
+    try {
+      process.stdout.write(`Updating via: ${plan.description}\n`);
+      await runInheritIo(plan.command, plan.args);
+      process.stdout.write("Done. Restart any long-running harness sessions to pick up the new tt.\n");
+    } finally {
+      release();
+    }
     return;
   }
 

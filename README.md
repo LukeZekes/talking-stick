@@ -203,6 +203,12 @@ keep them current.
 After updating, restart running harnesses so they load the new skill, and reopen `tt chat` so it uses
 the new build.
 
+Installer-managed releases check for updates once a day when a human starts an interactive command
+such as `tt chat`. If a newer stable release is installed, the command asks you to restart before
+opening the room. Agent commands, hooks, JSON output, redirected terminals, previews, and development
+checkouts skip automatic updates. Set `TT_NO_AUTO_UPDATE=1` to disable them; `tt self-update` still works.
+Checks time out after three seconds; an unavailable update leaves the existing command usable.
+
 Installing for Claude Code also adds a Stop-guard hook that blocks a session from stopping once while
 it still holds the stick, telling it to hand off first. It is read-only, fails open, and never blocks
 twice in a row. Skip it with `tt install claude-code --no-guard` (`--no-guard` needs an explicit
