@@ -19,8 +19,11 @@ export interface ChatInputOptions {
   /** Alt+Left / Alt+Right: move to the previous or next room. */
   onRoomTree?: () => void;
   onCycleRoom?: (direction: -1 | 1) => void;
-  /** Ctrl+V, or a paste with no text: attach the clipboard's image, if any. */
-  onImagePaste?: () => void;
+  /**
+   * Ctrl+V, or a paste with no text: the clipboard image's marker, or null.
+   * Keys typed while it resolves wait, so the marker lands where the paste was.
+   */
+  onImagePaste?: () => Promise<string | null>;
   /** Replacement text for a paste (image paths become markers), or null to keep it. */
   transformPaste?: (text: string) => string | null;
   now?: () => number;
@@ -69,6 +72,8 @@ export class ChatInputController {
   // Pasted text is never a modal command: swallow it until the paste ends.
   private modalPaste = false;
   private modalEscapeTimer: ReturnType<typeof setTimeout> | null = null;
+  // While the clipboard is read, later keys (Enter included) stay in pending.
+  private imagePending = false;
 
   constructor(private readonly options: ChatInputOptions) {
     this.sink = Object.assign(
@@ -157,6 +162,24 @@ export class ChatInputController {
     this.modalPending = "";
     if (this.modalEscapeTimer) clearTimeout(this.modalEscapeTimer);
     this.modalEscapeTimer = null;
+  }
+
+  get imagePasteActive(): boolean {
+    return this.imagePending;
+  }
+
+  private requestImage(): void {
+    const request = this.options.onImagePaste;
+    if (!request) return;
+    this.imagePending = true;
+    const settle = (marker: string | null) => {
+      if (this.closed) return;
+      this.imagePending = false;
+      if (marker) this.insertText(`${marker} `);
+      // Replay what was typed meanwhile, in order.
+      this.onData("");
+    };
+    void request().then(settle, () => settle(null));
   }
 
   get modalActive(): boolean {
@@ -282,7 +305,7 @@ export class ChatInputController {
     this.escapeTimer = null;
     this.pending += typeof data === "string" ? data : this.decoder.write(data);
     this.consume();
-    if (this.pending && this.paste === null) {
+    if (this.pending && this.paste === null && !this.imagePending) {
       this.escapeTimer = setTimeout(() => {
         this.escapeTimer = null;
         // Never leak an incomplete mouse/control report into the draft.
@@ -336,7 +359,7 @@ export class ChatInputController {
   }
 
   private consume(): void {
-    while (this.pending && !this.closed) {
+    while (this.pending && !this.closed && !this.imagePending) {
       if (this.paste !== null) {
         const end = this.pending.indexOf(PASTE_END);
         if (end < 0) {
@@ -354,7 +377,7 @@ export class ChatInputController {
         this.paste = null;
         // Some terminals paste nothing when the clipboard holds only an image.
         if (pasted.length === 0) {
-          this.options.onImagePaste?.();
+          this.requestImage();
           continue;
         }
         let text = pasted;
@@ -374,7 +397,7 @@ export class ChatInputController {
       }
       if (this.pending[0] === "\u0016") {
         this.pending = this.pending.slice(1);
-        this.options.onImagePaste?.();
+        this.requestImage();
         continue;
       }
       if (this.pending[0] === "\u0014") {

@@ -65,31 +65,65 @@ describe("chat images", () => {
 });
 
 describe("composer image keys", () => {
+  // Each clipboard read is a promise the test settles by hand, in any order.
   function setup(transformPaste?: (text: string) => string | null) {
     const input = Object.assign(new PassThrough(), { isRaw: false, setRawMode: vi.fn() });
-    const onImagePaste = vi.fn();
+    const reads: Array<(marker: string | null) => void> = [];
+    const onImagePaste = vi.fn(() => new Promise<string | null>((resolve) => reads.push(resolve)));
+    const onSubmit = vi.fn();
     const editor = new ChatInputController({
-      input, columns: 40, onSubmit: vi.fn(), onQuit: vi.fn(), onScroll: vi.fn(), onBottom: vi.fn(),
+      input, columns: 40, onSubmit, onQuit: vi.fn(), onScroll: vi.fn(), onBottom: vi.fn(),
       onChange: vi.fn(), onClear: vi.fn(), onImagePaste, transformPaste,
       complete: (draft) => completeChatInput(draft, [])
     });
-    return { editor, input, onImagePaste };
+    return { editor, input, onImagePaste, onSubmit, reads };
   }
+  const settled = () => new Promise((resolve) => setImmediate(resolve));
 
-  test("Ctrl+V and an empty paste ask for the clipboard image without touching the draft", () => {
-    const { editor, input, onImagePaste } = setup();
+  test("keys typed while the clipboard is read wait, so Enter sends the image with its text", async () => {
+    const { editor, input, onSubmit, reads } = setup();
     try {
-      input.write("see \u0016");
-      expect(onImagePaste).toHaveBeenCalledOnce();
-      input.write("\u001b[200~\u001b[201~");
-      expect(onImagePaste).toHaveBeenCalledTimes(2);
-      expect(editor.draft).toEqual({ line: "see ", cursor: 4 });
-      editor.insertText("[Image #1] ");
-      input.write("ok");
-      expect(editor.draft.line).toBe("see [Image #1] ok");
+      input.write("look \u0016");
+      input.write("here\rnext");
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(editor.imagePasteActive).toBe(true);
+      expect(editor.draft.line).toBe("look ");
+      reads[0]("[Image #1]");
+      await settled();
+      expect(onSubmit).toHaveBeenCalledWith("look [Image #1] here");
+      expect(editor.draft.line).toBe("next");
+      expect(editor.imagePasteActive).toBe(false);
     } finally {
       editor.close();
     }
+  });
+
+  test("back-to-back pastes keep their order, and an empty paste or failure inserts nothing", async () => {
+    const { editor, input, onImagePaste, reads } = setup();
+    try {
+      input.write("\u0016a\u001b[200~\u001b[201~b\u0016c");
+      expect(onImagePaste).toHaveBeenCalledOnce();
+      reads[0]("[Image #1]");
+      await settled();
+      expect(onImagePaste).toHaveBeenCalledTimes(2);
+      reads[1](null);
+      await settled();
+      expect(onImagePaste).toHaveBeenCalledTimes(3);
+      reads[2]("[Image #2]");
+      await settled();
+      expect(editor.draft.line).toBe("[Image #1] ab[Image #2] c");
+    } finally {
+      editor.close();
+    }
+  });
+
+  test("a read that settles after the editor closed changes nothing", async () => {
+    const { editor, input, reads } = setup();
+    input.write("draft\u0016");
+    editor.close();
+    reads[0]("[Image #1]");
+    await settled();
+    expect(editor.draft.line).toBe("draft");
   });
 
   test("a paste may be replaced, and a failing replacement keeps the pasted text", () => {

@@ -1854,7 +1854,9 @@ export class TalkingStickService {
     senderMayBeNonMember = false): {
     event_seq: number; event_id: string; created_at: string; wake_target_ids: AgentId[];
   } {
-    const attachments = validateAttachments(input.attachments, this.dataDir);
+    // Validated by sendMessage before the transaction: checking a stored
+    // image reads it, which must not happen while holding the write lock.
+    const attachments = input.attachments ?? [];
     const room = this.requireRoom(input.room_id);
     if (room.state === "closed") {
       throw new ProtocolError(
@@ -1997,8 +1999,9 @@ export class TalkingStickService {
     const timestamp = now.toISOString();
     this.purgeExpiredIdleRooms(now);
 
+    const attachments = validateAttachments(input.attachments, this.dataDir);
     const result = withImmediateTransaction(this.db, () =>
-      this.sendMessageLocked(input, body, deliveryHint, timestamp));
+      this.sendMessageLocked({ ...input, attachments }, body, deliveryHint, timestamp));
 
     const { wake_target_ids: wakeTargetIds, ...sendResult } = result;
     if (wakeTargetIds.length === 0) {

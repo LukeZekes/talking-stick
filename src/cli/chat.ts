@@ -1188,14 +1188,16 @@ export async function runChatSession(
     lastPrinted = isMessage ? "message" : "system";
   };
 
-  const pasteImage = () => {
-    void images.fromClipboard().then((marker) => {
-      if (closed) return;
-      if (marker) editor?.insertText(`${marker} `);
-      else print("No image on the clipboard.");
-    }, (error: unknown) => {
+  // The input controller inserts the marker and holds later keys until then.
+  const pasteImage = async (): Promise<string | null> => {
+    try {
+      const marker = await images.fromClipboard();
+      if (!marker && !closed) print("No image on the clipboard.");
+      return marker;
+    } catch (error) {
       if (!closed) print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`);
-    });
+      return null;
+    }
   };
 
   const handleLine = (line: string) => {

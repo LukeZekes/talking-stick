@@ -67,6 +67,35 @@ describe("attachment store", () => {
     expect(() => attachFile(path.join(dataDir, "missing.png"), { dataDir })).toThrow(/No such file/);
   });
 
+  test("a message may only name intact stored objects", () => {
+    const dataDir = tempRoot();
+    const stored = storeAttachment(PNG, { dataDir });
+    const phantom = { ...stored, sha256: "0".repeat(64), path: path.join(attachmentsDir(dataDir), `${"0".repeat(64)}.png`) };
+    expect(() => validateAttachments([phantom], dataDir)).toThrow(/missing or does not match/);
+    expect(() => validateAttachments([{ ...stored, bytes: stored.bytes + 1 }], dataDir)).toThrow(/missing or does not match/);
+    expect(() => validateAttachments([{ ...stored, mime: "constructor" }], dataDir)).toThrow(/PNG, JPEG/);
+    expect(() => validateAttachments([{ ...stored, mime: "toString" }], dataDir)).toThrow(/PNG, JPEG/);
+
+    // Altered bytes of the same size.
+    const altered = Buffer.from(PNG);
+    altered[altered.length - 1] ^= 0xff;
+    fs.writeFileSync(stored.path, altered);
+    expect(() => validateAttachments([stored], dataDir)).toThrow(/missing or does not match/);
+
+    // A link at the object's name, even to identical bytes outside the store.
+    const outside = path.join(tempRoot(), "outside.png");
+    fs.writeFileSync(outside, PNG);
+    fs.rmSync(stored.path);
+    fs.symlinkSync(outside, stored.path);
+    expect(() => validateAttachments([stored], dataDir)).toThrow(/missing or does not match/);
+
+    // Storing again repairs the object in place, without touching the link target.
+    expect(storeAttachment(PNG, { dataDir }).path).toBe(stored.path);
+    expect(fs.lstatSync(stored.path).isSymbolicLink()).toBe(false);
+    expect(validateAttachments([stored], dataDir)).toEqual([stored]);
+    expect(fs.readFileSync(outside)).toEqual(PNG);
+  });
+
   test("a message may only name stored images", () => {
     const dataDir = tempRoot();
     const stored = storeAttachment(PNG, { dataDir });

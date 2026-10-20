@@ -42,6 +42,27 @@ export function attachmentsDir(dataDir: string): string {
   return path.join(dataDir, "attachments");
 }
 
+function extensionFor(mime: unknown): string | null {
+  return typeof mime === "string" && Object.hasOwn(EXTENSIONS, mime) ? EXTENSIONS[mime] : null;
+}
+
+/**
+ * Whether `file` is an intact stored object: a regular file (not a link)
+ * directly inside the store, whose bytes have the given size, type, and hash.
+ */
+function isStoredObject(file: string, dir: string, expected: { mime: string; bytes: number; sha256: string }): boolean {
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.size !== expected.bytes) return false;
+    if (fs.realpathSync(path.dirname(file)) !== fs.realpathSync(dir)) return false;
+    const data = fs.readFileSync(file);
+    return data.byteLength === expected.bytes && sniffImageMime(data) === expected.mime &&
+      crypto.createHash("sha256").update(data).digest("hex") === expected.sha256;
+  } catch {
+    return false;
+  }
+}
+
 /** Stores image bytes once per content hash and describes the stored copy. */
 export function storeAttachment(data: Uint8Array, options: { dataDir: string; name?: string }): MessageAttachment {
   const mime = sniffImageMime(data);
@@ -52,7 +73,9 @@ export function storeAttachment(data: Uint8Array, options: { dataDir: string; na
   const sha256 = crypto.createHash("sha256").update(data).digest("hex");
   const dir = attachmentsDir(options.dataDir);
   const file = path.join(dir, `${sha256}.${EXTENSIONS[mime]}`);
-  if (!fs.existsSync(file)) {
+  // Reuse a stored copy only while it is intact; renaming over a damaged
+  // object (or a link planted at its name) replaces it, not its target.
+  if (!isStoredObject(file, dir, { mime, bytes: data.byteLength, sha256 })) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     writeFileAtomic(file, Buffer.from(data));
   }
@@ -77,9 +100,9 @@ export function attachFile(file: string, options: { dataDir: string }): MessageA
 }
 
 /**
- * Checks the shape of attachments arriving with a message. The service does
- * not read the files: it only refuses anything that is not a stored image's
- * description, so a message never points an agent at an arbitrary path.
+ * Checks attachments arriving with a message against the store itself: each
+ * must name an intact stored object (see isStoredObject), so a message never
+ * points an agent at a missing, altered, or arbitrary file.
  */
 export function validateAttachments(value: unknown, dataDir: string): MessageAttachment[] {
   if (value === undefined || value === null) return [];
@@ -90,16 +113,20 @@ export function validateAttachments(value: unknown, dataDir: string): MessageAtt
   return value.map((entry) => {
     const item = (entry ?? {}) as Record<string, unknown>;
     const { path: file, mime, bytes, sha256, name } = item;
-    if (typeof mime !== "string" || !EXTENSIONS[mime]) throw invalid("Attachments must be PNG, JPEG, GIF, or WebP images.");
+    const extension = extensionFor(mime);
+    if (!extension) throw invalid("Attachments must be PNG, JPEG, GIF, or WebP images.");
     if (typeof sha256 !== "string" || !/^[0-9a-f]{64}$/.test(sha256)) throw invalid("Attachment sha256 must be 64 hex characters.");
-    if (typeof file !== "string" || file !== path.join(dir, `${sha256}.${EXTENSIONS[mime]}`)) {
+    if (typeof file !== "string" || file !== path.join(dir, `${sha256}.${extension}`)) {
       throw invalid("Attachments must be stored images (use `tt msg send --attach <file>`).");
     }
     if (typeof bytes !== "number" || !Number.isInteger(bytes) || bytes <= 0 || bytes > MAX_ATTACHMENT_BYTES) {
       throw invalid("Attachment bytes must be a positive size within the limit.");
     }
+    if (!isStoredObject(file, dir, { mime: mime as string, bytes, sha256 })) {
+      throw invalid(`The stored image ${path.basename(file)} is missing or does not match its description; attach it again.`);
+    }
     const label = typeof name === "string" ? name.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 120) : "";
-    return { path: file, mime, bytes, sha256, ...(label ? { name: label } : {}) };
+    return { path: file, mime: mime as string, bytes, sha256, ...(label ? { name: label } : {}) };
   });
 }
 
