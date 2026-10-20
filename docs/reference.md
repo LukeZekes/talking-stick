@@ -19,6 +19,7 @@ For the introduction and quickstart, see [`README.md`](../README.md).
 ## Command reference
 
 ```text
+tt --version                                              # print the installed version
 tt whoami [--explain]                                     # show the resolved CLI identity
 tt list [path]                                            # list rooms
 tt roles [show] | set <agent|harness> <roles|none|clear> | default <harness> <roles|none|clear> [--in ROOM]

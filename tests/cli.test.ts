@@ -2514,6 +2514,12 @@ describe("tt msg", () => {
     }
   });
 
+  test("tt --version prints the package version", async () => {
+    setupIsolatedCli(tempDirs);
+    const { version } = JSON.parse(fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as { version: string };
+    expect(JSON.parse(await captureStdout(["--version", "--json"]))).toEqual({ version });
+  });
+
   test("tt msg send --attach stores the image and sends it, with or without text", async () => {
     const { project, dataDir } = setupIsolatedCli(tempDirs);
     const roomId = seedCliRoomMembers(project, [

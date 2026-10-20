@@ -37,6 +37,7 @@ const BOOLEAN_FLAGS = new Set([
   "text",
   "user",
   "verbose",
+  "version",
   "wait"
 ]);
 
