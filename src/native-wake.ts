@@ -190,7 +190,6 @@ export function deliverClaudeInbox(request: NativeWakeRequest, options: NativeWa
       socket.destroy();
       resolve(result);
     };
-    const phase = () => written ? "write" : "connect";
     // Before the socket connects, no byte can have reached Claude. A missing or
     // refusing socket means the session is gone; any other early failure (a
     // denied connect, a hung one) may be this sender's own, so another local

@@ -353,7 +353,7 @@ OpenCode, and Antigravity wake only through cmux.
   definitely failed. A definite failure releases the batch so a later sender can retry. When a
   failure is this sender's own (a socket connect it was denied, or a `codex` it could not launch),
   the work stays pending, so the next `tt` command on this host, from any process, retries it
-  without another message; the failing process never repeats the same attempt. Neither
+  without another message; the failing process never repeats the same attempt.
   Claude does not confirm that a turn started; a Codex `woken` result confirms turn creation,
   not that the agent read or acted on the message.
 - A message coalesced behind an earlier wake reports `delivery_status: pending` without reusing that
