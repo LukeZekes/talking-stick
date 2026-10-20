@@ -93,16 +93,19 @@ a delivery receipt, not proof the model acted on it.
 The `talking-stick-rooms` skill (installed by `tt install`) turns any local agent session into a
 manager for every room on your computer: it reports what each room is doing, asks agents
 questions, passes on your instructions or approvals, and collects their answers. It never joins a
-room. Open the session in any folder (your home folder works), then ask:
+room. It only needs a session that can run `tt` on this computer, started in any folder:
 
 | App | How |
 |---|---|
 | Claude Code, including the **Code** tab of the Claude desktop app | `/talking-stick-rooms What is the clawdapus pair doing?` |
 | Codex CLI | `$talking-stick-rooms What is the clawdapus pair doing?` |
-| ChatGPT desktop | Start a conversation in **Work** mode with a folder selected and **Full access**, pick **Talking Stick Rooms** from the skills, and ask |
+| ChatGPT desktop | Start a **Work** conversation that runs on your computer, with any local folder. Select **Talking Stick Rooms** with `@` and ask. |
 
-Plain Claude desktop chats (not the Code tab) can't use it: they run skills in a cloud sandbox
-that can't reach `tt` on your computer.
+ChatGPT finds the skill in `~/.agents/skills`, where `tt install codex` puts it. Before relying on a
+new app or mode, check that it reaches your rooms: ask it to run `command -v tt` and
+`tt room list --all --json`. In the Claude desktop app, only the Code tab's local sessions load
+`~/.claude/skills` and run commands on your computer. Regular chats run skills in Anthropic's cloud
+sandbox, and Cowork runs commands in a VM without reading `~/.claude`, so neither can reach `tt`.
 
 Some apps, ChatGPT among them, may not connect to the agents' sockets. The message is still
 stored, and an open `tt chat` in that room delivers it within a minute; otherwise the next `tt`
