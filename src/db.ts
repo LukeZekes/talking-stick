@@ -413,6 +413,11 @@ const migrations: Migration[] = [
       event_seq INTEGER NOT NULL,
       PRIMARY KEY (request_id, event_seq)
     );`
+  },
+  {
+    id: 24,
+    name: "wake_error_detail",
+    up: `ALTER TABLE member_wake_endpoints ADD COLUMN last_error_detail TEXT;`
   }
 ];
 

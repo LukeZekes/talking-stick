@@ -225,6 +225,21 @@ interface NoteRow {
 const MAX_NOTE_BODY_BYTES = 16 * 1024;
 const ENDED_MEMBER_GRACE_MS = 60 * 60 * 1000;
 const MAX_MESSAGE_BODY_BYTES = 4096;
+// Wake failure detail is a phase and a known system code, never transport
+// output: anything outside these lists is dropped rather than shown.
+const WAKE_DETAIL_CODES = new Set(["ENOENT", "ECONNREFUSED", "ECONNRESET", "EACCES", "EPERM", "EPIPE", "ETIMEDOUT",
+  "ENOTSOCK", "ENOTCONN", "ENOTDIR", "ENAMETOOLONG", "EINVAL", "EAGAIN", "EMFILE", "ENFILE", "ENOBUFS", "ENOMEM", "EIO",
+  "timeout", "closed", "unknown"]);
+const WAKE_DETAIL_SIGNALS = new Set(["SIGKILL", "SIGTERM", "SIGINT", "SIGHUP", "SIGABRT", "SIGSEGV", "SIGPIPE"]);
+
+function safeWakeDetail(detail: string | undefined): string | undefined {
+  const match = detail === undefined ? null : /^(connect|write|spawn|exit|signal):(\S+)(?: rpc:(-?\d{1,6}))?$/.exec(detail);
+  if (!match) return undefined;
+  const [, phase, code, rpc] = match;
+  const known = phase === "exit" ? /^\d{1,3}$/.test(code) : phase === "signal" ? WAKE_DETAIL_SIGNALS.has(code) : WAKE_DETAIL_CODES.has(code);
+  if (!known || (rpc !== undefined && phase !== "exit")) return undefined;
+  return detail;
+}
 // Bare `tt events` returns a bounded recent tail; --all / --limit widen it.
 const DEFAULT_EVENT_VIEW_LIMIT = 50;
 const KNOWN_EVENT_TYPES: readonly EventType[] = [
@@ -293,6 +308,7 @@ export interface TalkingStickServiceOptions extends OpenDatabaseOptions {
 interface NativeAwareDelivery {
   status: MessageDeliveryStatus;
   error?: string;
+  error_detail?: string;
   transport?: NativeWakeTransportName;
   state?: NativeWakeState | "failed";
   interrupt_status?: "injected" | "unsupported";
@@ -329,6 +345,7 @@ interface NativeWakeEndpointRow {
   last_attempt_at: string | null;
   last_status: NativeWakeState | "failed" | null;
   last_error: string | null;
+  last_error_detail: string | null;
 }
 
 /** Builds a room's role notice from its new state; no recipients means no message. */
@@ -338,6 +355,9 @@ export class TalkingStickService {
   readonly db: SqliteDatabase;
   readonly policy: Policy;
   private readonly wakeRooms = new Set<string>();
+  // Batches this process already failed to deliver for local reasons. Another
+  // process may retry them; this one never repeats the same attempt.
+  private readonly localWakeFailures = new Set<string>();
   private readonly wakeJobs = new Map<Promise<void>, { room: string; agent: string }>();
   private readonly now: () => Date;
   private readonly ownsDatabase: boolean;
@@ -2101,6 +2121,7 @@ export class TalkingStickService {
       ...(delivery.transport ? { transport: delivery.transport } : {}),
       ...(delivery.state ? { state: delivery.state } : {}),
       ...(delivery.error ? { error: delivery.error } : {}),
+      ...(delivery.error_detail ? { error_detail: delivery.error_detail } : {}),
       ...(delivery.interrupt_status ? { interrupt_status: delivery.interrupt_status } : {})
     };
   }
@@ -2114,6 +2135,7 @@ export class TalkingStickService {
       delivery_status: only.status,
       delivery_target: only.agent_id,
       ...(only.error ? { delivery_error: only.error } : {}),
+      ...(only.error_detail ? { delivery_error_detail: only.error_detail } : {}),
       ...(only.transport ? { delivery_transport: only.transport } : {}),
       ...(only.state ? { delivery_state: only.state } : {}),
       ...(only.interrupt_status ? { interrupt_status: only.interrupt_status } : {})
@@ -2304,6 +2326,7 @@ export class TalkingStickService {
             last_attempt_at = NULL,
             last_status = NULL,
             last_error = NULL,
+            last_error_detail = NULL,
             wake_event_seq = NULL,
             batch_id = NULL
         `
@@ -2370,10 +2393,10 @@ export class TalkingStickService {
   private listNativeWakeEndpoints(roomId: string): NativeWakeEndpointSummary[] {
     return this.db.prepare<[string, string], NativeWakeEndpointSummary>(`
       WITH attempts AS (
-        SELECT agent_id, transport, recorded_at, last_attempt_at, last_status, last_error
+        SELECT agent_id, transport, recorded_at, last_attempt_at, last_status, last_error, last_error_detail
         FROM member_wake_endpoints WHERE room_id = ?
         UNION ALL
-        SELECT i.agent_id, i.transport, e.recorded_at, i.attempted_at, i.status, i.error
+        SELECT i.agent_id, i.transport, e.recorded_at, i.attempted_at, i.status, i.error, NULL
         FROM interrupt_deliveries i JOIN member_wake_endpoints e
           ON e.room_id = i.room_id AND e.agent_id = i.agent_id AND e.transport = i.transport
           AND e.harness_session_id = i.harness_session_id AND e.host_id = i.host_id
@@ -2382,7 +2405,7 @@ export class TalkingStickService {
         SELECT *, ROW_NUMBER() OVER (PARTITION BY agent_id, transport ORDER BY last_attempt_at DESC) AS rank
         FROM attempts
       )
-      SELECT agent_id, transport, recorded_at, last_attempt_at, last_status, last_error
+      SELECT agent_id, transport, recorded_at, last_attempt_at, last_status, last_error, last_error_detail
       FROM ranked WHERE rank = 1 ORDER BY agent_id, transport
     `).all(roomId, roomId);
   }
@@ -2483,6 +2506,7 @@ export class TalkingStickService {
   // Writes only queue work. Call flushWakes after committing, before closing
   // the sending process. Separate recipients dispatch concurrently.
   async flushWakes(roomId?: string, agentId?: string): Promise<void> {
+    this.releaseStaleUnconfirmedWakes();
     // An unscoped flush also sweeps pending rows another process queued but
     // never delivered (killed after commit, or a long wait that queued them).
     const rooms = roomId ? [roomId] : [...new Set([...this.wakeRooms,
@@ -2771,9 +2795,12 @@ export class TalkingStickService {
         return null;
       }
       if (!endpoints.some((row) => row.wake_pending && !row.awaiting_wait)) return null;
+      const failureKey = this.localWakeFailureKey(roomId, agentId, endpoints);
+      if (this.localWakeFailures.has(failureKey)) return null;
       const batchId = this.newDeliveryToken();
       this.db.prepare(`UPDATE member_wake_endpoints SET wake_pending = 0, awaiting_wait = 1,
-        batch_id = ?, batch_started_at = ?, dispatch_event_seq = wake_event_seq, last_status = NULL, last_error = NULL
+        batch_id = ?, batch_started_at = ?, dispatch_event_seq = wake_event_seq, last_status = NULL, last_error = NULL,
+        last_error_detail = NULL
         WHERE room_id = ? AND agent_id = ?`).run(batchId, this.now().toISOString(), roomId, agentId);
       const reason = endpoints.find((row) => row.wake_pending && row.wake_reason);
       const text = formatNativeWakeText({ reason: reason?.wake_reason ?? "room_update",
@@ -2787,10 +2814,11 @@ export class TalkingStickService {
           AND e.event_type = 'message_sent' AND e.from_agent_id LIKE 'human:%' LIMIT 1`)
         .get(roomId, agentId));
       const nativeText = this.prepareNativeEnvelope(roomId, agentId, undefined, batchId);
-      return { endpoints, batchId, text: nativeText ?? text, wakeReason, steer, standbyGeneration: member.standby_generation };
+      return { endpoints, batchId, text: nativeText ?? text, wakeReason, steer, standbyGeneration: member.standby_generation, failureKey };
     });
     if (!reservation) return;
-    const { endpoints, batchId, text, wakeReason, steer, standbyGeneration } = reservation;
+    const { endpoints, batchId, text, wakeReason, steer, standbyGeneration, failureKey } = reservation;
+    let anyLocal = false;
     for (const endpoint of endpoints) {
       // Another wait, leave, or session replacement may have invalidated this
       // batch while a previous transport was in flight. Never fall back then.
@@ -2813,11 +2841,14 @@ export class TalkingStickService {
           !(member.wait_intent === "parked" && member.standby_transport === "cmux")) return;
       const result = await this.deliverWakeEndpoint(endpoint, text, false, steer);
       const safeError = result.error ?? null;
+      const detail = safeWakeDetail(result.detail) ?? null;
       const recorded = this.db.prepare(`UPDATE member_wake_endpoints
-        SET last_attempt_at = ?, last_status = ?, last_error = ?
+        SET last_attempt_at = ?, last_status = ?, last_error = ?, last_error_detail = ?
         WHERE room_id = ? AND agent_id = ? AND transport = ? AND generation = ? AND batch_id = ?`
-      ).run(this.now().toISOString(), result.outcome, safeError, roomId, agentId, endpoint.transport, endpoint.generation, batchId);
+      ).run(this.now().toISOString(), result.outcome, safeError, detail,
+        roomId, agentId, endpoint.transport, endpoint.generation, batchId);
       if (recorded.changes !== 1) return;
+      if (result.outcome === "failed" && result.local) anyLocal = true;
       if (result.outcome !== "failed") {
         this.db.prepare(`UPDATE room_members SET standby_wake_pending = 0,
           standby_delivered_at = ?, standby_last_error = ?
@@ -2828,13 +2859,39 @@ export class TalkingStickService {
     }
     // Every eligible transport definitely failed, so nothing reached the
     // harness. Release the batch: the failure may be local to this sender (no
-    // codex on PATH), and a later sender or an interrupt may reach cmux.
-    this.db.prepare(`UPDATE member_wake_endpoints SET awaiting_wait = 0
+    // codex on PATH), and a later sender or an interrupt may reach cmux. When
+    // any failure was this sender's own, keep the work pending so the next tt
+    // process on this host retries it without waiting for another message.
+    if (anyLocal) this.localWakeFailures.add(failureKey);
+    this.db.prepare(`UPDATE member_wake_endpoints SET awaiting_wait = 0,
+        wake_pending = CASE WHEN ? THEN 1 ELSE wake_pending END
       WHERE room_id = ? AND agent_id = ? AND batch_id = ?`
-    ).run(roomId, agentId, batchId);
+    ).run(anyLocal ? 1 : 0, roomId, agentId, batchId);
     this.db.prepare(`UPDATE room_members SET standby_last_error = 'wake_delivery_failed'
       WHERE room_id = ? AND agent_id = ? AND standby_generation = ?`
     ).run(roomId, agentId, standbyGeneration);
+  }
+
+  // A batch whose delivery could not be confirmed (or whose sender died before
+  // recording an outcome) is retried after five minutes if its events are still
+  // unread, by whichever tt process flushes next: new work is not required.
+  // Delivered batches keep waiting for the agent, as before.
+  private releaseStaleUnconfirmedWakes(): void {
+    const before = new Date(this.now().getTime() - 5 * 60_000).toISOString();
+    this.db.prepare(`UPDATE member_wake_endpoints SET awaiting_wait = 0, batch_id = NULL, wake_pending = 1
+      WHERE awaiting_wait = 1 AND COALESCE(batch_started_at, last_attempt_at, recorded_at) <= ?
+        AND NOT EXISTS (SELECT 1 FROM member_wake_endpoints o WHERE o.room_id = member_wake_endpoints.room_id
+          AND o.agent_id = member_wake_endpoints.agent_id AND o.awaiting_wait = 1
+          AND (o.last_status IN ('queued', 'woken') OR COALESCE(o.batch_started_at, o.last_attempt_at, o.recorded_at) > ?))
+        AND EXISTS (SELECT 1 FROM native_event_receipts n WHERE n.room_id = member_wake_endpoints.room_id
+          AND n.agent_id = member_wake_endpoints.agent_id AND n.consumed_at IS NULL)`).run(before, before);
+  }
+
+  // The same unread work on the same endpoints: newer events or a re-registered
+  // session make a fresh key, so a local failure never blocks later work.
+  private localWakeFailureKey(roomId: string, agentId: AgentId, endpoints: NativeWakeEndpointRow[]): string {
+    const newest = Math.max(0, ...endpoints.map((row) => row.wake_event_seq ?? 0));
+    return [roomId, agentId, newest, ...endpoints.map((row) => `${row.transport}:${row.generation}`).sort()].join("|");
   }
 
   private async deliverWakeEndpoint(endpoint: NativeWakeEndpointRow, text: string, interrupt = false, steer = false): Promise<NativeWakeResult> {
@@ -2868,7 +2925,8 @@ export class TalkingStickService {
       "cmux_wake_failed", "native_wake_unavailable", "wake_delivery_unconfirmed"
     ].includes(result.error)
       ? result.error : result.error ? "wake_delivery_failed" : null;
-    return { outcome: result.outcome, ...(safeError ? { error: safeError } : {}) };
+    return { outcome: result.outcome, ...(safeError ? { error: safeError } : {}),
+      ...(result.detail ? { detail: result.detail } : {}), ...(result.local && result.outcome === "failed" ? { local: true } : {}) };
   }
 
   private codexTurnActive(member: RoomMemberRow): boolean {
@@ -3171,12 +3229,14 @@ export class TalkingStickService {
         attempted.dispatch_event_seq === eventSeq ? "endpoint" : "pending",
       transport: attempted.transport,
       state: attempted.dispatch_event_seq === eventSeq ? attempted.last_status ?? undefined : undefined,
-      ...(attempted.last_error ? { error: attempted.last_error } : {})
+      ...(attempted.last_error ? { error: attempted.last_error } : {}),
+      ...(attempted.last_error_detail ? { error_detail: attempted.last_error_detail } : {})
     };
     const failed = endpoints.find((row) => row.dispatch_event_seq === eventSeq && row.last_status === "failed");
     if (failed) return {
       status: "unreachable", transport: failed.transport, state: "failed",
-      ...(failed.last_error ? { error: failed.last_error } : {})
+      ...(failed.last_error ? { error: failed.last_error } : {}),
+      ...(failed.last_error_detail ? { error_detail: failed.last_error_detail } : {})
     };
     if (endpoints.length > 0) return { status: "pending" };
     if (member.standby_transport === "manual") return { status: "pending", error: "manual_standby" };

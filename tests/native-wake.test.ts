@@ -481,7 +481,18 @@ describe("system native wake transport", () => {
   test("a missing Claude socket is a definite redacted failure", async () => {
     expect(await createSystemNativeWakeTransport().deliver({
       transport: "claude_inbox", address: path.join(tempRoot(), "private.sock"), secret: "secret", text: "fixed"
-    })).toEqual({ outcome: "failed", error: "claude_inbox_unreachable" });
+    })).toEqual({ outcome: "failed", error: "claude_inbox_unreachable", detail: "connect:ENOENT" });
+  });
+
+  test("a Claude socket this sender may not reach is a local, definite failure", async () => {
+    if (process.getuid?.() === 0) return;
+    const locked = path.join(tempRoot(), "locked");
+    fs.mkdirSync(locked, { mode: 0o000 });
+    try {
+      expect(await createSystemNativeWakeTransport().deliver({
+        transport: "claude_inbox", address: path.join(locked, "inbox.sock"), secret: "secret", text: "fixed"
+      })).toEqual({ outcome: "failed", error: "claude_inbox_unreachable", detail: "connect:EACCES", local: true });
+    } finally { fs.chmodSync(locked, 0o700); }
   });
 
   test("Codex uses literal argv, distinguishes rejection, and bounds hung/output-heavy children", async () => {
@@ -496,9 +507,13 @@ describe("system native wake transport", () => {
     expect(await transport.deliver(request)).toEqual({ outcome: "queued" });
     expect(JSON.parse(fs.readFileSync(capture, "utf8"))).toEqual(["queue", "--thread", thread, "--message", request.text]);
     script(`console.error('Error: failed to queue session message: thread/queue/add failed: failed to read thread: invalid thread-store request: no rollout found for thread id ${thread} (code -32603)');process.exit(1);`);
-    expect(await transport.deliver(request)).toEqual({ outcome: "failed", error: "codex_thread_not_found" });
-    script("console.error('private token /private/inbox.sock not found'); process.exit(1);");
-    expect(await transport.deliver(request)).toEqual({ outcome: "ambiguous", error: "codex_queue_failed" });
+    expect(await transport.deliver(request)).toEqual({ outcome: "failed", error: "codex_thread_not_found", detail: "exit:1 rpc:-32603" });
+    // Stderr never reaches the result, even when it looks like a denial.
+    script("console.error('EACCES private token /private/inbox.sock permission denied'); process.exit(1);");
+    expect(await transport.deliver(request)).toEqual({ outcome: "ambiguous", error: "codex_queue_failed", detail: "exit:1" });
+    fs.chmodSync(executable, 0o600);
+    expect(await transport.deliver(request)).toEqual({ outcome: "failed", error: "codex_unavailable", detail: "spawn:EACCES", local: true });
+    fs.chmodSync(executable, 0o700);
     script("setInterval(() => {}, 1000);");
     let responsive = false;
     const timer = setTimeout(() => { responsive = true; }, 20);
@@ -508,7 +523,7 @@ describe("system native wake transport", () => {
     script("process.stdout.write('x'.repeat(100000));");
     expect(await transport.deliver(request)).toMatchObject({ outcome: "ambiguous" });
     fs.unlinkSync(executable);
-    expect(await transport.deliver(request)).toEqual({ outcome: "failed", error: "codex_unavailable" });
+    expect(await transport.deliver(request)).toEqual({ outcome: "failed", error: "codex_unavailable", detail: "spawn:ENOENT", local: true });
     expect(await transport.deliver({ ...request, address: "--help" })).toEqual({ outcome: "failed", error: "invalid_codex_thread" });
     expect(CODEX_QUEUE_TIMEOUT_MS).toBe(10_000);
     expect(CLAUDE_INBOX_TIMEOUT_MS).toBe(2_000);
@@ -725,7 +740,7 @@ test("Claude timeout after a blocked write is ambiguous and closes its connectio
     const result = await createSystemNativeWakeTransport({ timeout_ms: 100 }).deliver({
       transport: "claude_inbox", address, secret: "secret", text: "x".repeat(8 * 1024 * 1024)
     });
-    expect(result).toEqual({ outcome: "ambiguous", error: "claude_inbox_timeout" });
+    expect(result).toEqual({ outcome: "ambiguous", error: "claude_inbox_timeout", detail: "write:timeout" });
   } finally {
     for (const socket of connections) socket.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -747,6 +762,103 @@ test("even a transport error shaped like a code cannot expose a secret", async (
   const result = await service.sendMessageAndWake({ agent_id: "human:op:chat:1", room_id: roomId, to_agent_id: "claude:aa", body: "hello" });
   expect(result.delivery_error).toBe("wake_delivery_failed");
   expect(JSON.stringify(service.getRoomHealth({ context_path: project, agent_id: "claude:aa" }))).not.toContain("supersecret");
+});
+
+test("wake failure detail is shown only from known codes", async () => {
+  const cases: Array<[string, string | undefined]> = [["connect:supersecret", undefined], ["connect:EPERM rpc:12", undefined],
+    ["exit:token", undefined], ["signal:SIGSECRET", undefined], ["write:EPIPE", "write:EPIPE"], ["exit:1 rpc:-32603", "exit:1 rpc:-32603"]];
+  for (const [detail, shown] of cases) {
+    const { service, project } = harness({ native: () => ({ outcome: "ambiguous", error: "claude_inbox_write_failed", detail }) });
+    const roomId = joinPair(service, project);
+    const sent = await service.sendMessageAndWake({ agent_id: "human:op:chat:1", room_id: roomId, to_agent_id: "claude:aa", body: "hi" });
+    expect(sent.deliveries?.[0]?.error_detail).toBe(shown);
+    const health = JSON.stringify(service.getRoomHealth({ context_path: project, agent_id: "claude:aa" }));
+    if (shown) expect(health).toContain(`"last_error_detail":"${shown}"`);
+    for (const secret of ["supersecret", "token", "SIGSECRET"]) expect(health).not.toContain(secret);
+  }
+});
+
+test("a local wake failure stays pending for the next process, once per process", async () => {
+  let attempts = 0;
+  const { service, project } = harness({ native: () => { attempts += 1; return { outcome: "failed", error: "claude_inbox_unreachable", detail: "connect:EPERM", local: true }; } });
+  const roomId = joinPair(service, project);
+  const sent = await service.sendMessageAndWake({ agent_id: "human:op:chat:1", room_id: roomId, to_agent_id: "claude:aa", body: "approve" });
+  expect(sent.deliveries?.[0]).toMatchObject({ error: "claude_inbox_unreachable", error_detail: "connect:EPERM" });
+  await service.flushWakes();
+  await service.flushWakes(roomId);
+  expect(attempts).toBe(1);
+
+  const delivered: string[] = [];
+  const other = new TalkingStickService({ dbPath: service.db.name, hostId: HOST, processLivenessChecker: () => "alive",
+    receiverLivenessChecker: () => "gone", nativeWakeTransport: { deliver(request) { delivered.push(request.text); return { outcome: "queued" }; } } });
+  services.push(other);
+  await other.flushWakes();
+  expect(delivered).toHaveLength(1);
+  expect(envelope({ text: delivered[0] } as NativeWakeRequest).events.map((event) => event.event_seq)).toEqual([sent.event_seq]);
+  acknowledge(other, { text: delivered[0] } as NativeWakeRequest);
+  await other.flushWakes();
+  expect(delivered).toHaveLength(1);
+
+  // A replacement session starts with no inherited failure detail.
+  await service.sendMessageAndWake({ agent_id: "human:op:chat:1", room_id: roomId, to_agent_id: "claude:aa", body: "again" });
+  const lastDetail = () => service.getRoomHealth({ context_path: project, agent_id: "claude:aa" }).wake_endpoints
+    .find((row) => row.agent_id === "claude:aa" && row.transport === "claude_inbox")?.last_error_detail;
+  expect(lastDetail()).toBe("connect:EPERM");
+  service.registerNativeWakeEndpoint({ agent_id: "claude:aa", room_id: roomId, transport: "claude_inbox",
+    address: "/tmp/claude-inbox-2.sock", secret: "s3cret-token", harness_session_id: "claude-session", host_id: HOST });
+  expect(lastDetail()).toBeNull();
+});
+
+test("a definite remote failure releases the batch without keeping it pending", async () => {
+  let attempts = 0;
+  const { service, project } = harness({ native: () => { attempts += 1; return { outcome: "failed", error: "claude_inbox_unreachable", detail: "connect:ENOENT" }; } });
+  const roomId = joinPair(service, project);
+  await service.sendMessageAndWake({ agent_id: "human:op:chat:1", room_id: roomId, to_agent_id: "claude:aa", body: "gone" });
+  const other = new TalkingStickService({ dbPath: service.db.name, hostId: HOST, processLivenessChecker: () => "alive",
+    receiverLivenessChecker: () => "gone", nativeWakeTransport: { deliver() { attempts += 1; return { outcome: "queued" }; } } });
+  services.push(other);
+  await other.flushWakes();
+  expect(attempts).toBe(1);
+});
+
+test("one local failure keeps work pending even when the cmux fallback definitely fails", async () => {
+  let cmux = 0;
+  const { service, project } = harness({
+    native: () => ({ outcome: "failed", error: "claude_inbox_unreachable", detail: "connect:EPERM", local: true }),
+    cmux: () => { cmux += 1; return { delivered: false, error: "no surface", definite_failure: true }; }
+  });
+  const roomId = joinPair(service, project);
+  service.registerStandby({ room_id: roomId, agent_id: "claude:aa", transport: "cmux", workspace_id: "w", surface_id: "s" });
+  await service.sendMessageAndWake({ agent_id: "human:op:chat:1", room_id: roomId, to_agent_id: "claude:aa", body: "both fail" });
+  expect(cmux).toBeGreaterThan(0);
+  const delivered: string[] = [];
+  const other = new TalkingStickService({ dbPath: service.db.name, hostId: HOST, processLivenessChecker: () => "alive",
+    receiverLivenessChecker: () => "gone", nativeWakeTransport: { deliver(request) { delivered.push(request.text); return { outcome: "queued" }; } },
+    wakeTransport: { deliver: () => ({ delivered: false, error: "no surface" }) } });
+  services.push(other);
+  await other.flushWakes();
+  expect(delivered).toHaveLength(1);
+});
+
+test("an unconfirmed batch still unread after five minutes is retried by the next flush", async () => {
+  let clock = Date.parse("2026-10-20T12:00:00.000Z");
+  const outcomes: NativeWakeResult[] = [{ outcome: "ambiguous", error: "claude_inbox_write_failed", detail: "write:EPIPE" }, { outcome: "queued" }, { outcome: "queued" }];
+  const texts: string[] = [];
+  const { service, project } = harness({ native: (request) => { texts.push(request.text); return outcomes.shift()!; } });
+  (service as unknown as { now: () => Date }).now = () => new Date(clock);
+  const roomId = joinPair(service, project);
+  const first = await service.sendMessageAndWake({ agent_id: "human:op:chat:1", room_id: roomId, to_agent_id: "claude:aa", body: "first" });
+  clock += 2 * 60_000;
+  await service.flushWakes();
+  expect(texts).toHaveLength(1);
+  clock += 4 * 60_000;
+  await service.flushWakes();
+  expect(texts).toHaveLength(2);
+  expect(envelope({ text: texts[1] } as NativeWakeRequest).events.map((event) => event.event_seq)).toEqual([first.event_seq]);
+  // A delivered batch keeps waiting for the agent; it is never resent on silence.
+  clock += 10 * 60_000;
+  await service.flushWakes();
+  expect(texts).toHaveLength(2);
 });
 
 test("the codex child never inherits Claude inbox credentials", async () => {
