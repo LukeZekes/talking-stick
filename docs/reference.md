@@ -358,7 +358,7 @@ OpenCode, and Antigravity wake only through cmux.
   without another message; the failing process never repeats the same attempt. An open `tt chat`
   delivers its room's pending wakes whenever a new event arrives, and at least once a minute, so a
   question sent from a desktop app that may not open the agents' sockets reaches them within
-  seconds while a console is open.
+  a minute while a console is open, usually within seconds.
   Claude does not confirm that a turn started; a Codex `woken` result confirms turn creation,
   not that the agent read or acted on the message.
 - A message coalesced behind an earlier wake reports `delivery_status: pending` without reusing that
@@ -410,7 +410,9 @@ safe; events arriving behind a pending normal batch are delivered after its ackn
 Interrupt acknowledgement leaves any unrelated normal batch outstanding. New directed work rearms a
 batch unaccepted for five minutes. A batch whose delivery was never confirmed (`ambiguous`, or its
 sender died first) is also retried after five minutes by the next `tt` command on the host, if its
-events are still unread; a delivered batch keeps waiting for the agent, and nothing retries on a timer. The room path plus `#seq`
+events are still unread; a delivered batch keeps waiting for the agent. Nothing retries on its own:
+retries happen only when a `tt` command runs, and an open `tt chat` checks pending wakes at most
+once a minute. The room path plus `#seq`
 identifies an event for deduplication if an urgent prompt races a running receiver. A handoff
 envelope never substitutes for acquiring a lease and live guardian. Oversized envelopes and cmux use
 the existing body-free pull notification.
