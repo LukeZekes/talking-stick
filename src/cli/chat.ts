@@ -7,9 +7,13 @@ import { planChatInterrupts } from "./chat-interrupt.js";
 import { interruptCodexThread } from "./codex-interrupt.js";
 import { interruptCodexHerdr } from "./codex-herdr-interrupt.js";
 import { ChatInputController, type ChatModalKey } from "./chat-input.js";
-import { createRolesEditor, renderRolesEditor, rolesEditorKey, type RolesEditorState } from "./roles-editor.js";
+import { createRolesEditor, renderRolesEditor, rolesEditorKey, rolesEditorDraft, rolesEditorDirty, refreshRolesEditor, type RolesEditorState } from "./roles-editor.js";
 import { applyRoleChanges, liveAgents, parseRoleList, parseRoleSubject, roomRoleBlock } from "./role-commands.js";
-import { readUserRoleDefaults, writeUserRoleDefault } from "../roles.js";
+import { readUserRoleDefaults, harnessOf } from "../roles.js";
+import { resolveInstructionPaths } from "../instructions.js";
+import { loadRoleDefinitions, parseRoleDefinitionsDetailed, stripRolesSection, effectiveSharedInstructions } from "../role-definitions.js";
+import { applyRoleDraft, previewRoleDraft } from "./role-draft.js";
+import { editTextInTerminal, ExternalEditorError } from "./external-editor.js";
 import { resolveRoomSelector, roomShortName, selectedRoom } from "./room-selector.js";
 import { insideNestedRepository, isWithinOrSame, resolveContextPath } from "../path-resolution.js";
 import { createMemberMenu, memberMenuKey, renderMemberMenu, type MemberMenu } from "./member-menu.js";
@@ -443,39 +447,145 @@ export async function runChatSession(
     redraw();
   };
   let rolesPanel: RolesEditorState | null = null;
+  let rolesBase = { projectText: "", defaults: {} as Record<string, string[]>, versions: {} as Record<string, number>, version: 0 };
+  let roleBusy = false;
+  let rolePreviewKey: string | null = null;
+  let externalEditorActive = false;
+  const deferredInline: string[] = [];
+  const roleOptions = { contextPath: joined.canonical_path };
   const rolesPanelLines = () => roomTree ? roomTree.render(Math.max(3, dimensions().rows - 6), resolvedTreeRoom(), Boolean(formatContext().color)) : memberMenu ? renderMemberMenu(memberMenu, Math.max(3, dimensions().rows - 6), nameOf) : rolesPanel
-    ? renderRolesEditor(rolesPanel, formatContext(), Math.max(4, dimensions().rows - 6), Math.max(20, dimensions().columns - 1))
+    ? renderRolesEditor(rolesPanel, formatContext(), Math.max(1, dimensions().rows - 6), Math.max(1, dimensions().columns - 1))
     : undefined;
   const closeRolesPanel = () => {
     rolesPanel = null;
     editor?.setModal(null);
     redraw();
   };
-  const onRolesKey = (key: ChatModalKey) => {
+  const updateRolePreview = () => {
     if (!rolesPanel) return;
-    const { state, action } = rolesEditorKey(rolesPanel, key);
-    rolesPanel = state;
-    if (action.kind === "cancel") { closeRolesPanel(); print("Roles unchanged."); return; }
-    if (action.kind === "save_default") {
-      try { writeUserRoleDefault(action.harness, action.roles); }
-      catch (error) { rolesPanel = { ...state, notice: `! ${error instanceof Error ? error.message : String(error)}` }; }
-      redraw();
-      return;
+    const key = JSON.stringify(rolesEditorDraft(rolesPanel));
+    if (key === rolePreviewKey) return;
+    try {
+      const preview = previewRoleDraft(runtime, roomId, rolesEditorDraft(rolesPanel), roleOptions);
+      rolePreviewKey = key;
+      rolesPanel = refreshRolesEditor({ ...rolesPanel,
+        definitions: loadRoleDefinitions(roleOptions, preview.project ? { projectText: preview.project.after } : {}),
+        notifications: preview.rooms.flatMap(room => [...room.agents].map(([id, reasons]) =>
+          `${room.room_id === roomId ? "" : roomShortName(room) + ": "}${nameOf(id)} · ${id} ${reasons.join(", ")}`)) });
+    } catch (error) {
+      rolesPanel = { ...rolesPanel, notice: `! ${error instanceof Error ? error.message : String(error)}` };
     }
-    if (action.kind === "apply") {
-      closeRolesPanel();
-      if (action.changes.length === 0) { print("Roles unchanged."); return; }
-      void applyRoleChanges(runtime, identity, roomId, action.changes)
-        .then((result) => print(`Roles v${result.version} applied; told ${result.recipients.map((id) => sanitizeChatText(nameOf(id))).join(", ") || "nobody"}.`))
-        .catch((error) => print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`));
-      return;
-    }
+  };
+  const openRolesPanel = (selection?: Pick<RolesEditorState, "tab" | "row" | "col">) => {
+    if (roomTree || memberMenu) { print("Close the current panel before opening /roles."); return; }
+    const { version, assignments } = runtime.commands.getRoomRoles({ room_id: roomId });
+    rolePreviewKey = null;
+    const file = resolveInstructionPaths(roleOptions).project;
+    rolesBase = { projectText: fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "", defaults: readUserRoleDefaults(), version, versions: Object.fromEntries(runtime.commands.listRooms({}).rooms.map(room => [room.room_id, runtime.commands.getRoomRoles({ room_id: room.room_id }).version])) };
+    rolesPanel = createRolesEditor({ agents: liveAgents(runtime, roomId), assignments, userDefaults: rolesBase.defaults,
+      version, definitions: loadRoleDefinitions(roleOptions), globalDefinitions: loadRoleDefinitions(roleOptions, { projectText: "" }), nameOf });
+    if (selection) rolesPanel = refreshRolesEditor({ ...rolesPanel, ...selection });
+    editor?.setModal(onRolesKey);
     redraw();
   };
-  const openRolesPanel = () => {
-    const { version, assignments } = runtime.commands.getRoomRoles({ room_id: roomId });
-    rolesPanel = createRolesEditor({ agents: liveAgents(runtime, roomId), assignments, userDefaults: readUserRoleDefaults(), version });
-    editor?.setModal(onRolesKey);
+  const editRoleText = async (action: { kind: "edit_role"; name: string } | { kind: "new_role" } | { kind: "edit_instructions" }) => {
+    if (!rolesPanel || !editor) return;
+    const state = rolesPanel;
+    const editKey = action.kind === "edit_role" ? `role:${action.name}` : action.kind;
+    let editedText: string | undefined;
+    roleBusy = true;
+    try {
+      const staged = previewRoleDraft(runtime, roomId, rolesEditorDraft(state), roleOptions).project?.after ?? rolesBase.projectText;
+      const initial = action.kind === "new_role" ? "## Roles\n\n### new-role\nDescribe this role.\n"
+        : action.kind === "edit_role" ? state.definitions.find(d => d.name === action.name)?.text ?? ""
+        : stripRolesSection(staged);
+      const text = state.rejectedText?.key === editKey ? state.rejectedText.text : initial;
+      const edited = await editTextInTerminal(text, {
+        suspend: () => {
+          externalEditorActive = true;
+          if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
+          if (inline) eraseComposer();
+          output.write("\u001b[?2026l\u001b[?2004l\u001b[?1000l\u001b[?1006l\u001b[?25h" + (fullscreen ? "\u001b[?1049l" : ""));
+          editor?.suspend();
+        },
+        resume: () => {
+          externalEditorActive = false;
+          if (closed) return;
+          output.write((fullscreen ? "\u001b[?1049h" : "") + "\u001b[?2004h" + (fullscreen && options.mouse ? "\u001b[?1000h\u001b[?1006h" : ""));
+          previousFrame = null;
+          editor?.resume();
+          if (inline) {
+            // The editor may have moved the cursor anywhere on the normal screen.
+            inlineFrame = null;
+            inlineReceiptRows.clear();
+            output.write("\r\n");
+            for (const line of deferredInline.splice(0)) writeInline(line);
+          }
+          redraw();
+        }
+      }, { name: action.kind === "edit_role" ? `${action.name}.md` : "instructions.md" });
+      editedText = edited;
+      if (closed || rolesPanel !== state) return;
+      if (action.kind === "new_role" && edited === initial && !state.rejectedText) return;
+      const draft = { ...state.draft, definitions: { ...state.draft.definitions } };
+      if (action.kind === "edit_instructions") {
+        if (parseRoleDefinitionsDetailed(edited).definitions.length || parseRoleDefinitionsDetailed(edited).problems.length) throw new Error("Use e/n to edit role definitions; i edits shared project instructions only.");
+        if (stripRolesSection(edited).trim() === stripRolesSection(rolesBase.projectText).trim()) delete draft.sharedInstructions;
+        else draft.sharedInstructions = edited;
+      } else {
+        let name: string, body: string;
+        if (action.kind === "new_role") {
+          const parsed = parseRoleDefinitionsDetailed(edited);
+          if (parsed.problems.length || parsed.definitions.length !== 1) throw new Error("Define exactly one valid role under ## Roles / ### role-name.");
+          ({ name, text: body } = parsed.definitions[0]);
+          if (state.definitions.some(d => d.name === name)) throw new Error(`Role ${name} already exists; select it and press e.`);
+        } else { name = action.name; body = edited.trim(); }
+        if (state.originalDefinitions.find(d => d.name === name)?.text === body) delete draft.definitions![name];
+        else draft.definitions![name] = body;
+      }
+      // Validate the reconstructed file before accepting the editor text.
+      previewRoleDraft(runtime, roomId, { ...rolesEditorDraft(state), ...draft }, roleOptions);
+      rolesPanel = { ...state, draft, rejectedText: undefined, notice: "Draft updated. Enter applies; u undoes." };
+      updateRolePreview();
+    } catch (error) {
+      const rejected = error instanceof ExternalEditorError ? error.draftText : editedText;
+      if (rolesPanel) rolesPanel = { ...rolesPanel,
+        ...(rejected !== undefined ? { rejectedText: { key: editKey, text: rejected } } : {}),
+        notice: `! ${(error instanceof Error ? error.message : String(error)).replace(/[.!?]+$/, "")}. Press ${action.kind === "new_role" ? "n" : action.kind === "edit_role" ? "e" : "i"} again to correct the text.` };
+    } finally { roleBusy = false; redraw(); }
+  };
+  const onRolesKey = (key: ChatModalKey) => {
+    if (!rolesPanel || roleBusy) return;
+    const { state, action } = rolesEditorKey(rolesPanel, key);
+    rolesPanel = state;
+    if (action.kind === "cancel") { closeRolesPanel(); return; }
+    if (action.kind === "undo") { openRolesPanel(); return; }
+    if (action.kind === "edit_role" || action.kind === "new_role" || action.kind === "edit_instructions") {
+      void editRoleText(action); return;
+    }
+    if (action.kind === "preview") {
+      try {
+        const preview = previewRoleDraft(runtime, roomId, rolesEditorDraft(state), roleOptions);
+        const row = (state.tab === "room" ? state.rows : state.defaultRows).find(r => r.agent_id === action.agent);
+        const defs = state.tab === "room" ? state.definitions : state.globalDefinitions;
+        const shared = state.tab === "room" ? effectiveSharedInstructions(harnessOf(action.agent), roleOptions,
+          preview.project ? { projectText: preview.project.after } : {}) : "Harness defaults apply in every room without a room/session override. Each project supplies its own shared instructions.";
+        rolesPanel = { ...state, preview: `${state.tab === "room" ? "Instructions for" : "Default roles for"} ${row?.label ?? action.agent}\n\n${shared}\n\n` +
+          (row?.roles ?? []).map(name => `### ${name}\n${defs.find(d => d.name === name)?.text ?? "No definition."}`).join("\n\n") };
+      } catch (error) { rolesPanel = { ...state, view: "grid", notice: `! ${error instanceof Error ? error.message : String(error)}` }; }
+      redraw(); return;
+    }
+    if (action.kind === "apply") {
+      if (!rolesEditorDirty(state)) { rolesPanel = { ...state, notice: "No changes to apply." }; redraw(); return; }
+      roleBusy = true;
+      rolesPanel = { ...state, notice: "Applying…" };
+      void applyRoleDraft(runtime, identity, roomId, rolesEditorDraft(state), { ...roleOptions, base: rolesBase })
+        .then(result => { if (!closed) { openRolesPanel({ tab: state.tab, row: state.row, col: state.col }); if (rolesPanel) rolesPanel.notice = result.summary; print(sanitizeChatText(result.summary)); } })
+        .catch(error => { rolesPanel = { ...state, notice: `! ${error instanceof Error ? error.message : String(error)}` }; })
+        .finally(() => { roleBusy = false; redraw(); });
+      return;
+    }
+    updateRolePreview();
     redraw();
   };
   const switchTo = (room: PathRoom) => {
@@ -601,7 +711,7 @@ export async function runChatSession(
     inlineFrame = null;
   };
   const drawComposer = () => {
-    if (!inline || closed) return;
+    if (!inline || closed || externalEditorActive) return;
     const draft = editor?.draft ?? { line: "", cursor: 0 };
     const frame = renderInlinePanel({
       room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), transcript, format: formatContext(),
@@ -626,6 +736,7 @@ export async function runChatSession(
   // Inline output must not land on top of the composer: erase it, print the
   // line, then redraw the draft underneath.
   const writeInline = (text: string) => {
+    if (externalEditorActive) { deferredInline.push(text); return; }
     eraseComposer();
     const lines = text.split(/\r?\n/).flatMap(line => wrapStyledLine(line, Math.max(1, dimensions().columns - 1)));
     output.write(lines.join("\r\n") + "\r\n");
@@ -633,11 +744,12 @@ export async function runChatSession(
     drawComposer();
   };
   const redraw = () => {
+    if (externalEditorActive) return;
     if (inline) { drawComposer(); return; }
     if (!fullscreen || closed || frameTimer) return;
     frameTimer = setTimeout(() => {
       frameTimer = null;
-      if (closed || !screenActive) return;
+      if (closed || !screenActive || externalEditorActive) return;
       try {
         const frame = renderChatScreen({
           room_path: joined.canonical_path,
@@ -695,7 +807,7 @@ export async function runChatSession(
     const row = inlineReceiptRows.get(seq);
     const event = trackedEvents.get(seq);
     const header = event ? render(event)?.split("\n")[0] : undefined;
-    if (inline && row !== undefined && row >= inlineVisibleFloor && header !== undefined) {
+    if (inline && !externalEditorActive && row !== undefined && row >= inlineVisibleFloor && header !== undefined) {
       // Only repaint rows still on the live terminal screen. Cursor movement
       // cannot rewrite native scrollback. Saved history reads durable receipts.
       // Icons are one cell wide, so the header wraps to the same rows as before.
@@ -753,6 +865,7 @@ export async function runChatSession(
     restore();
   };
   const onResize = () => {
+    if (externalEditorActive) return;
     // Reflow invalidates physical row anchors; never overwrite a different
     // message using coordinates recorded at the old width.
     inlineReceiptRows.clear();
@@ -1002,8 +1115,9 @@ export async function runChatSession(
           if (action === "default") {
             if (!target) { print("Usage: /roles default <harness> <roles|none|clear>"); return; }
             const roles = parseRoleList(rest.join(" "));
-            writeUserRoleDefault(target, roles);
-            print(`Default roles for ${sanitizeChatText(target)}: ${roles === null ? "bundled" : roles.join(", ") || "none"}.`);
+            void applyRoleDraft(runtime, identity, roomId, { defaults: { [target]: roles } }, roleOptions)
+              .then(result => print(sanitizeChatText(result.summary)))
+              .catch(error => print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`));
             return;
           }
           if (action === "set") {
@@ -1255,7 +1369,7 @@ export async function runChatSession(
     redraw();
   };
   const onSignal = () => stop();
-  const onInterrupt = () => editor?.clear();
+  const onInterrupt = () => { if (!externalEditorActive) editor?.clear(); };
   process.on("SIGTERM", onSignal);
   process.on("SIGHUP", onSignal);
   if (terminal) {

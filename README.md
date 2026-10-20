@@ -78,7 +78,7 @@ the stick in the footer and a delivery mark next to each agent you message.
 | `!@claude stop, wrong file` | Steers Claude mid-task, at its next tool step |
 | `/rooms` or Ctrl+T | Directory tree of the repository's rooms with live members; Enter opens one |
 | `/members` | Pick a member to message or remove (removal asks first) |
-| `/roles` | Edit who does what in this room |
+| `/roles` | Assign roles, edit definitions/instructions, and set harness defaults (Tab switches scope; Enter applies) |
 | `/who`, `/help` | Members and stick holder; all commands |
 
 Each message header marks every recipient: `…` not delivered yet, `✓` delivered, `!` failed. That's a

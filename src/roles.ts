@@ -38,8 +38,12 @@ export function normalizeRole(role: string): string | null {
   return /^[a-z][a-z0-9-]{0,31}$/.test(name) ? name : null;
 }
 
-export function describeRole(role: string): string {
-  return ROLE_PALETTE[role] ?? role;
+/** A role's one-line summary: the first line of its definition. */
+export function describeRole(role: string, definitions?: ReadonlyMap<string, string>): string {
+  const text = definitions?.get(role) ?? ROLE_PALETTE[role];
+  if (!text) return role;
+  const first = text.trim().split("\n")[0].trim();
+  return first.length > 100 ? `${first.slice(0, 99)}…` : first;
 }
 
 export function userRoleDefaultsPath(options: ResolveDataDirOptions = {}): string {
@@ -62,6 +66,22 @@ export function readUserRoleDefaults(options: ResolveDataDirOptions = {}): Recor
   } catch {
     return {};
   }
+}
+
+/** Saves must never turn a malformed defaults file into silent data loss. */
+export function readUserRoleDefaultsStrict(options: ResolveDataDirOptions = {}): Record<string, string[]> {
+  const file = userRoleDefaultsPath(options);
+  if (!fs.existsSync(file)) return {};
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) ||
+      Object.values(parsed).some(value => !Array.isArray(value) || value.some(role => typeof role !== "string" || !normalizeRole(role)))) {
+      throw new Error("expected an object of harness names to role lists");
+    }
+  } catch (error) {
+    throw new Error(`Refusing to overwrite ${file}: ${error instanceof Error ? error.message : String(error)}. Fix or remove it first.`);
+  }
+  return readUserRoleDefaults(options);
 }
 
 /** `roles: null` removes the override so the bundled default applies again. */
@@ -110,8 +130,10 @@ export function renderRoleBlock(input: {
   assignments: readonly RoomRoleAssignment[];
   userDefaults: Record<string, string[]>;
   version: number;
+  /** Role definitions from the instructions; the palette fills any gap. */
+  definitions?: ReadonlyMap<string, string>;
 }): string {
-  const describe = (roles: string[]) => roles.length === 0 ? "no assigned role" : roles.map((role) => `${role} (${describeRole(role)})`).join("; ");
+  const describe = (roles: string[]) => roles.length === 0 ? "no assigned role" : roles.map((role) => `${role} (${describeRole(role, input.definitions)})`).join("; ");
   const lines = [`Roles in this room (version ${input.version}). Roles describe responsibility only; only the stick grants write authority.`];
   if (input.self) {
     lines.push(`- You (${input.self}): ${describe(effectiveRoles(input.self, input.assignments, input.userDefaults).roles)}`);
@@ -119,6 +141,13 @@ export function renderRoleBlock(input: {
   for (const agent of input.agents) {
     if (agent === input.self) continue;
     lines.push(`- ${agent}: ${describe(effectiveRoles(agent, input.assignments, input.userDefaults).roles)}`);
+  }
+  // Peers see summaries; an agent reads its own roles in full.
+  if (input.self) {
+    const full = effectiveRoles(input.self, input.assignments, input.userDefaults).roles
+      .map((role) => [role, input.definitions?.get(role)?.trim()] as const)
+      .filter((entry): entry is readonly [string, string] => Boolean(entry[1]) && entry[1] !== describeRole(entry[0], input.definitions));
+    if (full.length) lines.push("", "Your roles in full:", ...full.flatMap(([role, text]) => [`### ${role}`, text]));
   }
   return lines.join("\n");
 }

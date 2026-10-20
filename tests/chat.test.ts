@@ -2027,7 +2027,7 @@ test("/roles opens a key-driven editor; Enter applies and tells only the changed
   });
   await until(() => out.includes("Room"));
   input.write("/roles\r");
-  await until(() => out.includes("Roles (v0)"));
+  await until(() => out.includes("Roles v0"));
   // codex row, reviewer column, toggle on, apply.
   input.write("\u001b[B");
   input.write("\u001b[C\u001b[C");
@@ -2036,11 +2036,19 @@ test("/roles opens a key-driven editor; Enter applies and tells only the changed
   await until(() => service.getRoomRoles({ room_id: joined.room_id }).version === 1);
   expect(service.getRoomRoles({ room_id: joined.room_id }).assignments)
     .toEqual([{ subject: "agent:codex:bb", roles: ["implementer", "reviewer"] }]);
-  await until(() => out.includes("Roles v1 applied; told codex"));
+  await until(() => out.includes("Roles applied; told 1 agent"));
   const messages = service.getRecentRoomEvents({ room_id: joined.room_id, limit: 20 })
     .filter((event) => event.event_type === "message_sent");
   expect(messages).toHaveLength(1);
   expect(messages[0].to_agent_id).toBe("codex:bb");
+  // Apply keeps the same cell: toggling again removes that exact assignment.
+  out = "";
+  input.write(" "); input.write("\r");
+  await until(() => out.includes("Roles applied; told 1 agent"));
+  expect(service.getRoomRoles({ room_id: joined.room_id }).version).toBe(2);
+  expect(service.getRoomRoles({ room_id: joined.room_id }).assignments)
+    .toEqual([{ subject: "agent:codex:bb", roles: ["implementer"] }]);
+  input.write("q");
   input.write("/quit\r");
   await session;
 });
@@ -2143,5 +2151,76 @@ test.each([true, false])("room tree opens a directory and creates its room only 
   } finally {
     input.write("\u0003/quit\r");
     await session;
+  }
+});
+
+test.each([true, false])("/roles stages external-editor definitions and applies once (inline=%s)", async (inline) => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "claude:editor", context_path: root });
+  const script = path.join(root, "edit.sh");
+  fs.writeFileSync(script, '#!/bin/sh\nprintf "New architect definition.\\n" > "$1"\n', { mode: 0o755 });
+  const previous = process.env.VISUAL;
+  process.env.VISUAL = script;
+  const input = new PassThrough();
+  const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+  let out = "";
+  output.on("data", chunk => { out += chunk.toString(); });
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline, color: false,
+    history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => out.includes("Room"));
+    input.write("/roles\r");
+    await until(() => out.includes("Roles v0"));
+    input.write("e");
+    await until(() => out.includes("Draft updated"));
+    expect(service.getRoomRoles({ room_id: joined.room_id }).version).toBe(0);
+    expect(fs.existsSync(path.join(root, ".talking-stick", "instructions.md"))).toBe(false);
+    input.write("\r");
+    await until(() => service.getRoomRoles({ room_id: joined.room_id }).version === 1);
+    await until(() => out.includes("Roles applied"));
+    expect(fs.readFileSync(path.join(root, ".talking-stick", "instructions.md"), "utf8")).toContain("New architect definition.");
+    const notices = service.getRecentRoomEvents({ room_id: joined.room_id, event_types: ["message_sent"], limit: 20 });
+    expect(notices).toHaveLength(1);
+    expect(notices[0].to_agent_id).toBe("claude:editor");
+    expect(notices[0].payload?.body).toContain("New architect definition.");
+  } finally {
+    if (previous === undefined) delete process.env.VISUAL; else process.env.VISUAL = previous;
+    input.end(); await session;
+  }
+});
+
+test("invalid new-role text reopens intact instead of being lost", async () => {
+  const { root, service } = setupService();
+  service.joinPath({ agent_id: "claude:retry", context_path: root });
+  const script = path.join(root, "retry.sh"), flag = path.join(root, "called"), capture = path.join(root, "reopened.md");
+  fs.writeFileSync(script, `#!/bin/sh
+if [ -f '${flag}' ]; then
+  cp "$1" '${capture}'
+  printf '## Roles\n\n### valid-role\nKeep this role.\n' > "$1"
+else
+  printf '## Roles\n\n### Bad Name!\nKeep my text.\n' > "$1"
+  touch '${flag}'
+fi
+`, { mode: 0o755 });
+  const previous = process.env.VISUAL;
+  process.env.VISUAL = script;
+  const input = new PassThrough();
+  const output = Object.assign(new PassThrough(), { columns: 120, rows: 28 });
+  let out = ""; output.on("data", chunk => { out += chunk.toString(); });
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} }, identity: observerIdentity(),
+    context_path: root, input, output, terminal: true, inline: true, color: false, history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => out.includes("Room")); input.write("/roles\r");
+    await until(() => out.includes("Roles v0")); input.write("n");
+    await until(() => out.includes("Press n again"));
+    expect(out).not.toContain("role-name.. Press");
+    input.write("n");
+    await until(() => out.includes("Draft updated"));
+    expect(fs.readFileSync(capture, "utf8")).toContain("### Bad Name!\nKeep my text.");
+    expect(fs.existsSync(path.join(root, ".talking-stick", "instructions.md"))).toBe(false);
+  } finally {
+    if (previous === undefined) delete process.env.VISUAL; else process.env.VISUAL = previous;
+    input.end(); await session;
   }
 });

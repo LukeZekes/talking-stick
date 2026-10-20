@@ -38,7 +38,7 @@ const PASTE_START = "\u001b[200~";
 const PASTE_END = "\u001b[201~";
 const MAX_PASTE_LENGTH = 65_536;
 
-export type ChatModalKey = "up" | "down" | "left" | "right" | "space" | "enter" | "escape" | "default" | "yes" | "no";
+export type ChatModalKey = "up" | "down" | "left" | "right" | "space" | "enter" | "escape" | "default" | "yes" | "no" | "tab" | "edit" | "instructions" | "preview" | "undo" | "reset" | "help" | "quit" | "page_up" | "page_down" | "notifications";
 
 // Readline edits a private buffer; it never writes to the physical terminal.
 // Terminal-only controls are consumed before readline's keypress decoder.
@@ -53,6 +53,7 @@ export class ChatInputController {
   private escapeTimer: ReturnType<typeof setTimeout> | null = null;
   private submitted: string | null = null;
   private closed = false;
+  private suspended = false;
   private selectedCompletion = 0;
   private completionDismissed = false;
   private verticalColumn: number | undefined;
@@ -164,6 +165,8 @@ export class ChatInputController {
       ["\u001b[A", "up"], ["\u001bOA", "up"], ["\u001b[B", "down"], ["\u001bOB", "down"],
       ["\u001b[C", "right"], ["\u001bOC", "right"], ["\u001b[D", "left"], ["\u001bOD", "left"],
       [" ", "space"], ["\r", "enter"], ["\n", "enter"], ["d", "default"], ["D", "default"], ["y", "yes"], ["Y", "yes"], ["n", "no"], ["N", "no"],
+      ["\t", "tab"], ["e", "edit"], ["i", "instructions"], ["p", "preview"], ["v", "notifications"], ["u", "undo"], ["r", "reset"], ["?", "help"], ["q", "quit"],
+      ["\u001b[5~", "page_up"], ["\u001b[6~", "page_down"],
       ["k", "up"], ["j", "down"], ["h", "left"], ["l", "right"], ["\u0003", "escape"]
     ];
     if (this.modalEscapeTimer) clearTimeout(this.modalEscapeTimer);
@@ -226,6 +229,36 @@ export class ChatInputController {
 
   scrollPrompt(direction: number): void {
     this.moveVertical(direction, direction < 0 ? "\u001b[A" : "\u001b[B");
+  }
+
+  /**
+   * Hands the terminal to another program (an external editor): stops
+   * reading keys and restores the terminal's previous mode. resume() takes
+   * it back. Typed-ahead bytes are dropped rather than replayed into chat.
+   */
+  suspend(): void {
+    if (this.closed || this.suspended) return;
+    this.suspended = true;
+    if (this.escapeTimer) clearTimeout(this.escapeTimer);
+    if (this.modalEscapeTimer) clearTimeout(this.modalEscapeTimer);
+    this.escapeTimer = null;
+    this.modalEscapeTimer = null;
+    this.pending = "";
+    this.modalPending = "";
+    this.options.input.off("data", this.onData);
+    this.options.input.pause();
+    (this.options.input as RawInput).setRawMode?.(this.wasRaw);
+  }
+
+  resume(): void {
+    if (this.closed || !this.suspended) return;
+    this.suspended = false;
+    // Keys buffered while another program owned the terminal were meant for
+    // that program; drop them rather than replay them into chat.
+    while (this.options.input.read() !== null) { /* discard */ }
+    (this.options.input as RawInput).setRawMode?.(true);
+    this.options.input.on("data", this.onData);
+    this.options.input.resume();
   }
 
   close(): void {

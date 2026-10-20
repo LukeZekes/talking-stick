@@ -5,6 +5,7 @@ import { resolveDataDir, type ResolveDataDirOptions } from "./config.js";
 import { HARNESS_CLI_HARNESSES, type HarnessCliHarness } from "./harness-model.js";
 import type { DerivedIdentity } from "./identity.js";
 import { resolveContextPath } from "./path-resolution.js";
+import { stripRolesSection } from "./roles-section.js";
 import {
   digestText,
   getManagedContent,
@@ -158,8 +159,9 @@ export function showInstructions(input: {
     options.maxInstructionFileBytes ?? DEFAULT_MAX_INSTRUCTION_FILE_BYTES
   );
   const selectedLayers = selectLayers(scope, layers);
+  // Role definitions are data for the role block, never raw instruction text.
   const text = joinInstructionTexts(
-    selectedLayers.map((layer) => extractHarnessInstructions(layer.text, harness))
+    selectedLayers.map((layer) => extractHarnessInstructions(stripRolesSection(layer.text), harness))
   );
   return {
     harness,
