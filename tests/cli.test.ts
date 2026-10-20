@@ -3530,6 +3530,55 @@ describe("tt room", () => {
     for (const dir of registry) fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  test("list --all shows every occupied room on the host without joining or refreshing", async () => {
+    const registry: string[] = [];
+    const { project } = setupIsolatedCli(registry);
+    const other = path.join(path.dirname(project), "other");
+    const empty = path.join(path.dirname(project), "empty");
+    for (const dir of [other, empty]) fs.mkdirSync(dir);
+    await seedCliLease(project, "claude:host");
+    await captureStdout(["release", project, "--agent", "claude:host", "--status", `Shipped ${"x".repeat(400)}`,
+      "--next-action", "Review it.", "--json"]);
+    const first = JSON.parse(await captureStdout(["state", project, "--agent", "human:observer", "--json"])).room;
+    process.env.TT_HARNESS_AGENT_ID = "codex:host";
+    const second = JSON.parse(await captureStdout(["join", other, "--json"]));
+    // A room whose only agent left disappears from the listing.
+    process.env.TT_HARNESS_AGENT_ID = "grok:host";
+    await captureStdout(["join", empty, "--json"]);
+    await captureStdout(["leave", empty, "--json"]);
+    const service = new TalkingStickService();
+    try {
+      service.joinPath({ agent_id: "human:op:chat:1", context_path: other,
+        process_metadata: { host_id: "elsewhere", pid: 10, process_started_at: "t", session_kind: "human_chat", display_name: "op" } });
+    } finally {
+      service.close();
+    }
+    const seenBefore = JSON.parse(await captureStdout(["state", project, "--agent", "human:observer", "--json"]))
+      .members.find((member: { agent_id: string }) => member.agent_id === "claude:host").last_seen_at;
+
+    process.env.TT_HARNESS_AGENT_ID = "claude:observer";
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const listed = JSON.parse(await captureStdout(["room", "list", "--all", "--json"]));
+    expect(listed.rooms.map((room: { room_id: string }) => room.room_id).sort())
+      .toEqual([first.room_id, second.room_id].sort());
+    const projectRoom = listed.rooms.find((room: { room_id: string }) => room.room_id === first.room_id);
+    expect(projectRoom).toMatchObject({ canonical_path: project, agents: ["claude:host"], consoles: [], owner: null });
+    expect(projectRoom.last_handoff).toMatchObject({ event_type: "release", from_agent_id: "claude:host", next_action: "Review it." });
+    expect(projectRoom.last_handoff.status).toHaveLength(160);
+    expect(projectRoom.last_handoff.status.endsWith("…")).toBe(true);
+    expect(listed.rooms.find((room: { room_id: string }) => room.room_id === second.room_id))
+      .toMatchObject({ agents: ["codex:host"], consoles: ["human:op:chat:1"], last_handoff: null });
+
+    // The observer joined nothing, and listing refreshed nobody's presence.
+    const state = JSON.parse(await captureStdout(["state", project, "--agent", "human:observer", "--json"]));
+    expect(state.members.map((member: { agent_id: string }) => member.agent_id)).toEqual(["claude:host"]);
+    expect(state.members[0].last_seen_at).toBe(seenBefore);
+    const text = await captureStdout(["room", "list", "--all", "--text"]);
+    expect(text).toContain(`#project  claude:host  active`);
+    expect(text).toContain("#other  codex:host, 1 console");
+    for (const dir of registry) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   test("adopt declares a legacy nested room without changing its id", async () => {
     const registry: string[] = [];
     const { project } = setupIsolatedCli(registry);

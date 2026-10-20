@@ -2,9 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { ROOM_DECLARATION_FILE, insideNestedRepository, isWithinOrSame, resolveContextPath } from "../path-resolution.js";
 import { HUMAN_CHAT_SESSION_KIND } from "../types.js";
-import type { PathRoom } from "../types.js";
-import { printResult } from "./output.js";
-import { getStringOption, type ParsedCommand } from "./parser.js";
+import type { PathRoom, RoomMember } from "../types.js";
+import { formatRelativeTime, printResult } from "./output.js";
+import { getStringOption, hasOption, type ParsedCommand } from "./parser.js";
 import { roomShortName, selectedRoom } from "./room-selector.js";
 import type { Runtime } from "./runtime.js";
 
@@ -14,11 +14,11 @@ export function handleRoomCommand(runtime: Runtime, parsed: ParsedCommand): void
   const [action, target] = parsed.positionals;
   switch (action) {
     case "create": return createRoom(runtime, parsed, target);
-    case "list": return listRooms(runtime, parsed, target);
+    case "list": return hasOption(parsed, "all") ? listHostRooms(runtime, parsed) : listRooms(runtime, parsed, target);
     case "adopt": return adoptRoom(runtime, parsed, target);
     case "remove": return removeRoom(runtime, parsed, target);
     default:
-      throw new Error("Usage: tt room create [path] [--name NAME] | list [path] | adopt [path] | remove [path]");
+      throw new Error("Usage: tt room create [path] [--name NAME] | list [path] [--all] | adopt [path] | remove [path]");
   }
 }
 
@@ -81,6 +81,69 @@ interface RoomListing {
   agents: string[];
 }
 
+// Read without an agent id so listing never refreshes the caller's presence
+// in other rooms. A parked agent can be inactive by recency yet alive.
+function liveMembers(runtime: Runtime, roomId: string): RoomMember[] {
+  return runtime.commands.getRoomState({ room_id: roomId }).members
+    .filter((member) => member.process_liveness !== "gone" &&
+      (member.status === "active" || member.process_liveness === "alive"));
+}
+
+// Long enough to say what the room is doing; the full handoff belongs to a
+// per-room read, so a host-wide listing stays small.
+const HANDOFF_EXCERPT_CHARS = 160;
+
+function excerpt(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > HANDOFF_EXCERPT_CHARS ? `${flat.slice(0, HANDOFF_EXCERPT_CHARS - 1)}…` : flat;
+}
+
+// Every room on this host with someone in it, newest activity first, for an
+// observer outside any repository. Reads only: it never joins a room.
+function listHostRooms(runtime: Runtime, parsed: ParsedCommand): void {
+  const rooms = runtime.commands.listRooms({}).rooms
+    .filter((room) => room.state !== "closed")
+    .map((room) => {
+      const members = liveMembers(runtime, room.room_id);
+      const activity = runtime.commands.getRoomActivity({ room_id: room.room_id });
+      const handoff = activity.last_handoff;
+      return {
+        name: roomShortName(room),
+        room_id: room.room_id,
+        canonical_path: room.canonical_path,
+        state: room.state,
+        owner: room.owner,
+        agents: members.filter((member) => member.session_kind !== HUMAN_CHAT_SESSION_KIND).map((member) => member.agent_id),
+        consoles: members.filter((member) => member.session_kind === HUMAN_CHAT_SESSION_KIND).map((member) => member.agent_id),
+        // A room's row changes on every turn transition; events cover the rest.
+        last_activity_at: [activity.last_event_at, room.updated_at].filter((at): at is string => at !== null).sort().at(-1)!,
+        last_handoff: handoff && {
+          event_seq: handoff.event_seq,
+          event_type: handoff.event_type,
+          from_agent_id: handoff.from_agent_id,
+          to_agent_id: handoff.to_agent_id,
+          created_at: handoff.created_at,
+          status: excerpt(handoff.handoff.status),
+          next_action: excerpt(handoff.handoff.next_action)
+        }
+      };
+    })
+    .filter((room) => room.agents.length > 0 || room.consoles.length > 0)
+    .sort((left, right) => right.last_activity_at.localeCompare(left.last_activity_at));
+  printResult(parsed, { rooms }, () => rooms.length === 0
+    ? "No rooms on this host have live members."
+    : rooms.map((room) => {
+      const who = [room.agents.join(", ") || "no agents", room.consoles.length > 0 ? `${room.consoles.length} console${room.consoles.length === 1 ? "" : "s"}` : null]
+        .filter(Boolean).join(", ");
+      const lines = [`#${room.name}  ${who}${room.owner ? `  stick=${room.owner}` : ""}  active ${formatRelativeTime(room.last_activity_at)}`,
+        `  ${room.canonical_path}  ${room.room_id}`];
+      if (room.last_handoff) {
+        lines.push(`  last handoff ${formatRelativeTime(room.last_handoff.created_at)} from ${room.last_handoff.from_agent_id ?? "unknown"}: ${room.last_handoff.status}`);
+      }
+      return lines.join("\n");
+    }).join("\n"));
+}
+
 // One compact listing of the repository's rooms and who is in each, for an
 // agent to read once on entry or when a task spans rooms.
 function listRooms(runtime: Runtime, parsed: ParsedCommand, target: string | undefined): void {
@@ -118,11 +181,8 @@ function listRooms(runtime: Runtime, parsed: ParsedCommand, target: string | und
     kind: room.canonical_path === anchor ? "root" as const
       : fs.existsSync(declarationFile(room.canonical_path)) ? "declared" as const : "legacy" as const,
     current: room.room_id === currentId,
-    // Read without an agent id so listing never refreshes the caller's presence
-    // in other rooms. A parked agent can be inactive by recency yet alive.
-    agents: runtime.commands.getRoomState({ room_id: room.room_id }).members
-      .filter((member) => member.session_kind !== HUMAN_CHAT_SESSION_KIND && member.process_liveness !== "gone" &&
-        (member.status === "active" || member.process_liveness === "alive"))
+    agents: liveMembers(runtime, room.room_id)
+      .filter((member) => member.session_kind !== HUMAN_CHAT_SESSION_KIND)
       .map((member) => member.agent_id)
   }));
   printResult(parsed, { anchor, rooms }, () => rooms.length === 0

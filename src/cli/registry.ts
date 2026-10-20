@@ -183,7 +183,7 @@ export const COMMAND_REGISTRY: CommandEntry[] = [
     startupMaintenance: true,
     internal: false,
     usage: "tt list [path]",
-    description: "List rooms under a path.",
+    description: "List the rooms whose scope covers a path, most specific first.",
     handler: ({ runtime, parsed }) => handleListCommand(requireRuntime(runtime), parsed)
   },
   {
@@ -200,8 +200,8 @@ export const COMMAND_REGISTRY: CommandEntry[] = [
     needsRuntime: true,
     startupMaintenance: true,
     internal: false,
-    usage: "tt room create [path] [--name NAME] | list [path] | adopt [path] [--name NAME] | remove [path]",
-    description: "Declare, list, adopt, or remove rooms inside a repository (remove deletes an agent-free room and its history).",
+    usage: "tt room create [path] [--name NAME] | list [path] [--all] | adopt [path] [--name NAME] | remove [path]",
+    description: "Declare, list, adopt, or remove rooms inside a repository (remove deletes an agent-free room and its history). list --all shows every room on this host with live members.",
     handler: ({ runtime, parsed }) => handleRoomCommand(requireRuntime(runtime), parsed)
   },
   {
