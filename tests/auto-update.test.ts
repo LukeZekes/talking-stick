@@ -67,9 +67,11 @@ describe("automatic standalone updates", () => {
   });
   test("failed installation leaves the command usable; a false success is detected", async () => {
     const { options } = fixture();
-    options.install.mockRejectedValueOnce(new Error("checksum mismatch"));
+    options.install.mockRejectedValueOnce(new Error(`checksum mismatch\n${"installer output ".repeat(40)}`));
     expect(await autoUpdate(options)).toBe(false);
     expect(options.report).toHaveBeenLastCalledWith(expect.stringContaining("checksum mismatch"));
+    // Captured installer output stays out of the one-line notice.
+    expect(options.report.mock.lastCall![0]).not.toContain("installer output");
     options.install.mockResolvedValue(undefined);
     expect(await autoUpdate({ ...options, now: () => 1_100_000_000 })).toBe(false);
     expect(options.report).toHaveBeenLastCalledWith(expect.stringContaining("instead of 0.25.0"));

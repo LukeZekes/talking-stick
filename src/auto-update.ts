@@ -84,7 +84,7 @@ export async function autoUpdate(options: AutoUpdateOptions): Promise<boolean> {
     report(`Talking Stick ${installed} installed. Restart this command and any running chats or harnesses to load it.`);
     return true;
   } catch (error) {
-    report(`Talking Stick auto-update failed: ${error instanceof Error ? error.message : String(error)}. Continuing; run tt self-update to retry.`);
+    report(`Talking Stick auto-update failed: ${summarizeError(error)}. Continuing; run tt self-update to retry.`);
     // A post-install step can fail after the binary link has already advanced.
     // Do not dispatch the old command into a newly migrated database.
     try {
@@ -98,6 +98,12 @@ export async function autoUpdate(options: AutoUpdateOptions): Promise<boolean> {
   } finally {
     release();
   }
+}
+
+// execFile errors embed the installer's captured output; keep only its first line.
+function summarizeError(error: unknown): string {
+  const line = (error instanceof Error ? error.message : String(error)).split("\n", 1)[0].trim();
+  return line.length > 200 ? `${line.slice(0, 199)}…` : line;
 }
 
 async function fetchLatestVersion(): Promise<string> {
