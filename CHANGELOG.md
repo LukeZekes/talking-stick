@@ -11,9 +11,13 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+## [0.26.0] — 2026-10-20
+
+Full notes: [`docs/releases/0.26.0.md`](docs/releases/0.26.0.md).
+
 ### Added
 
-- `tt room list --all` lists every room on this host that has a live agent or console, most recent room activity first. For each room it shows the path and stable id, the agents and consoles, the stick holder (marked stale when the lease has expired), and a short excerpt of the last handoff. Listing never joins a room or refreshes anyone's presence, so any agent or person can check what each room is doing. This is the first step of #120.
+- `tt room list --all` lists every room on this host that has a live agent or console, most recent room activity first. For each room it shows the path and stable id, the agents and consoles, the stick holder (marked stale when the lease has expired), and a short excerpt of the last handoff. Listing never joins a room or refreshes anyone's presence (#121).
 - `tt room brief <room>` shows what one room is doing without joining it: the stick holder or reservation, members and whether each is live, inactive, or gone, the latest handoff in full, the newest ten open notes with the real count, and the last 20 messages and handoffs (`--limit` up to 200). Clipped bodies and handoffs each carry a command that reads them whole, `--before` pages back through older events, and `updates_since` reads what arrives later. Name the room by short name, id, or path suffix from any folder (#120).
 - Visitors can ask a room's agents a question without joining it: `tt room ask <room> --to <agent|room>`. Members answer with `tt msg reply <request-id>` (the reply command is in the question's envelope header), and the visitor reads answers with `tt room replies <request-id> --timeout 30`. Asking never joins or moves anyone and wakes only the recipients, answers wake nobody in the room, and `--request-key` makes retries safe. The skill teaches agents to look into other rooms and to answer visitors (#120).
 
@@ -768,6 +772,7 @@ Initial alpha. Core room protocol, SQLite-backed persistence, multi-process
 contention coverage, MCP smoke coverage, human guardian flow, harness
 installers, and the portable `talking-stick` skill.
 
+[0.26.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.26.0
 [0.25.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.25.0
 [0.24.1]: https://github.com/mostlydev/talking-stick/releases/tag/v0.24.1
 [0.24.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.24.0
