@@ -73,6 +73,12 @@ export async function readReplies(runtime: Runtime, parsed: ParsedCommand, reque
     const lines = result.replies.map((reply) =>
       `#${reply.event_seq} ${reply.from_agent_id ?? "unknown"}:\n${(reply.payload?.body ?? "").trimEnd().split("\n").map((line) => `  ${line}`).join("\n")}`);
     if (lines.length === 0) lines.push(`No answers yet to request ${result.request_id}${interrupted ? " (stopped waiting)" : ""}.`);
+    // Delivery, receipt, and answering are separate facts; none implies the next.
+    lines.push("Recipients:", ...result.recipient_status.map((status) => {
+      const delivery = [status.delivery.state ?? status.delivery.status, status.delivery.error_detail].filter(Boolean).join(" ");
+      return `  ${status.agent_id}: ${status.in_room ? "" : "left the room; "}delivery ${delivery}; ${
+        status.received_at ? `received ${status.received_at}` : "not received yet"}; ${status.replied ? "replied" : "no reply"}`;
+    }));
     if (result.has_more) lines.push(`More: tt room replies ${result.request_id} --after ${result.cursor_event_seq}`);
     else lines.push(`Later answers: tt room replies ${result.request_id} --after ${result.cursor_event_seq} --timeout 30`);
     return lines.join("\n");

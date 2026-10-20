@@ -583,11 +583,26 @@ export interface RequestRepliesInput {
   limit?: number;
 }
 
+export interface RequestRecipientStatus {
+  agent_id: AgentId;
+  /** Still a member of the request's room. */
+  in_room: boolean;
+  /** The last wake attempt for this request, which never proves it was read. */
+  delivery: MessageDelivery;
+  /** When this agent's tt received the request (its wait, or an acknowledged
+   * envelope); not proof the model read or acted on it. */
+  received_at: string | null;
+  /** Whether this agent has answered with tt msg reply. */
+  replied: boolean;
+}
+
 export interface RequestRepliesResult {
   request_id: string;
   room_id: string;
   requester_agent_id: AgentId;
   recipients: AgentId[];
+  /** Each recipient's delivery, receipt, and reply state, separately. */
+  recipient_status: RequestRecipientStatus[];
   request_event_seq: number;
   replies: RoomEvent[];
   /** Pass as after_event_seq to read the next page or later replies. */

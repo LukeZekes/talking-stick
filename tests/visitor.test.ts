@@ -163,6 +163,25 @@ describe("visitor requests", () => {
     expect(service.getRequestReplies({ request_id: asked.request_id, after_event_seq: rest.cursor_event_seq }).replies).toEqual([]);
   });
 
+  test("replies report each recipient's delivery, receipt, and answer separately", async () => {
+    const { service, roomId } = room();
+    const asked = await service.askRoom({ agent_id: "human:guest", room_id: roomId, to: "room", body: "status?" });
+    const status = () => Object.fromEntries(service.getRequestReplies({ request_id: asked.request_id }).recipient_status
+      .map((row) => [row.agent_id, { in_room: row.in_room, state: row.delivery.state, received: row.received_at !== null, replied: row.replied }]));
+    expect(status()).toEqual({
+      "claude:aa": { in_room: true, state: "queued", received: false, replied: false },
+      "codex:bb": { in_room: true, state: "queued", received: false, replied: false }
+    });
+    // Claude's wait takes the request in without answering; Codex answers without a recorded receipt, then leaves.
+    await service.waitForEvents({ room_id: roomId, agent_id: "claude:aa", after_event_seq: asked.event_seq - 1, max_wait_ms: 0 });
+    service.replyToRequest({ agent_id: "codex:bb", request_id: asked.request_id, body: "On it." });
+    service.leaveRoom({ agent_id: "codex:bb", room_id: roomId });
+    expect(status()).toMatchObject({
+      "claude:aa": { in_room: true, received: true, replied: false },
+      "codex:bb": { in_room: false, received: false, replied: true }
+    });
+  });
+
   test("a request key makes a retry return the original question", async () => {
     const { service, roomId, requests } = room();
     const asked = await service.askRoom({ agent_id: "human:guest", room_id: roomId, to: ["claude:aa"], body: "status?", request_key: "k1" });

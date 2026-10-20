@@ -205,8 +205,10 @@ Their envelope header reads `visitor <id>` and ends with the reply command. The 
 becomes a member, never holds the stick, and doesn't keep the room open. A member answers with
 `tt msg reply <request-id>`; answers are room messages that wake nobody in the room. The visitor
 reads them with `tt room replies <request-id>`, oldest first, 20 at a time (`--limit` up to 200),
-continuing with `--after <cursor_event_seq>`. `--timeout` (up to 60 seconds, as `30`, `30s`, or
-`500ms`) waits for a first answer. An empty result with `timed_out: true` means no answer yet; a
+with `recipient_status` reporting, per recipient, whether it is still in the room, the last wake
+attempt (`delivery`), when its `tt` received the request (`received_at`), and whether it replied:
+separate facts, none proof of the next. Continue with `--after <cursor_event_seq>`. `--timeout`
+(up to 60 seconds, as `30`, `30s`, or `500ms`) waits for a first answer. An empty result with `timed_out: true` means no answer yet; a
 wait stopped by Ctrl-C reports `interrupted: true` and exits 130. `--request-key KEY` makes a
 retry return the original request instead of asking twice, even after its recipients leave, and
 a different question under the same key is refused. Questions and answers are kept as long as

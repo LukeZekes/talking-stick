@@ -11,6 +11,11 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+### Changed
+
+- `talking-stick-rooms` is now a management workflow for overseeing rooms from outside, for example from a desktop app. It covers status from briefs; questions, instructions, follow-ups and relayed approvals sent with `tt room ask` and a reusable `--request-key`; relayed instructions that quote their source, time and scope without impersonating the user; and follow-up that reports stored, delivered, received and replied as separate facts. The main skill tells agents how to answer a visitor: accept, plan, or blocker, naming the rule when they need the operator's own confirmation.
+- `tt room replies` reports `recipient_status` for each recipient: whether it is still in the room, the last wake attempt, when its `tt` received the request, and whether it replied.
+
 ### Fixed
 
 - `tt standby` no longer promises an automatic Codex wake after the local CLI reports that the session's thread is unknown. It keeps any working cmux fallback; a new session or successful native delivery restores the native capability.
