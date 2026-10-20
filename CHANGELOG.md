@@ -21,6 +21,7 @@ changes will be called out under **Breaking changes**.
 
 ### Fixed
 
+- Trusted Codex turn hooks defer ordinary native delivery during active work and deliver only unread events at Stop, avoiding queued stale envelopes after `tt wait` consumes the same events. Includes an acknowledgement loop guard, cancellation handling, and native fallback for missing or expired hooks. Re-run `tt install codex` and trust the hooks in `/hooks`.
 - `tt events --follow` and `tt msg recv --follow` stop within a poll interval of SIGINT or SIGTERM instead of finishing a long-poll of up to 110 seconds first.
 - Documented how to watch a room live with `tt events --follow`: it starts at the head, prints one JSON event per line, and reports its cursor on stderr. `tt state --json` gives the head sequence (#66).
 - Added a subprocess regression test that keeps `--json` stdout parseable when `cmux` prints socket errors (#67).

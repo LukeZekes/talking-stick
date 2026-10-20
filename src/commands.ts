@@ -417,7 +417,8 @@ export class TalkingStickCommands {
   acknowledgeNativeDelivery(identity: DerivedIdentity, token: string) {
     return this.service.acknowledgeNativeDelivery({ agent_id: identity.agent_id, token,
       harness_session_id: identity.process_metadata.harness_session_id,
-      host_id: identity.process_metadata.harness_host_id ?? identity.process_metadata.host_id });
+      host_id: identity.process_metadata.harness_host_id ?? identity.process_metadata.host_id,
+      process_metadata: identity.process_metadata });
   }
 
   getRoomEvents(input: GetRoomEventsInput): RoomEvent[] {
