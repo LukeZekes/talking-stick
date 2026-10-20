@@ -1117,6 +1117,11 @@ export class TalkingStickService {
         );
 
       const wakeTransports = this.usableNativeWakeEndpoints(input.room_id, member)
+        // A registered Desktop thread may be unknown to the local Codex CLI.
+        // Keep trying delivery, but do not promise an idle wake after that
+        // definite failure. Endpoint replacement or successful delivery clears it.
+        .filter((row) => !(row.transport === "codex_queue" &&
+          row.last_status === "failed" && row.last_error === "codex_thread_not_found"))
         .map((row) => row.transport)
         .filter((transport) => transport !== "cmux" || input.transport === "cmux");
       return {
