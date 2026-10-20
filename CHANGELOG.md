@@ -13,7 +13,7 @@ changes will be called out under **Breaking changes**.
 
 ### Added
 
-- `tt room list --all` lists every room on this host that has a live agent or console, newest activity first. For each room it shows the path and stable id, the agents and consoles, the stick holder, and a short excerpt of the last handoff. Listing never joins a room or refreshes anyone's presence, so any agent or person can check what each room is doing. This is the first step of #120.
+- `tt room list --all` lists every room on this host that has a live agent or console, most recent room activity first. For each room it shows the path and stable id, the agents and consoles, the stick holder (marked stale when the lease has expired), and a short excerpt of the last handoff. Listing never joins a room or refreshes anyone's presence, so any agent or person can check what each room is doing. This is the first step of #120.
 
 ### Fixed
 

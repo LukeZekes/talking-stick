@@ -115,7 +115,8 @@ function listHostRooms(runtime: Runtime, parsed: ParsedCommand): void {
         owner: room.owner,
         agents: members.filter((member) => member.session_kind !== HUMAN_CHAT_SESSION_KIND).map((member) => member.agent_id),
         consoles: members.filter((member) => member.session_kind === HUMAN_CHAT_SESSION_KIND).map((member) => member.agent_id),
-        // A room's row changes on every turn transition; events cover the rest.
+        // Room activity, not conversation progress: the row also changes on
+        // lease renewals, and events cover messages and handoffs.
         last_activity_at: [activity.last_event_at, room.updated_at].filter((at): at is string => at !== null).sort().at(-1)!,
         last_handoff: handoff && {
           event_seq: handoff.event_seq,
@@ -135,7 +136,7 @@ function listHostRooms(runtime: Runtime, parsed: ParsedCommand): void {
     : rooms.map((room) => {
       const who = [room.agents.join(", ") || "no agents", room.consoles.length > 0 ? `${room.consoles.length} console${room.consoles.length === 1 ? "" : "s"}` : null]
         .filter(Boolean).join(", ");
-      const lines = [`#${room.name}  ${who}${room.owner ? `  stick=${room.owner}` : ""}  active ${formatRelativeTime(room.last_activity_at)}`,
+      const lines = [`#${room.name}  ${who}${room.owner ? `  stick=${room.owner}${room.state === "stale_owner" ? " (stale)" : ""}` : ""}  active ${formatRelativeTime(room.last_activity_at)}`,
         `  ${room.canonical_path}  ${room.room_id}`];
       if (room.last_handoff) {
         lines.push(`  last handoff ${formatRelativeTime(room.last_handoff.created_at)} from ${room.last_handoff.from_agent_id ?? "unknown"}: ${room.last_handoff.status}`);
