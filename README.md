@@ -97,7 +97,8 @@ room. It only needs a session that can run `tt` on this computer, started in any
 
 | App | How |
 |---|---|
-| Claude Code, including the **Code** tab of the Claude desktop app | `/talking-stick-rooms What is the clawdapus pair doing?` |
+| Claude Code | `/talking-stick-rooms What is the clawdapus pair doing?` |
+| Claude desktop | Switch to **Code** (`</>`), choose **This computer** and a folder (your home folder works), then type `/talking-stick-rooms` and your question |
 | Codex CLI | `$talking-stick-rooms What is the clawdapus pair doing?` |
 | ChatGPT desktop | Start a **Work** conversation that runs on your computer, with any local folder. Select **Talking Stick Rooms** with `@` and ask. |
 
