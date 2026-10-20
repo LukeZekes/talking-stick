@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -72,6 +72,12 @@ import type {
   ListRoomsInput,
   ListRoomsResult,
   RoomActivity,
+  AskRoomInput,
+  AskRoomResult,
+  ReplyToRequestInput,
+  ReplyToRequestResult,
+  RequestRepliesInput,
+  RequestRepliesResult,
   MessagePayload,
   Note,
   OwnerMutationInput,
@@ -178,6 +184,17 @@ interface RoomEventRow {
   reason: string | null;
   created_at: string;
   payload_json: string | null;
+}
+
+interface VisitorRequestRow {
+  request_id: string;
+  room_id: string;
+  requester_agent_id: string;
+  request_key: string | null;
+  payload_digest: string;
+  event_seq: number;
+  recipients_json: string;
+  created_at: string;
 }
 
 interface RoomReceiverRow {
@@ -1905,7 +1922,9 @@ export class TalkingStickService {
   // The body of sendMessage, run inside the caller's write transaction so
   // another write (e.g. a role change) and its message commit together.
   private sendMessageLocked(input: SendMessageInput, body: string, deliveryHint: DeliveryHint, timestamp: string,
-    senderMayBeNonMember = false): {
+    // "known" lets a non-member send (role notices); "visitor" also leaves a
+    // member's presence untouched, since asking is not taking part.
+    sender: "member" | "known" | "visitor" = "member", link: { request_id?: string; in_reply_to?: string } = {}): {
     event_seq: number; event_id: string; created_at: string; wake_target_ids: AgentId[];
   } {
     // Validated by sendMessage before the transaction: checking a stored
@@ -1920,9 +1939,9 @@ export class TalkingStickService {
       );
     }
 
-    if (senderMayBeNonMember) {
+    if (sender === "known") {
       this.touchKnownMember(input.room_id, input.agent_id, timestamp, input.process_metadata);
-    } else {
+    } else if (sender === "member") {
       this.touchMember(
         input.room_id,
         input.agent_id,
@@ -1958,7 +1977,9 @@ export class TalkingStickService {
     // agent's room message still wakes nobody: agents answering each other's
     // broadcasts would loop. Later joiners never inherit earlier messages.
     const humanSender = input.agent_id.startsWith("human:");
-    const wakeTargets: AgentId[] = directed
+    // An answer to a visitor goes to someone outside the room, so it wakes
+    // nobody inside it; the visitor pulls answers with tt room replies.
+    const wakeTargets: AgentId[] = link.in_reply_to ? [] : directed
       ? [directed]
       : scoped
         ? scoped
@@ -1983,6 +2004,8 @@ export class TalkingStickService {
         body, delivery_hint: deliveryHint,
         ...(attachments.length ? { attachments } : {}),
         ...(scoped ? { recipients: scoped } : {}),
+        ...(link.request_id ? { request_id: link.request_id } : {}),
+        ...(link.in_reply_to ? { in_reply_to: link.in_reply_to } : {}),
         // Who a room message went to, for display only. Unlike recipients it
         // never narrows visibility: everyone in the room can still read it.
         ...(!directed && !scoped && humanSender && wakeTargets.length > 0 ? { sent_to: wakeTargets } : {})
@@ -2508,6 +2531,166 @@ export class TalkingStickService {
       onDelivery?.(delivery, result);
       return delivery;
     }))).then((deliveries) => ({ ...result, ...this.singleDeliveryFields(deliveries), deliveries }));
+  }
+
+  // A question from outside the room: the requester need not be a member and
+  // never becomes one. Recipients are fixed when it is asked, and are woken
+  // like any directed message after the request commits.
+  async askRoom(input: AskRoomInput): Promise<AskRoomResult> {
+    assertNonEmpty(input.agent_id, "agent_id");
+    assertNonEmpty(input.room_id, "room_id");
+    const body = input.body ?? "";
+    this.assertVisitorBody(body);
+    if (input.request_key !== undefined && (input.request_key.length === 0 || input.request_key.length > 200)) {
+      throw new ProtocolError("invalid_input", "request_key must be 1-200 characters.");
+    }
+    const selectors = input.to === "room" ? "room" : [...new Set(input.to.map((selector) => selector.trim()).filter(Boolean))].sort();
+    if (selectors !== "room" && selectors.length === 0) throw new ProtocolError("invalid_input", "Name at least one recipient.");
+    // The retry key matches what was asked, not who those names resolve to
+    // now, so a retry after the room changes still finds the original.
+    const digest = createHash("sha256").update(JSON.stringify([input.room_id, selectors, body])).digest("hex");
+    const now = this.now();
+    const timestamp = now.toISOString();
+    this.purgeExpiredIdleRooms(now);
+
+    const asked = withImmediateTransaction(this.db, () => {
+      if (input.request_key !== undefined) {
+        const earlier = this.db.prepare<[string, string], VisitorRequestRow>(
+          "SELECT * FROM visitor_requests WHERE requester_agent_id = ? AND request_key = ?"
+        ).get(input.agent_id, input.request_key);
+        if (earlier) {
+          if (earlier.payload_digest !== digest) {
+            throw new ProtocolError("request_key_conflict",
+              "request_key was already used for a different question.", { request_id: earlier.request_id });
+          }
+          return { request: earlier, sent: null };
+        }
+      }
+      const room = this.requireRoom(input.room_id);
+      const members = this.getMembers(room.room_id);
+      const agents = members.filter((member) => !isObserverMember(member));
+      let recipients: AgentId[];
+      if (selectors === "room") {
+        // Live as tt room list --all counts it: not gone, and either running
+        // or recently present.
+        recipients = agents
+          .filter((member) => {
+            if (member.agent_id === input.agent_id || member.agent_id.startsWith("human:")) return false;
+            const liveness = this.getMemberProcessLiveness(member);
+            return liveness !== "gone" && (liveness === "alive" || this.hasRecentPresence(member, now));
+          })
+          .map((member) => member.agent_id);
+        if (recipients.length === 0) {
+          throw new ProtocolError("no_recipients", "No live agent is in this room to ask.", { room_id: room.room_id });
+        }
+      } else {
+        // An exact id, or a display or harness name that matches one agent.
+        recipients = [...new Set(selectors.map((selector) => {
+          const exact = agents.find((member) => member.agent_id === selector);
+          if (exact) return exact.agent_id;
+          const matches = agents.filter((member) => member.display_name === selector || member.agent_id.startsWith(`${selector}:`));
+          if (matches.length > 1) {
+            throw new ProtocolError("ambiguous_recipient", `${selector} matches several agents in this room.`,
+              { candidates: matches.map((member) => member.agent_id) });
+          }
+          if (matches.length === 0) {
+            throw new ProtocolError("unknown_recipient", `No agent named ${selector} is in this room.`, { to_agent_id: selector });
+          }
+          return matches[0].agent_id;
+        }))];
+      }
+      const taken = this.db.prepare<[string], { found: number }>("SELECT 1 AS found FROM visitor_requests WHERE request_id = ?");
+      let requestId = newDeliveryToken();
+      while (taken.get(requestId)) requestId = newDeliveryToken();
+      const sent = this.sendMessageLocked({
+        agent_id: input.agent_id, room_id: room.room_id, body,
+        ...(recipients.length === 1 ? { to_agent_id: recipients[0] } : { to_agent_ids: recipients })
+      }, body, "normal", timestamp, "visitor", { request_id: requestId });
+      const request: VisitorRequestRow = {
+        request_id: requestId, room_id: room.room_id, requester_agent_id: input.agent_id,
+        request_key: input.request_key ?? null, payload_digest: digest, event_seq: sent.event_seq,
+        recipients_json: JSON.stringify(recipients), created_at: timestamp
+      };
+      this.db.prepare(`INSERT INTO visitor_requests (request_id, room_id, requester_agent_id, request_key,
+        payload_digest, event_seq, recipients_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(request.request_id, request.room_id, request.requester_agent_id, request.request_key,
+          request.payload_digest, request.event_seq, request.recipients_json, request.created_at);
+      return { request, sent };
+    });
+
+    const { request, sent } = asked;
+    const recipients = JSON.parse(request.recipients_json) as AgentId[];
+    const base = { request_id: request.request_id, room_id: request.room_id, recipients };
+    if (!sent) {
+      const event = this.getEventBySeq(request.event_seq);
+      return { ...base, deduplicated: true, event_seq: request.event_seq, event_id: event?.event_id ?? "",
+        created_at: request.created_at };
+    }
+    const { wake_target_ids: targets, ...stored } = sent;
+    const deliveries = await Promise.all(targets.map((target) => this.flushWakes(request.room_id, target)
+      .then(() => this.describeDelivery(request.room_id, target, sent.event_seq, "normal"))));
+    return { ...base, deduplicated: false, ...stored, ...this.singleDeliveryFields(deliveries), deliveries };
+  }
+
+  // A member's answer to a visitor's question, recorded in the question's
+  // room; the responder must already be a member there.
+  replyToRequest(input: ReplyToRequestInput): ReplyToRequestResult {
+    assertNonEmpty(input.agent_id, "agent_id");
+    const body = input.body ?? "";
+    this.assertVisitorBody(body);
+    const now = this.now();
+    const timestamp = now.toISOString();
+    this.purgeExpiredIdleRooms(now);
+    return withImmediateTransaction(this.db, () => {
+      const request = this.requireVisitorRequest(input.request_id);
+      const sent = this.sendMessageLocked({
+        agent_id: input.agent_id, room_id: request.room_id, body, process_metadata: input.process_metadata
+      }, body, "normal", timestamp, "member", { in_reply_to: request.request_id });
+      this.db.prepare("INSERT INTO visitor_replies (request_id, event_seq) VALUES (?, ?)").run(request.request_id, sent.event_seq);
+      return { request_id: request.request_id, room_id: request.room_id, event_seq: sent.event_seq,
+        event_id: sent.event_id, created_at: sent.created_at };
+    });
+  }
+
+  // Answers to a visitor's question, oldest first. Reads only.
+  getRequestReplies(input: RequestRepliesInput): RequestRepliesResult {
+    const request = this.requireVisitorRequest(input.request_id);
+    const limit = Math.min(Math.max(input.limit ?? 20, 1), 200);
+    const after = input.after_event_seq ?? request.event_seq;
+    const rows = this.db.prepare<[string, number, number], RoomEventRow>(`
+      SELECT e.* FROM visitor_replies r JOIN room_events e ON e.event_seq = r.event_seq
+      WHERE r.request_id = ? AND r.event_seq > ? ORDER BY r.event_seq LIMIT ?`)
+      .all(request.request_id, after, limit + 1);
+    const replies = rows.slice(0, limit).map((row) => this.mapEvent(row));
+    return {
+      request_id: request.request_id,
+      room_id: request.room_id,
+      requester_agent_id: request.requester_agent_id,
+      recipients: JSON.parse(request.recipients_json) as AgentId[],
+      request_event_seq: request.event_seq,
+      replies,
+      cursor_event_seq: replies.at(-1)?.event_seq ?? after,
+      has_more: rows.length > limit
+    };
+  }
+
+  private requireVisitorRequest(requestId: string): VisitorRequestRow {
+    const request = this.db.prepare<[string], VisitorRequestRow>("SELECT * FROM visitor_requests WHERE request_id = ?")
+      .get(requestId);
+    if (!request || !this.getRoomRow(request.room_id)) {
+      throw new ProtocolError("request_not_found",
+        "No such request; its room may have closed, which deletes its questions and answers.", { request_id: requestId });
+    }
+    return request;
+  }
+
+  private assertVisitorBody(body: string): void {
+    if (body.length === 0) throw new ProtocolError("invalid_body", "Message body must not be empty.");
+    const byteLength = Buffer.byteLength(body, "utf8");
+    if (byteLength > MAX_MESSAGE_BODY_BYTES) {
+      throw new ProtocolError("message_too_large", `Message body exceeds ${MAX_MESSAGE_BODY_BYTES} bytes.`,
+        { supplied: byteLength });
+    }
   }
 
   private async dispatchInterrupt(row: InterruptDeliveryRow): Promise<void> {
@@ -3953,7 +4136,7 @@ export class TalkingStickService {
         agent_id: input.agent_id, room_id: room.room_id, body: notice.body,
         ...(recipients.length === 1 ? { to_agent_id: recipients[0] } : { to_agent_ids: recipients }),
         process_metadata: input.process_metadata
-      }, notice.body, "normal", timestamp, true);
+      }, notice.body, "normal", timestamp, "known");
       return { room_id: room.room_id, version: state.version, event_seq: sent.event_seq, recipients };
     }));
   }
@@ -5339,6 +5522,8 @@ export class TalkingStickService {
   }
 
   private deleteRoom(roomId: string): void {
+    this.db.prepare("DELETE FROM visitor_replies WHERE request_id IN (SELECT request_id FROM visitor_requests WHERE room_id = ?)").run(roomId);
+    this.db.prepare("DELETE FROM visitor_requests WHERE room_id = ?").run(roomId);
     this.db.prepare("DELETE FROM room_roles WHERE room_id = ?").run(roomId);
     this.db.prepare("DELETE FROM notes WHERE room_id = ?").run(roomId);
     this.db.prepare("DELETE FROM room_events WHERE room_id = ?").run(roomId);

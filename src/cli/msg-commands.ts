@@ -14,6 +14,7 @@ import {
 } from "./event-stream.js";
 import { resolveSessionForNotes } from "./session.js";
 import type { Runtime } from "./runtime.js";
+import { replyToRequest } from "./visitor-commands.js";
 
 export async function handleMsgCommand(
   runtime: Runtime,
@@ -21,7 +22,7 @@ export async function handleMsgCommand(
 ): Promise<void> {
   const [subcommand, ...rest] = parsed.positionals;
   if (!subcommand) {
-    throw new Error("Usage: tt msg <send|recv> [...]. See `tt --help` for details.");
+    throw new Error("Usage: tt msg <send|recv|reply> [...]. See `tt --help` for details.");
   }
 
   const subParsed: ParsedCommand = {
@@ -36,6 +37,9 @@ export async function handleMsgCommand(
       return;
     case "recv":
       await handleMsgRecvCommand(runtime, subParsed);
+      return;
+    case "reply":
+      await replyToRequest(runtime, subParsed, rest[0], rest.slice(1));
       return;
     default:
       throw new Error(`Unknown msg subcommand: ${subcommand}`);
