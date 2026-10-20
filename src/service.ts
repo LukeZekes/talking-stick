@@ -2326,6 +2326,7 @@ export class TalkingStickService {
             last_attempt_at = NULL,
             last_status = NULL,
             last_error = NULL,
+            last_error_detail = NULL,
             wake_event_seq = NULL,
             batch_id = NULL
         `

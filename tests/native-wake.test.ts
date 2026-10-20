@@ -798,6 +798,15 @@ test("a local wake failure stays pending for the next process, once per process"
   acknowledge(other, { text: delivered[0] } as NativeWakeRequest);
   await other.flushWakes();
   expect(delivered).toHaveLength(1);
+
+  // A replacement session starts with no inherited failure detail.
+  await service.sendMessageAndWake({ agent_id: "human:op:chat:1", room_id: roomId, to_agent_id: "claude:aa", body: "again" });
+  const lastDetail = () => service.getRoomHealth({ context_path: project, agent_id: "claude:aa" }).wake_endpoints
+    .find((row) => row.agent_id === "claude:aa" && row.transport === "claude_inbox")?.last_error_detail;
+  expect(lastDetail()).toBe("connect:EPERM");
+  service.registerNativeWakeEndpoint({ agent_id: "claude:aa", room_id: roomId, transport: "claude_inbox",
+    address: "/tmp/claude-inbox-2.sock", secret: "s3cret-token", harness_session_id: "claude-session", host_id: HOST });
+  expect(lastDetail()).toBeNull();
 });
 
 test("a definite remote failure releases the batch without keeping it pending", async () => {
