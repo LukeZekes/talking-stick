@@ -75,7 +75,7 @@ export async function autoUpdate(options: AutoUpdateOptions): Promise<boolean> {
     } catch { /* Missing or invalid cache: check again. */ }
     // Cache failed attempts too, so offline startups do not repeatedly wait for the network.
     writeFileAtomic(stamp, JSON.stringify({ checkedAt: now }));
-    const latest = await (options.latestVersion ?? fetchLatestVersion)();
+    const latest = await (options.latestVersion ?? (() => fetchLatestVersion(env)))();
     if (!newerRelease(latest, current)) return false;
     report(`Talking Stick ${latest} is available; updating…`);
     await (options.install ?? ((version) => installRelease(root, version, env)))(latest);
@@ -106,12 +106,18 @@ function summarizeError(error: unknown): string {
   return line.length > 200 ? `${line.slice(0, 199)}…` : line;
 }
 
-async function fetchLatestVersion(): Promise<string> {
-  const response = await fetch("https://api.github.com/repos/mostlydev/talking-stick/releases/latest", {
-    signal: AbortSignal.timeout(3_000), headers: { Accept: "application/vnd.github+json" }
+async function fetchLatestVersion(env: NodeJS.ProcessEnv): Promise<string> {
+  // The installer already requires curl. Use the same system TLS/network path:
+  // compiled Bun fetch can time out on hosts where curl and bun run succeed.
+  const json = await new Promise<string>((resolve, reject) => {
+    const child = execFile("curl", ["-fsS", "--connect-timeout", "3", "--max-time", "3",
+      "-H", "Accept: application/vnd.github+json", "-H", "User-Agent: talking-stick",
+      "https://api.github.com/repos/mostlydev/talking-stick/releases/latest"], {
+      env, encoding: "utf8", timeout: 4_000, maxBuffer: 1024 * 1024
+    }, (error, stdout) => error ? reject(error) : resolve(stdout));
+    child.stdin?.end();
   });
-  if (!response.ok) throw new Error(`GitHub returned HTTP ${response.status}`);
-  const data = await response.json() as { tag_name?: unknown };
+  const data = JSON.parse(json) as { tag_name?: unknown };
   if (typeof data.tag_name !== "string" || !/^v\d+\.\d+\.\d+$/.test(data.tag_name)) throw new Error("invalid GitHub release version");
   return data.tag_name.slice(1);
 }
@@ -119,9 +125,10 @@ async function fetchLatestVersion(): Promise<string> {
 async function installRelease(root: string, version: string, env: NodeJS.ProcessEnv): Promise<void> {
   const plan = planStandaloneUpdate(root);
   await new Promise<void>((resolve, reject) => {
-    execFile(plan.command, [...plan.args, "--version", version, "--no-remove-npm"], {
+    const child = execFile(plan.command, [...plan.args, "--version", version, "--no-remove-npm"], {
       env: { ...env, TT_NO_AUTO_UPDATE: "1", TALKING_STICK_RELEASE_BASE_URL: "" }, timeout: 120_000,
       maxBuffer: 1024 * 1024
     }, (error) => error ? reject(error) : resolve());
+    child.stdin?.end();
   });
 }

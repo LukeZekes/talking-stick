@@ -102,13 +102,20 @@ describe("automatic standalone updates", () => {
     expect(options.latestVersion).not.toHaveBeenCalled();
     expect(fs.existsSync(path.join(dir, ".updates"))).toBe(false);
   });
-  test("the public check uses a deadline and rejects an invalid release tag", async () => {
-    const { options } = fixture();
-    const fetcher = vi.fn(async () => ({ ok: true, json: async () => ({ tag_name: "bad-tag" }) }));
-    vi.stubGlobal("fetch", fetcher);
-    expect(await autoUpdate({ ...options, latestVersion: undefined })).toBe(false);
-    expect(fetcher).toHaveBeenCalledWith("https://api.github.com/repos/mostlydev/talking-stick/releases/latest", expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    expect(options.install).not.toHaveBeenCalled();
+  test.each(["v0.25.0", "bad-tag"])("the bounded curl check closes stdin and validates %s", async (tag) => {
+    const { dir, options } = fixture();
+    const bin = path.join(dir, "fake-bin");
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, "curl"), `#!/bin/sh
+printf '%s\\n' "$@" > "$TT_TEST_ARGS"
+cat >/dev/null
+printf '{"tag_name":"${tag}"}'
+`, { mode: 0o755 });
+    expect(await autoUpdate({ ...options, env: { PATH: `${bin}${path.delimiter}${process.env.PATH}`, TT_TEST_ARGS: path.join(dir, "curl-args") }, latestVersion: undefined })).toBe(tag === "v0.25.0");
+    const args = fs.readFileSync(path.join(dir, "curl-args"), "utf8");
+    expect(args).toContain("--connect-timeout\n3\n--max-time\n3");
+    expect(args).toContain("User-Agent: talking-stick");
+    if (tag === "bad-tag") expect(options.install).not.toHaveBeenCalled();
   });
   test("the real installer subprocess is pinned, noninteractive and keeps its output off stdout", async () => {
     const { dir, root, options } = fixture();
