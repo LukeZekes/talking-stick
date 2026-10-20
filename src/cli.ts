@@ -8,7 +8,7 @@ import { printCommandHelp, printHelp, shouldUseJson } from "./cli/output.js";
 import { COMMAND_REGISTRY, getCommand } from "./cli/registry.js";
 import { createRuntime } from "./cli/runtime.js";
 import { runStartupMaintenance } from "./cli/startup-maintenance.js";
-import { isStandalone } from "./standalone-mode.js";
+import { isStandalone, standaloneRoot } from "./standalone-mode.js";
 import { detectInstallSource, isPackageManager, resolveCurrentBinaryPath, STANDALONE_MIGRATION_NOTICE } from "./self-update.js";
 
 export { checkGuardianLiveness } from "./cli/guardian.js";
@@ -26,6 +26,12 @@ export {
 
 export async function runCli(argv = process.argv.slice(2)): Promise<void> {
   const parsed = parseCommand(argv);
+
+  if (!parsed.name && hasOption(parsed, "version")) {
+    const version = packageVersion();
+    process.stdout.write(shouldUseJson(parsed) ? `${JSON.stringify({ version })}\n` : `tt ${version}\n`);
+    return;
+  }
 
   if (!parsed.name || parsed.name === "help" || hasOption(parsed, "help")) {
     const targetName = parsed.name === "help" ? parsed.positionals[0] : parsed.name;
@@ -55,6 +61,18 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
     await command.handler({ parsed, runtime, cliEntryUrl: import.meta.url });
   } finally {
     try { await runtime.commands.flushWakes(); } finally { runtime.close(); }
+  }
+}
+
+// A standalone release keeps package.json beside the binary; a Node install
+// has it one level above dist/.
+function packageVersion(): string {
+  const root = isStandalone() ? standaloneRoot() : path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  try {
+    const version = (JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version?: unknown }).version;
+    return typeof version === "string" ? version : "unknown";
+  } catch {
+    return "unknown";
   }
 }
 

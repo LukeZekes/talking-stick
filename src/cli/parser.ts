@@ -37,6 +37,7 @@ const BOOLEAN_FLAGS = new Set([
   "text",
   "user",
   "verbose",
+  "version",
   "wait"
 ]);
 
@@ -91,8 +92,18 @@ function consumeLongOption(
     return index;
   }
 
-  options.set(key, next);
+  const previous = options.get(key);
+  options.set(key, REPEATABLE_OPTIONS.has(key) && typeof previous === "string" ? `${previous}\0${next}` : next);
   return index + 1;
+}
+
+// Options given once per value (`--attach a.png --attach b.png`). Their
+// values are kept NUL-joined, which no path or argument can contain.
+const REPEATABLE_OPTIONS = new Set(["attach"]);
+
+export function getStringOptions(parsed: ParsedCommand, key: string): string[] {
+  const value = parsed.options.get(key);
+  return typeof value === "string" ? value.split("\0") : [];
 }
 
 export function hasOption(parsed: ParsedCommand, key: string): boolean {

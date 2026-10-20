@@ -14,7 +14,8 @@ changes will be called out under **Breaking changes**.
 ### Added
 
 - `/roles` now has a stable keyboard grid with separate room assignments and harness defaults, editable Markdown role definitions and project instructions through `$VISUAL`/`$EDITOR`, and instruction/notification previews. Enter applies the draft; Tab changes scope. Changes notify affected agents in chat, including inheriting sessions in other rooms when defaults change.
-
+- Images in chat. Ctrl+V attaches the clipboard's image, and a pasted or dragged-in image path or `/attach <file>` attaches a file. The draft shows `[Image #N]`, and deleting the marker drops the image. Images are copied to `<data dir>/attachments/`, and each recipient's prompt says `Image #1 attached at <path> … Read that file to see it.`, which works in every harness, including Grok, whose hooks carry only text. `tt msg send --attach <file>` sends images from scripts.
+- `tt --version` prints the installed version (it used to print help).
 
 ## [0.23.1] — 2026-10-19
 

@@ -251,4 +251,3 @@ function roleNotice(input: {
   if (instructions) lines.push("", "The shared instructions changed; run `tt instructions show --json` to read them.");
   return lines.join("\n");
 }
-

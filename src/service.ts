@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import os from "node:os";
+import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { RoleSubject, RoomRoleAssignment } from "./roles.js";
 import {
@@ -12,11 +13,13 @@ import {
 import { defaultPolicy } from "./config.js";
 import {
   openDatabase,
+  resolveDatabasePath,
   withImmediateTransaction,
   type OpenDatabaseOptions,
   type SqliteDatabase
 } from "./db.js";
 import { ProtocolError } from "./errors.js";
+import { validateAttachments } from "./attachments.js";
 import { HUMAN_CHAT_SESSION_KIND } from "./types.js";
 import type { WakeTransport } from "./wake.js";
 import {
@@ -322,6 +325,8 @@ export class TalkingStickService {
   private readonly processLivenessChecker: ProcessLivenessChecker;
   private readonly receiverLivenessChecker: ProcessLivenessChecker;
   private readonly hostId: string;
+  /** Where stored message attachments live; messages may name only files there. */
+  private readonly dataDir: string;
   private readonly wakeTransport: WakeTransport | null;
   private readonly nativeWakeTransport: NativeWakeTransport | null;
 
@@ -331,6 +336,7 @@ export class TalkingStickService {
     this.now = options.now ?? (() => new Date());
     this.policy = { ...defaultPolicy, ...options.policy };
     this.hostId = options.hostId ?? os.hostname();
+    this.dataDir = options.dataDir ? path.resolve(options.dataDir) : path.dirname(resolveDatabasePath(options));
     this.processLivenessChecker =
       options.processLivenessChecker ??
       createDefaultProcessLivenessChecker(this.hostId);
@@ -1851,6 +1857,9 @@ export class TalkingStickService {
     senderMayBeNonMember = false): {
     event_seq: number; event_id: string; created_at: string; wake_target_ids: AgentId[];
   } {
+    // Validated by sendMessage before the transaction: checking a stored
+    // image reads it, which must not happen while holding the write lock.
+    const attachments = input.attachments ?? [];
     const room = this.requireRoom(input.room_id);
     if (room.state === "closed") {
       throw new ProtocolError(
@@ -1921,6 +1930,7 @@ export class TalkingStickService {
       created_at: timestamp,
       payload: {
         body, delivery_hint: deliveryHint,
+        ...(attachments.length ? { attachments } : {}),
         ...(scoped ? { recipients: scoped } : {}),
         // Who a room message went to, for display only. Unlike recipients it
         // never narrows visibility: everyone in the room can still read it.
@@ -1966,7 +1976,8 @@ export class TalkingStickService {
     assertNonEmpty(input.room_id, "room_id");
 
     const body = input.body ?? "";
-    if (body.length === 0) {
+    // An image alone is a message; text is still required without one.
+    if (body.length === 0 && !(Array.isArray(input.attachments) && input.attachments.length > 0)) {
       throw new ProtocolError("invalid_body", "Message body must not be empty.");
     }
 
@@ -1991,8 +2002,9 @@ export class TalkingStickService {
     const timestamp = now.toISOString();
     this.purgeExpiredIdleRooms(now);
 
+    const attachments = validateAttachments(input.attachments, this.dataDir);
     const result = withImmediateTransaction(this.db, () =>
-      this.sendMessageLocked(input, body, deliveryHint, timestamp));
+      this.sendMessageLocked({ ...input, attachments }, body, deliveryHint, timestamp));
 
     const { wake_target_ids: wakeTargetIds, ...sendResult } = result;
     if (wakeTargetIds.length === 0) {

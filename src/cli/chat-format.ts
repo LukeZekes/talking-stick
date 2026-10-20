@@ -1,3 +1,4 @@
+import { describeAttachment, payloadAttachments } from "../attachments.js";
 import {
   HUMAN_CHAT_SESSION_KIND,
   type AgentId,
@@ -278,7 +279,10 @@ function formatCurrentChatEvent(event: RoomEvent, context: ChatFormatContext): s
     const styled = context.color
       ? highlightChatBody(body, { paint: (code, text) => paint(context, code, text), agent_color: agentColor })
       : body;
-    return [header, ...styled.split("\n").map((line) => `  ${line}`)].join("\n");
+    const images = payloadAttachments(event.payload).map((attachment, index) =>
+      paint(context, "36", describeAttachment(attachment, index)));
+    const lines = body.length > 0 ? styled.split("\n") : [];
+    return [header, ...[...lines, ...images].map((line) => `  ${line}`)].join("\n");
   }
 
   const system = describeSystemEvent(event, context);

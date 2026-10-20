@@ -1,6 +1,9 @@
 import { deriveCliIdentity } from "./identity.js";
 import { readAllStdin } from "./handoff.js";
+import { attachFile } from "../attachments.js";
+import { resolveDataDir } from "../config.js";
 import {
+  getStringOptions,
   hasOption,
   type ParsedCommand
 } from "./parser.js";
@@ -50,7 +53,7 @@ async function handleMsgSendCommand(
   const recipientSelector = usesRoomFlag ? "room" : parsed.positionals[0];
   if (!recipientSelector) {
     throw new Error(
-      "Usage: tt msg send <recipient|room> <body...> [--interrupt] [--stdin]."
+      "Usage: tt msg send <recipient|room> <body...> [--interrupt] [--stdin] [--attach IMAGE]..."
     );
   }
 
@@ -62,7 +65,11 @@ async function handleMsgSendCommand(
       : hasOption(parsed, "stdin")
         ? await readAllStdin()
         : "";
-  if (body.length === 0) {
+  if (hasOption(parsed, "attach") && getStringOptions(parsed, "attach").length === 0) {
+    throw new Error("--attach needs an image file.");
+  }
+  const attachments = getStringOptions(parsed, "attach").map((file) => attachFile(file, { dataDir: resolveDataDir() }));
+  if (body.length === 0 && attachments.length === 0) {
     throw new Error(
       "Message body is required (pass as a positional or use --stdin to read from stdin)."
     );
@@ -82,7 +89,8 @@ async function handleMsgSendCommand(
     room_id: session.room_id,
     body,
     to_agent_id: toAgentId,
-    delivery_hint: hasOption(parsed, "interrupt") ? "interrupt" : "normal"
+    delivery_hint: hasOption(parsed, "interrupt") ? "interrupt" : "normal",
+    ...(attachments.length ? { attachments } : {})
   });
 
   printResult(parsed, result, () => {

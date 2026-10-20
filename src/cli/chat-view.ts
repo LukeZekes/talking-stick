@@ -33,6 +33,7 @@ export const CHAT_COMMANDS: ChatCommandInfo[] = [
   { name: "roles", usage: "/roles", description: "edit assignments and harness defaults (Tab switches scope; Enter applies)" },
   { name: "rooms", usage: "/rooms", description: "browse directories and room members (Ctrl+T)" },
   { name: "go", usage: "/go <room|dir>", description: "choose an open room with ↑↓ Enter; a directory opens its room" },
+  { name: "attach", usage: "/attach <file>", description: "add an image to the draft (Ctrl+V pastes the clipboard's image)" },
   { name: "older", usage: "/older", description: "load an earlier page of saved messages" },
   { name: "kick", usage: "/kick <agent>", description: "remove a member; --force for a live agent" },
   {
@@ -70,6 +71,7 @@ export function formatChatHelp(width: number, color: boolean, keys = false, inli
     ["↑ / ↓", "Recall prompts; choose suggestions or edit draft lines"],
     ["Ctrl+P / Ctrl+N", "Recall previous / next submitted prompt"],
     ["Alt+Enter", "Insert a new line"],
+    ["Ctrl+V", "Attach the clipboard's image as [Image #N]; delete the marker to drop it"],
     ["Esc", "Clear text; interrupt agents when the draft is empty"],
     ["Ctrl+C", "Clear the draft"],
     ["Ctrl+T", "Browse folders and rooms"],
