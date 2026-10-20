@@ -11,6 +11,10 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+## [0.27.0] — 2026-10-20
+
+Full notes: [`docs/releases/0.27.0.md`](docs/releases/0.27.0.md).
+
 ### Added
 
 - A second bundled skill, `talking-stick-rooms`, for a session that checks on rooms from outside: it never joins a room, and it teaches the session to find a room, summarize it from `tt room brief`, and ask its agents with `tt room ask`. Start one in any folder with `/talking-stick-rooms` in Claude Code or `$talking-stick-rooms` in Codex. The main skill's description now covers working in a room, and points observers to the new skill. `tt install` installs it wherever `talking-stick` goes, `tt uninstall` removes it, and an update adds it beside an existing `talking-stick` install.
@@ -776,6 +780,7 @@ Initial alpha. Core room protocol, SQLite-backed persistence, multi-process
 contention coverage, MCP smoke coverage, human guardian flow, harness
 installers, and the portable `talking-stick` skill.
 
+[0.27.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.27.0
 [0.26.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.26.0
 [0.25.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.25.0
 [0.24.1]: https://github.com/mostlydev/talking-stick/releases/tag/v0.24.1
