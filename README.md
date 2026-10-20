@@ -181,7 +181,7 @@ duplicate agents that are already running. Details:
 | Method | Command |
 |---|---|
 | Standalone binary (recommended) | `curl -fsSL https://raw.githubusercontent.com/mostlydev/talking-stick/master/scripts/install.sh \| sh` |
-| A specific version | `… \| sh -s -- --version 0.27.0` |
+| A specific version | `… \| sh -s -- --version 0.28.1` |
 | From source | `git clone … && npm install && npm link` (needs Node ≥ 22) |
 
 The installer accepts `--bin-dir DIR` (default `~/.local/bin`) and `--install-dir DIR` (default
