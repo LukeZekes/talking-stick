@@ -391,6 +391,28 @@ const migrations: Migration[] = [
       last_hook_event_seq INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (session_id, host_id, pid, process_started_at)
     );`
+  },
+  {
+    id: 23,
+    name: "visitor_requests",
+    up: `CREATE TABLE visitor_requests (
+      request_id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      requester_agent_id TEXT NOT NULL,
+      request_key TEXT,
+      payload_digest TEXT NOT NULL,
+      event_seq INTEGER NOT NULL,
+      recipients_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX visitor_requests_room ON visitor_requests (room_id);
+    CREATE UNIQUE INDEX visitor_requests_key ON visitor_requests (requester_agent_id, request_key)
+      WHERE request_key IS NOT NULL;
+    CREATE TABLE visitor_replies (
+      request_id TEXT NOT NULL,
+      event_seq INTEGER NOT NULL,
+      PRIMARY KEY (request_id, event_seq)
+    );`
   }
 ];
 

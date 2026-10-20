@@ -160,6 +160,9 @@ export interface MessagePayload {
   sent_to?: AgentId[];
   // Stored images, in the order the message numbers them.
   attachments?: MessageAttachment[];
+  // A visitor's question (tt room ask), and an answer to one (tt msg reply).
+  request_id?: string;
+  in_reply_to?: string;
 }
 
 export interface RoomEvent {
@@ -538,6 +541,57 @@ export interface SendMessageInput {
   /** Stored images (see attachments.ts); the body may be empty when present. */
   attachments?: MessageAttachment[];
   process_metadata?: ProcessMetadata;
+}
+
+export interface AskRoomInput {
+  agent_id: AgentId;
+  room_id: string;
+  /** "room" asks every live agent; otherwise exact member ids. */
+  to: "room" | AgentId[];
+  body: string;
+  /** Deduplicates a retry by the same requester. */
+  request_key?: string;
+}
+
+export interface AskRoomResult extends SendMessageResult {
+  request_id: string;
+  room_id: string;
+  recipients: AgentId[];
+  /** True when request_key matched an earlier identical request. */
+  deduplicated: boolean;
+}
+
+export interface ReplyToRequestInput {
+  agent_id: AgentId;
+  request_id: string;
+  body: string;
+  process_metadata?: ProcessMetadata;
+}
+
+export interface ReplyToRequestResult {
+  request_id: string;
+  room_id: string;
+  event_seq: number;
+  event_id: string;
+  created_at: string;
+}
+
+export interface RequestRepliesInput {
+  request_id: string;
+  after_event_seq?: number;
+  limit?: number;
+}
+
+export interface RequestRepliesResult {
+  request_id: string;
+  room_id: string;
+  requester_agent_id: AgentId;
+  recipients: AgentId[];
+  request_event_seq: number;
+  replies: RoomEvent[];
+  /** Pass as after_event_seq to read the next page or later replies. */
+  cursor_event_seq: number;
+  has_more: boolean;
 }
 
 export interface MessageDelivery {

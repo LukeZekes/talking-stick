@@ -7,19 +7,24 @@ import { formatRelativeTime, printResult } from "./output.js";
 import { getStringOption, hasOption, parseOptionalInteger, type ParsedCommand } from "./parser.js";
 import { resolveRoomSelector, roomShortName, selectedRoom } from "./room-selector.js";
 import type { Runtime } from "./runtime.js";
+import { askRoom, readReplies } from "./visitor-commands.js";
 
 // `tt room create|list|adopt|remove`. Declarations are files in the checkout;
 // the database row for a declared room appears on its first join.
-export function handleRoomCommand(runtime: Runtime, parsed: ParsedCommand): void {
-  const [action, target] = parsed.positionals;
+export function handleRoomCommand(runtime: Runtime, parsed: ParsedCommand): void | Promise<void> {
+  const [action, target, ...rest] = parsed.positionals;
   switch (action) {
+    case "ask":
+      if (!target) throw new Error("Usage: tt room ask <room> --to <agent[,agent]|room> <body...> [--stdin] [--request-key KEY]");
+      return askRoom(runtime, parsed, briefTarget(runtime, parsed, target), rest);
+    case "replies": return readReplies(runtime, parsed, target);
     case "create": return createRoom(runtime, parsed, target);
     case "list": return hasOption(parsed, "all") ? listHostRooms(runtime, parsed) : listRooms(runtime, parsed, target);
     case "brief": return briefRoom(runtime, parsed, target);
     case "adopt": return adoptRoom(runtime, parsed, target);
     case "remove": return removeRoom(runtime, parsed, target);
     default:
-      throw new Error("Usage: tt room create [path] [--name NAME] | list [path] [--all] | brief [room] [--limit N] [--before SEQ] | adopt [path] | remove [path]");
+      throw new Error("Usage: tt room create [path] [--name NAME] | list [path] [--all] | brief [room] [--limit N] [--before SEQ] | ask <room> --to <agents|room> <body> | replies <request-id> [--timeout S] | adopt [path] | remove [path]");
   }
 }
 

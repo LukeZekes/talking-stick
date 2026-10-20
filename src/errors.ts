@@ -2,6 +2,9 @@ import type { RoomState } from "./types.js";
 
 export type ProtocolErrorCode =
   | "room_not_found"
+  | "request_not_found"
+  | "request_key_conflict"
+  | "no_recipients"
   | "unknown_member"
   | "session_ended"
   | "operator_only"
@@ -43,6 +46,7 @@ export interface ProtocolErrorDetails {
   current_turn_id?: number;
   room_state?: RoomState;
   to_agent_id?: string;
+  request_id?: string;
   reserved_for?: string | null;
   reason?: string;
   room_id?: string;

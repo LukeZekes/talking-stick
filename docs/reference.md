@@ -27,6 +27,9 @@ tt room create [path] [--name NAME]                       # declare a room bound
 tt room list [path]                                       # this repository's rooms, live agents in each, current marked
 tt room list --all                                        # every room on this host with live members, most recent room activity first
 tt room brief [room] [--limit N]                          # what a room is doing: holder, members, last handoff, notes, recent messages
+tt room ask <room> --to <agents|room> [--stdin] [--request-key KEY]  # ask a room's agents a question without joining
+tt room replies <request-id> [--after SEQ] [--limit N] [--timeout S] # read the answers, waiting up to 60s
+tt msg reply <request-id> [--stdin]                       # answer a visitor's question (members of its room only)
 tt room adopt [path] [--name NAME]                        # declare an existing nested room, keeping its id
 tt room remove [path]                                     # remove a declaration and delete its agent-free room
 tt join [path] [--in ROOM] [--force-new]                  # join the room for path (--force-new is deprecated)
@@ -186,6 +189,20 @@ event carries a `full` command that reads it whole. `older` pages back with `--b
 path suffix from any folder; a directory needs explicit path syntax (`.`, `./dir`, `../dir`, or an
 absolute path), so a local folder never shadows a room name. Neither command joins a room or
 refreshes anyone's presence.
+
+A visitor can also ask a room's agents a question. `tt room ask <room> --to <agent|room>` takes
+the question as arguments or with `--stdin`. `--to` names agents by id, or by harness name when
+exactly one agent matches; `room` sends it to every live agent in the room. The recipients are
+fixed when the question is asked and are woken like any directed message. Their envelope header
+reads `visitor <id>` and ends with the reply command. The visitor never becomes a member, never
+holds the stick, and doesn't keep the room open. A member answers with
+`tt msg reply <request-id>`; answers are room messages that wake nobody in the room. The visitor
+reads them with `tt room replies <request-id>`, oldest first, 20 at a time (`--limit` up to 200),
+continuing with `--after <cursor_event_seq>`. `--timeout S` (at most 60) waits for a first answer;
+an empty result with `timed_out: true` means no answer yet. `--request-key KEY` makes a retry
+return the original request instead of asking twice, and a different question under the same key
+is refused. Questions and answers are kept as long as their room: when the room closes, they are
+deleted with it, and later reads report `request_not_found`.
 
 ### Non-owner notes
 

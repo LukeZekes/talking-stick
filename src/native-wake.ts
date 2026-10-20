@@ -106,16 +106,23 @@ export function formatNativeEventText(input: {
   const quote = (text: string) => text.replace(/\r\n?/g, "\n").replace(/\s+$/, "").split("\n").map((line) => `  ${line}`);
   const lines = [`[talking-stick] room ${input.path} · ack: tt ack ${input.token}`];
   for (const event of input.events) {
-    const payload = (event.payload ?? {}) as { body?: unknown; delivery_hint?: unknown; recipients?: unknown };
+    const payload = (event.payload ?? {}) as { body?: unknown; delivery_hint?: unknown; recipients?: unknown;
+      request_id?: unknown; in_reply_to?: unknown };
     const recipients = Array.isArray(payload.recipients) ? payload.recipients.filter((id): id is string => typeof id === "string") : [];
-    const route = event.to_agent_id === input.recipient ? "you"
+    // Request ids are generated tokens, never sender text, so they are safe
+    // in the header line.
+    const requestId = typeof payload.request_id === "string" ? payload.request_id : null;
+    const replyTo = typeof payload.in_reply_to === "string" ? payload.in_reply_to : null;
+    const route = replyTo ? `visitor (request ${replyTo})`
+      : event.to_agent_id === input.recipient ? "you"
       : event.to_agent_id ? event.to_agent_id
       : recipients.length > 0 ? recipients.map((id) => (id === input.recipient ? "you" : id)).join(", ")
       : "room";
-    const kind = event.event_type === "message_sent" ? "" : `${event.event_type} `;
+    const kind = requestId ? "visitor " : event.event_type === "message_sent" ? "" : `${event.event_type} `;
     const urgent = payload.delivery_hint === "interrupt" ? " ‼ urgent" : "";
     const arrow = event.event_type === "message_sent" || event.to_agent_id || recipients.length > 0 ? ` → ${route}` : "";
-    lines.push(`#${event.event_seq} ${kind}${event.from_agent_id ?? "system"}${arrow}${urgent}`);
+    const reply = requestId ? ` · reply: tt msg reply ${requestId} --stdin` : "";
+    lines.push(`#${event.event_seq} ${kind}${event.from_agent_id ?? "system"}${arrow}${urgent}${reply}`);
     if (typeof payload.body === "string" && payload.body.length > 0) lines.push(...quote(payload.body));
     for (const [index, attachment] of payloadAttachments(event.payload).entries()) lines.push(...quote(attachmentInstruction(attachment, index)));
     if (event.handoff) {

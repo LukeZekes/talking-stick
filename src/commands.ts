@@ -22,6 +22,11 @@ import type {
   ListRoomsResult,
   Note,
   RoomActivity,
+  AskRoomInput,
+  AskRoomResult,
+  ReplyToRequestResult,
+  RequestRepliesInput,
+  RequestRepliesResult,
   PassStickInput,
   PassStickResult,
   RelinquishOwnershipResult,
@@ -474,6 +479,20 @@ export class TalkingStickCommands {
   ): Promise<SendMessageResult> {
     return this.service.sendMessageAndWake({ ...input, agent_id: identity.agent_id,
       process_metadata: identity.process_metadata }, onDelivery);
+  }
+
+  // Visitors are identified but never registered: no process metadata is
+  // passed, so asking cannot refresh or create a membership.
+  askRoom(identity: DerivedIdentity, input: Omit<AskRoomInput, "agent_id">): Promise<AskRoomResult> {
+    return this.service.askRoom({ ...input, agent_id: identity.agent_id });
+  }
+
+  replyToRequest(identity: DerivedIdentity, input: { request_id: string; body: string }): ReplyToRequestResult {
+    return this.service.replyToRequest({ ...input, agent_id: identity.agent_id, process_metadata: identity.process_metadata });
+  }
+
+  getRequestReplies(input: RequestRepliesInput): RequestRepliesResult {
+    return this.service.getRequestReplies(input);
   }
 
   sendMessage(

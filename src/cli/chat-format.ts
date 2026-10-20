@@ -258,15 +258,18 @@ function formatCurrentChatEvent(event: RoomEvent, context: ChatFormatContext): s
       /\s+$/,
       ""
     );
-    const sender = from ? formatChatAgent(context, from) : "?";
-    const payload = event.payload as { recipients?: unknown; sent_to?: unknown } | null;
+    const payload = event.payload as { recipients?: unknown; sent_to?: unknown; request_id?: unknown; in_reply_to?: unknown } | null;
+    const visitor = typeof payload?.request_id === "string" ? `${paint(context, "2", "visitor")} ` : "";
+    const sender = `${visitor}${from ? formatChatAgent(context, from) : "?"}`;
     const listed = Array.isArray(payload?.recipients) ? payload.recipients : payload?.sent_to;
     const recipients = Array.isArray(listed) ? listed.filter((id): id is string => typeof id === "string") : [];
     const named = (id: AgentId) => {
       const icon = context.delivery_icon?.(event, id);
       return icon ? `${formatChatAgent(context, id)} ${icon}` : formatChatAgent(context, id);
     };
-    const route = to
+    const route = typeof payload?.in_reply_to === "string"
+      ? ` ${paint(context, "2", "→")} ${paint(context, "2", `visitor (request ${payload.in_reply_to})`)}`
+      : to
       ? ` ${paint(context, "2", "→")} ${named(to)}`
       : recipients.length > 0
         ? ` ${paint(context, "2", "→")} ${recipients.map(named).join(", ")}`
