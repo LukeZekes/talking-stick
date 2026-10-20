@@ -665,6 +665,21 @@ export interface ListRoomsResult {
   rooms: PathRoom[];
 }
 
+export interface RoomActivity {
+  room_id: string;
+  /** Time of the room's newest event, or null for a room without events. */
+  last_event_at: string | null;
+  /** The newest event that carried a handoff (release, pass, or assign). */
+  last_handoff: {
+    event_seq: number;
+    event_type: EventType;
+    from_agent_id: AgentId | null;
+    to_agent_id: AgentId | null;
+    created_at: string;
+    handoff: Handoff;
+  } | null;
+}
+
 export interface Note {
   note_id: string;
   room_id: string;

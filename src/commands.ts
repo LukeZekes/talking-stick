@@ -20,6 +20,7 @@ import type {
   ListNotesResult,
   ListRoomsInput,
   ListRoomsResult,
+  RoomActivity,
   PassStickInput,
   PassStickResult,
   RelinquishOwnershipResult,
@@ -203,6 +204,10 @@ export class TalkingStickCommands {
 
   listRooms(input: ListRoomsInput = {}): ListRoomsResult {
     return this.service.listRooms(input);
+  }
+
+  getRoomActivity(input: { room_id: string }): RoomActivity {
+    return this.service.getRoomActivity(input);
   }
 
   joinPath(

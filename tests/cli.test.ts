@@ -1,4 +1,4 @@
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFileSync, spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -3527,6 +3527,98 @@ describe("tt room", () => {
     expect(fs.existsSync(path.join(api, ".talking-stick"))).toBe(false);
     process.env.TT_HARNESS_AGENT_ID = "grok:after";
     expect(JSON.parse(await captureStdout(["join", path.join(api, "src"), "--json"])).room_id).toBe(root.room_id);
+    for (const dir of registry) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("list --all shows every occupied room on the host without joining or refreshing", async () => {
+    const registry: string[] = [];
+    const { project } = setupIsolatedCli(registry);
+    const other = path.join(path.dirname(project), "other");
+    const empty = path.join(path.dirname(project), "empty");
+    for (const dir of [other, empty]) fs.mkdirSync(dir);
+    await seedCliLease(project, "claude:host");
+    await captureStdout(["release", project, "--agent", "claude:host", "--status", `Shipped ${"x".repeat(400)}`,
+      "--next-action", "Review it.", "--json"]);
+    const first = JSON.parse(await captureStdout(["state", project, "--agent", "human:observer", "--json"])).room;
+    process.env.TT_HARNESS_AGENT_ID = "codex:host";
+    const second = JSON.parse(await captureStdout(["join", other, "--json"]));
+    // A room whose only agent left disappears from the listing.
+    process.env.TT_HARNESS_AGENT_ID = "grok:host";
+    await captureStdout(["join", empty, "--json"]);
+    await captureStdout(["leave", empty, "--json"]);
+    const service = new TalkingStickService();
+    try {
+      service.joinPath({ agent_id: "human:op:chat:1", context_path: other,
+        process_metadata: { host_id: "elsewhere", pid: 10, process_started_at: "t", session_kind: "human_chat", display_name: "op" } });
+    } finally {
+      service.close();
+    }
+    const seenBefore = JSON.parse(await captureStdout(["state", project, "--agent", "human:observer", "--json"]))
+      .members.find((member: { agent_id: string }) => member.agent_id === "claude:host").last_seen_at;
+
+    process.env.TT_HARNESS_AGENT_ID = "claude:observer";
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const listed = JSON.parse(await captureStdout(["room", "list", "--all", "--json"]));
+    expect(listed.rooms.map((room: { room_id: string }) => room.room_id).sort())
+      .toEqual([first.room_id, second.room_id].sort());
+    const projectRoom = listed.rooms.find((room: { room_id: string }) => room.room_id === first.room_id);
+    expect(projectRoom).toMatchObject({ canonical_path: project, agents: ["claude:host"], consoles: [], owner: null });
+    expect(projectRoom.last_handoff).toMatchObject({ event_type: "release", from_agent_id: "claude:host", next_action: "Review it." });
+    expect(projectRoom.last_handoff.status).toHaveLength(160);
+    expect(projectRoom.last_handoff.status.endsWith("…")).toBe(true);
+    expect(listed.rooms.find((room: { room_id: string }) => room.room_id === second.room_id))
+      .toMatchObject({ agents: ["codex:host"], consoles: ["human:op:chat:1"], last_handoff: null });
+
+    // The observer joined nothing, and listing refreshed nobody's presence.
+    const state = JSON.parse(await captureStdout(["state", project, "--agent", "human:observer", "--json"]));
+    expect(state.members.map((member: { agent_id: string }) => member.agent_id)).toEqual(["claude:host"]);
+    expect(state.members[0].last_seen_at).toBe(seenBefore);
+    const text = await captureStdout(["room", "list", "--all", "--text"]);
+    expect(text).toContain(`#project  claude:host  active`);
+    expect(text).toContain("#other  codex:host, 1 console");
+    for (const dir of registry) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("list --all keeps live members by liveness, not recency, and orders rooms newest first", async () => {
+    const registry: string[] = [];
+    const { project } = setupIsolatedCli(registry);
+    const [stale, older] = ["stale", "older"].map((name) => {
+      const dir = path.join(path.dirname(project), name);
+      fs.mkdirSync(dir);
+      return fs.realpathSync.native(dir);
+    });
+    const alive = deriveHumanCliIdentity({ agentId: "claude:alive", sessionKind: "human_guardian" });
+    const deadPid = spawnSync("true").pid;
+    const service = new TalkingStickService();
+    const db = (service as unknown as { db: { prepare(sql: string): { run(...args: unknown[]): unknown } } }).db;
+    const long = "2001-01-01T00:00:00.000Z";
+    try {
+      const projectRoom = service.joinPath({ agent_id: alive.agent_id, context_path: project, process_metadata: alive.process_metadata });
+      // A dead pid seen recently is not yet reaped, but is not a live member.
+      service.joinPath({ agent_id: "codex:gone", context_path: project,
+        process_metadata: { ...alive.process_metadata, pid: deadPid, display_name: "gone" } });
+      // Unknown liveness needs recent presence.
+      const staleRoom = service.joinPath({ agent_id: "grok:silent", context_path: stale,
+        process_metadata: { host_id: "elsewhere", pid: 10, process_started_at: "t", session_kind: "human_guardian", display_name: "silent" } });
+      const olderRoom = service.joinPath({ agent_id: "codex:recent", context_path: older,
+        process_metadata: { host_id: "elsewhere", pid: 11, process_started_at: "t", session_kind: "human_guardian", display_name: "recent" } });
+      // claude:alive has been silent for years but its process still runs.
+      db.prepare("UPDATE room_members SET last_seen_at = ?, last_wait_at = NULL WHERE agent_id IN (?, ?)")
+        .run(long, alive.agent_id, "grok:silent");
+      db.prepare("UPDATE path_rooms SET updated_at = ? WHERE room_id = ?").run(long, olderRoom.room_id);
+      // An expired lease must not read as someone working.
+      db.prepare("UPDATE path_rooms SET owner = ?, lease_expires_at = ? WHERE room_id = ?").run(alive.agent_id, long, projectRoom.room_id);
+      db.prepare("UPDATE room_events SET created_at = ? WHERE room_id = ?").run(long, olderRoom.room_id);
+      expect(staleRoom.room_id).not.toBe(projectRoom.room_id);
+    } finally {
+      service.close();
+    }
+
+    const listed = JSON.parse(await captureStdout(["room", "list", "--all", "--json"]));
+    expect(listed.rooms.map((room: { canonical_path: string; agents: string[] }) => [room.canonical_path, room.agents]))
+      .toEqual([[project, ["claude:alive"]], [older, ["codex:recent"]]]);
+    expect(listed.rooms[0]).toMatchObject({ owner: "claude:alive", state: "stale_owner" });
+    expect(await captureStdout(["room", "list", "--all", "--text"])).toContain("stick=claude:alive (stale)");
     for (const dir of registry) fs.rmSync(dir, { recursive: true, force: true });
   });
 

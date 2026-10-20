@@ -71,6 +71,7 @@ import type {
   ListNotesResult,
   ListRoomsInput,
   ListRoomsResult,
+  RoomActivity,
   MessagePayload,
   Note,
   OwnerMutationInput,
@@ -378,6 +379,36 @@ export class TalkingStickService {
     rows.sort((left, right) => (rank.get(left.canonical_path) ?? 0) - (rank.get(right.canonical_path) ?? 0));
     return {
       rooms: rows.map((row) => this.mapRoomForList(row, now))
+    };
+  }
+
+  // Read-only, and never touches membership, so host-wide listings can call
+  // it for every room without refreshing anyone's presence.
+  getRoomActivity(input: { room_id: string }): RoomActivity {
+    this.requireRoom(input.room_id);
+    const last = this.db
+      .prepare<[string], { created_at: string }>(
+        "SELECT created_at FROM room_events WHERE room_id = ? ORDER BY event_seq DESC LIMIT 1"
+      )
+      .get(input.room_id);
+    const handoff = this.db
+      .prepare<[string], RoomEventRow>(
+        "SELECT * FROM room_events WHERE room_id = ? AND handoff_json IS NOT NULL ORDER BY event_seq DESC LIMIT 1"
+      )
+      .get(input.room_id);
+    return {
+      room_id: input.room_id,
+      last_event_at: last?.created_at ?? null,
+      last_handoff: handoff
+        ? {
+            event_seq: handoff.event_seq,
+            event_type: handoff.event_type,
+            from_agent_id: handoff.from_agent_id,
+            to_agent_id: handoff.to_agent_id,
+            created_at: handoff.created_at,
+            handoff: JSON.parse(handoff.handoff_json!) as Handoff
+          }
+        : null
     };
   }
 

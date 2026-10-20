@@ -21,10 +21,11 @@ For the introduction and quickstart, see [`README.md`](../README.md).
 ```text
 tt --version                                              # print the installed version
 tt whoami [--explain]                                     # show the resolved CLI identity
-tt list [path]                                            # list rooms
+tt list [path]                                            # rooms whose scope covers the path, most specific first
 tt roles [show] | set <agent|harness> <roles|none|clear> | default <harness> <roles|none|clear> [--in ROOM]
 tt room create [path] [--name NAME]                       # declare a room boundary (.talking-stick/room.toml)
 tt room list [path]                                       # this repository's rooms, live agents in each, current marked
+tt room list --all                                        # every room on this host with live members, most recent room activity first
 tt room adopt [path] [--name NAME]                        # declare an existing nested room, keeping its id
 tt room remove [path]                                     # remove a declaration and delete its agent-free room
 tt join [path] [--in ROOM] [--force-new]                  # join the room for path (--force-new is deprecated)
