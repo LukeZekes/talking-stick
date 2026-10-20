@@ -33,12 +33,13 @@ describe.skipIf(!hasBun || !supported)("standalone binary", () => {
     const sums = fs.readdirSync(assets).filter((name) => name.endsWith(".sha256"))
       .map((name) => fs.readFileSync(path.join(assets, name), "utf8")).join("");
     fs.writeFileSync(path.join(assets, "checksums.txt"), sums);
+    // The installer's post-install step runs under this HOME and may create it.
+    fs.mkdirSync(path.join(root, "home"), { recursive: true });
     bin = path.join(root, "bin dir");
     install = path.join(root, "install dir");
     execFileSync("sh", ["scripts/install.sh", "--base-url", assets, "--bin-dir", bin, "--install-dir", install],
       { env: env(), stdio: "pipe" });
     tt = path.join(bin, "tt");
-    fs.mkdirSync(path.join(root, "home"));
   }, 180_000);
   afterAll(() => { if (root) fs.rmSync(root, { recursive: true, force: true }); });
 
