@@ -91,7 +91,7 @@ a delivery receipt, not proof the model acted on it.
 ## Waking idle agents
 
 A wake carries the messages themselves in a compact envelope. The agent acts on what it received
-and acknowledges with a short `tt ack <token>` instead of fetching again. No keystrokes are typed,
+and acknowledges with a short `tt ack <token>` instead of fetching again. Native wakes type no keystrokes,
 and an idle agent spends no model turns waiting.
 
 | Harness | How messages reach it |
