@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -2652,4 +2653,57 @@ test.each([true, false])("native Ctrl-click dismisses top pins without capturing
     }
   } finally { input.end(); await session; vt.dispose(); }
   expect(await sendChatLinkClick({ url, paneId: "w1:p42" })).toBe("unreachable");
+});
+
+test("scrolling natively past a pending message in Herdr stops it pinning without acknowledging it", async () => {
+  const dir = fs.mkdtempSync("/tmp/tth-");
+  const socketPath = path.join(dir, "herdr.sock");
+  let herdr: net.Socket | undefined;
+  const server = net.createServer(connection => {
+    connection.once("data", () => {
+      herdr = connection;
+      connection.write('{"id":"tt-chat-scroll","result":{"type":"subscription_started"}}\n');
+    });
+  });
+  await new Promise<void>(resolve => server.listen(socketPath, resolve));
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
+  const input = Object.assign(new PassThrough(), { setRawMode() {} });
+  const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+  const vt = new Terminal({ cols: 100, rows: 28, allowProposedApi: true });
+  vt.onData(data => input.write(data));
+  let bytes = "";
+  output.on("data", chunk => { bytes += chunk.toString(); vt.write(chunk.toString()); });
+  const flush = () => new Promise<void>(resolve => vt.write("\u001b[0m", resolve));
+  const screen = () => Array.from({ length: 28 }, (_, i) => vt.buffer.active.getLine(vt.buffer.active.baseY + i)?.translateToString(true) ?? "");
+  const pending = () => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total;
+  const scroll = (offset: number) => herdr!.write(`${JSON.stringify({ event: "pane.scroll_changed", data: { pane_id: "w1:p42",
+    scroll: { max_offset_from_bottom: vt.buffer.active.baseY, offset_from_bottom: offset, viewport_rows: 28 } } })}\n`);
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline: true,
+    color: true, history: 0, show_turn_events: false, poll_ms: 5,
+    herdr: { pane_id: "w1:p42", socket_path: socketPath, runner: () => { throw new Error("no plugin"); } } });
+  try {
+    await until(() => bytes.includes("Type to message the room") && herdr !== undefined);
+    service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "Scrolled-past target" });
+    await until(() => bytes.includes("Scrolled-past target"));
+    for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `scroll-flow-${i}` });
+    await until(() => bytes.includes("scroll-flow-24"));
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    const pinned = () => screen().slice(0, 5).some(line => line.includes("Scrolled-past target"));
+    expect(pinned()).toBe(true);
+    // Live-bottom snapshot, then a scroll that brings the committed original into view.
+    scroll(0);
+    const history = Array.from({ length: vt.buffer.active.baseY }, (_, i) => vt.buffer.active.getLine(i)?.translateToString(true) ?? "");
+    const row = history.findIndex(line => line.includes("Scrolled-past target"));
+    expect(row).toBeGreaterThanOrEqual(0);
+    scroll(vt.buffer.active.baseY - row);
+    await until(() => !pinned());
+    expect(pending()).toBe(1);
+    input.write("/ack all\r");
+    await until(() => pending() === 0);
+  } finally {
+    input.end(); await session; vt.dispose();
+    server.close(); fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

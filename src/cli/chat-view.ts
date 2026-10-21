@@ -359,6 +359,13 @@ export class ChatTranscript {
     return this.traversedHumanMessages.has(seq);
   }
 
+  // The event a content row belongs to; headings and separators have none.
+  eventSeqForRow(row: TranscriptRow): number | null {
+    if (row.line < 0) return null;
+    const block = this.blocks.find(candidate => candidate.id === row.block_id);
+    return block?.kind === "event" ? block.event.event_seq : null;
+  }
+
   get following(): boolean {
     return this.anchor.follow;
   }

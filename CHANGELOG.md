@@ -18,7 +18,8 @@ changes will be called out under **Breaking changes**.
 - Pending operator messages remain in their original timeline position while visible and pin
   only after newer output pushes them above the live transcript. The live transcript omits
   the pinned copy, and inline scrolling preserves message text in native scrollback with
-  mouse capture off. Fullscreen manual traversal suppresses re-pinning without acknowledging.
+  mouse capture off. Fullscreen manual traversal suppresses re-pinning without acknowledging,
+  and inline chat in Herdr does the same when native scrollback is scrolled past a message (#162).
 
 ### Fixed
 

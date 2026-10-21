@@ -24,10 +24,15 @@ export class InlinePinHistory {
   }
 
   evicted(rows: TranscriptRow[], top: number): string[] {
-    const output: string[] = [];
+    return this.evict(rows, top).map(entry => entry.text);
+  }
+
+  /** Like evicted, keeping each committed line's source row. */
+  evict(rows: TranscriptRow[], top: number): { text: string; row: TranscriptRow }[] {
+    const output: { text: string; row: TranscriptRow }[] = [];
     for (const row of rows.slice(0, top)) {
       if (this.frontier && compare(row, this.frontier) <= 0) continue;
-      output.push(this.visible(row));
+      output.push({ text: this.visible(row), row });
     }
     this.observe(rows, top);
     return output;
