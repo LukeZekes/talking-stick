@@ -2655,7 +2655,7 @@ test.each([true, false])("native Ctrl-click dismisses top pins without capturing
   expect(await sendChatLinkClick({ url, paneId: "w1:p42" })).toBe("unreachable");
 });
 
-test.each(["live", "away", "away-sweep"] as const)("native Herdr scroll suppresses pending pins (%s)", async mode => {
+test.each(["live", "away", "away-acked", "away-input", "away-disconnect"] as const)("native Herdr scroll preserves the viewport (%s)", async mode => {
   const scrollBeforePromotion = mode !== "live";
   const dir = fs.mkdtempSync("/tmp/tth-");
   const socketPath = path.join(dir, "herdr.sock");
@@ -2680,41 +2680,68 @@ test.each(["live", "away", "away-sweep"] as const)("native Herdr scroll suppress
   const pending = () => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total;
   const scroll = (offset: number) => herdr!.write(`${JSON.stringify({ event: "pane.scroll_changed", data: { pane_id: "w1:p42",
     scroll: { max_offset_from_bottom: 100 + vt.buffer.active.baseY, offset_from_bottom: offset, viewport_rows: 28 } } })}\n`);
+  // Existing shell scrollback makes a shallow native scroll expose both
+  // history and live-screen rows, which a full repaint must not replace.
+  await new Promise<void>(resolve => vt.write(Array.from({ length: 100 }, (_, i) => `host-history-${i}`).join("\r\n") + "\r\n", resolve));
+  const nativeViewport = () => Array.from({ length: 28 }, (_, i) => vt.buffer.active.getLine(vt.buffer.active.viewportY + i)?.translateToString(true) ?? "");
   const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
     identity: observerIdentity(), context_path: root, input, output, terminal: true, inline: true,
     color: true, history: 0, show_turn_events: false, poll_ms: 5,
     herdr: { pane_id: "w1:p42", socket_path: socketPath, runner: () => { throw new Error("no plugin"); } } });
   try {
     await until(() => bytes.includes("Type to message the room") && herdr !== undefined);
-    service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "Scrolled-past target" });
+    const target = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "Scrolled-past target" });
     await until(() => bytes.includes("Scrolled-past target"));
-    if (scrollBeforePromotion) {
-      scroll(10); // The operator is already browsing older host scrollback.
-      await new Promise(resolve => setTimeout(resolve, 30));
-    }
-    for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `scroll-flow-${i}` });
-    await until(() => bytes.includes("scroll-flow-24"));
-    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
     const pinned = () => screen().slice(0, 5).some(line => line.includes("Scrolled-past target"));
     if (scrollBeforePromotion) {
-      expect(pinned()).toBe(false);
-      if (mode === "away-sweep") {
-        // Scrolling across the committed original before returning: no pin at all.
-        const history = Array.from({ length: vt.buffer.active.baseY }, (_, i) => vt.buffer.active.getLine(i)?.translateToString(true) ?? "");
-        const row = history.findIndex(line => line.includes("Scrolled-past target"));
-        scroll(vt.buffer.active.baseY - row);
+      vt.scrollLines(-1);
+      scroll(1); // A shallow scroll still exposes live-screen rows.
+      await new Promise(resolve => setTimeout(resolve, 30));
+      await flush();
+      const written = bytes.length;
+      const viewed = nativeViewport();
+      const viewportY = vt.buffer.active.viewportY;
+      for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `scroll-flow-${i}` });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      if (mode === "away-acked") {
+        service.acknowledgeHumanMessage({ room_id: joined.room_id, agent_id: "human:op", event_seq: target.event_seq });
         await new Promise(resolve => setTimeout(resolve, 30));
-        scroll(0);
-        await new Promise(resolve => setTimeout(resolve, 30)); await flush();
-        expect(pinned()).toBe(false);
+        service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: "Normal output while away" });
+        await new Promise(resolve => setTimeout(resolve, 30));
+      }
+      // Nothing repaints, clears or commits under a scrolled-back view.
+      await flush();
+      expect(bytes.length).toBe(written);
+      expect(nativeViewport()).toEqual(viewed);
+      expect(vt.buffer.active.viewportY).toBe(viewportY);
+      if (mode === "away-input" || mode === "away-disconnect") {
+        if (mode === "away-disconnect") herdr!.destroy();
+        await new Promise(resolve => setTimeout(resolve, 30));
+        expect(nativeViewport()).toEqual(viewed);
+        expect(vt.buffer.active.viewportY).toBe(viewportY);
+        vt.scrollToBottom();
+        input.write("resume draft");
+        await until(() => bytes.includes("scroll-flow-24") && bytes.includes("resume draft"));
         expect(pending()).toBe(1);
-        input.write("/ack all\r");
+        input.write("\u0015/ack all\r");
         await until(() => pending() === 0);
         return;
       }
+      vt.scrollToBottom();
       scroll(0);
-      await until(pinned);
+      if (mode === "away-acked") {
+        await until(() => bytes.includes("Normal output while away"));
+        await flush();
+        expect(pinned()).toBe(false);
+        expect(pending()).toBe(0);
+        return;
+      }
+      await until(() => bytes.includes("scroll-flow-24") && pinned());
+    } else {
+      for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `scroll-flow-${i}` });
+      await until(() => bytes.includes("scroll-flow-24"));
     }
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
     expect(pinned()).toBe(true);
     // Live-bottom snapshot, then a scroll that brings the committed original into view.
     scroll(0);
@@ -2722,6 +2749,9 @@ test.each(["live", "away", "away-sweep"] as const)("native Herdr scroll suppress
     const row = history.findIndex(line => line.includes("Scrolled-past target"));
     expect(row).toBeGreaterThanOrEqual(0);
     scroll(vt.buffer.active.baseY - row);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    vt.scrollToBottom();
+    scroll(0);
     await until(() => !pinned());
     expect(pending()).toBe(1);
     input.write("/ack all\r");

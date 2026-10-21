@@ -758,8 +758,11 @@ export async function runChatSession(
   // Rows committed to Herdr's scrollback while pins show, so a pending
   // message the operator scrolls past natively stops pinning.
   const nativeScrollLedger = new NativeScrollLedger();
-  // While the operator browses Herdr scrollback, nothing new is promoted.
+  // While the operator browses Herdr scrollback, chat writes nothing to the
+  // pane: no repaint, no commits. Herdr returns a pane to the bottom on any
+  // key, and the scroll event that follows brings the frame up to date.
   let nativeAway = false;
+  let inlineNeedsRebuild = false;
   let inlineVisibleFloor = 0;
   const inlineReceiptRows = new Map<number, number>();
   const inlineHumanRows = new Map<number, number>();
@@ -783,6 +786,7 @@ export async function runChatSession(
     mouseActive = active;
   };
   const drawTopViewport = () => {
+    if (nativeAway) { inlineNeedsRebuild = true; return; }
     const size = dimensions();
     const context = formatContext();
     const draft = editor?.draft ?? { line: "", cursor: 0 };
@@ -798,7 +802,7 @@ export async function runChatSession(
       inlinePinHistory.observe(all, Math.max(0, all.length - (size.rows - footer.lines.length)));
       inlineHistoryInitialized = true;
     }
-    const frame = renderInlineTopPanel(nativeAway && attention ? { ...input, attention: { ...attention, messages: [] } } : input);
+    const frame = renderInlineTopPanel(input);
     const evicted = inlinePinHistory.evict(all, frame.history_top ?? 0);
     const history = evicted.map(entry => entry.text);
     nativeScrollLedger.commit(evicted.map(entry => transcript.eventSeqForRow(entry.row)));
@@ -815,6 +819,7 @@ export async function runChatSession(
   };
   const drawComposer = () => {
     if (!inline || closed || externalEditorActive) return;
+    if (nativeAway) { inlineNeedsRebuild = true; return; }
     if (attention.total > 0) { drawTopViewport(); return; }
     inlineHistoryInitialized = false;
     nativeScrollLedger.reset();
@@ -861,6 +866,7 @@ export async function runChatSession(
   // line, then redraw the draft underneath.
   const writeInline = (text: string) => {
     if (externalEditorActive) { deferredInline.push(text); return; }
+    if (nativeAway) { inlineNeedsRebuild = true; return; }
     if (attention.total > 0) { drawTopViewport(); return; }
     eraseComposer();
     const lines = text.split(/\r?\n/).flatMap(line => wrapStyledLine(line, Math.max(1, dimensions().columns - 1)));
@@ -933,6 +939,7 @@ export async function runChatSession(
   const setDelivery = (seq: number, agent: string, state: string) => {
     rememberDelivery(seq, agent, state);
     transcript.invalidate();
+    if (inline && nativeAway) { inlineNeedsRebuild = true; return; }
     if (inline && attention.total > 0) { redraw(); return; }
     const row = inlineReceiptRows.get(seq);
     const event = trackedEvents.get(seq);
@@ -973,6 +980,7 @@ export async function runChatSession(
     if (!fullscreen) print("The room has closed.");
   };
   const restore = () => {
+    options.input.off("data", resumeNativeScrollOnInput);
     chatLinks?.close();
     chatLinks = undefined;
     nativeScroll?.close();
@@ -1002,6 +1010,7 @@ export async function runChatSession(
     if (externalEditorActive) return;
     // Herdr may rewrap scrollback; committed rows no longer map one to one.
     nativeScrollLedger.reset();
+    if (inline && nativeAway) { inlineNeedsRebuild = true; return; }
     if (inline && attention.total > 0) {
       editor?.resize(dimensions().columns - 1);
       drawTopViewport();
@@ -1640,6 +1649,15 @@ export async function runChatSession(
   };
   const onSignal = () => stop();
   const onInterrupt = () => { if (!externalEditorActive) editor?.clear(); };
+  const resumeNativeScrollOnInput = () => {
+    if (closed || externalEditorActive || !nativeAway) return;
+    // Herdr returns to the live tail before forwarding operator input. Resume
+    // even if its scroll event lags or the stream died, without pretending
+    // that any pending message was read or acknowledged.
+    nativeAway = false;
+    inlineNeedsRebuild = false;
+    onResize();
+  };
   process.on("SIGTERM", onSignal);
   process.on("SIGHUP", onSignal);
   if (terminal) {
@@ -1660,6 +1678,7 @@ export async function runChatSession(
     }
     const herdrSocket = options.herdr?.socket_path;
     if (inline && terminal && options.herdr && herdrSocket) {
+      options.input.on("data", resumeNativeScrollOnInput);
       // Without the stream, pending messages simply pin when pushed off screen.
       nativeScroll = subscribePaneScroll({ socketPath: herdrSocket, paneId: options.herdr.pane_id, onScroll: scroll => {
         if (closed) return;
@@ -1668,7 +1687,12 @@ export async function runChatSession(
         nativeAway = away;
         const seqs = nativeScrollLedger.observe(scroll);
         transcript.markHumanMessagesTraversed(seqs);
-        if (attention.total > 0 && (awayChanged || attention.messages.some(event => seqs.includes(event.event_seq)))) drawComposer();
+        if (!away && awayChanged && inlineNeedsRebuild) {
+          inlineNeedsRebuild = false;
+          // Normal streaming output was buffered in the transcript as well.
+          // If the last pin was acknowledged elsewhere, rebuild that tail too.
+          if (attention.total > 0) drawComposer(); else onResize();
+        } else if (attention.total > 0 && (awayChanged || attention.messages.some(event => seqs.includes(event.event_seq)))) drawComposer();
       } });
     }
     if (fullscreen) {
