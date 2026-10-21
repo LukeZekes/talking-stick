@@ -36,7 +36,10 @@ test("pins keep normal authored message content without a status preamble", asyn
   const event: RoomEvent = { event_seq: 42, event_id: "e42", room_id: "r", turn_id: 0, event_type: "message_sent", from_agent_id: "codex:aa", to_agent_id: "human:op", created_at: new Date().toISOString(), handoff: null, reason: null, payload: { delivery_hint: "normal", body: "Keep this message.\nAnd its second line." } };
   const normal = formatChatEvent(event, context)!;
   const panel = renderAttention({ messages: [event], total: 99 }, 100, 28, context);
-  expect(panel.lines.slice(0, -1).join("\n")).toBe(normal);
+  expect(panel.lines[0]).toBe(""); // Separate a promoted pin from the transcript above it.
+  expect(panel.lines.at(-1)).toBe("");
+  expect(panel.lines.slice(1, -1).join("\n")).toBe(normal);
+  expect(panel.hits[0]).toEqual({ event_seq: 42, row: 1 });
   expect(panel.lines.join("\n")).not.toMatch(/For you|awaiting|dismiss|acknowledge|#42/);
   expect(panel.hits.every(hit => hit.event_seq === 42)).toBe(true);
   for (const rows of [4, 5, 6, 7, 8]) {

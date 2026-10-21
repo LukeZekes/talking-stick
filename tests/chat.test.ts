@@ -2444,6 +2444,7 @@ test.each([true, false])("human pins stay visible and click acknowledges only th
     const promoted = screen().map((line, index) => line.includes("first pinned request") ? index : -1).filter(index => index >= 0);
     expect(promoted).toHaveLength(1);
     const y = promoted[0];
+    expect(screen()[y - 2]).toBe(""); // Pin header has the same blank separation as transcript messages.
     expect(screen().findIndex(line => line.startsWith("> "))).toBe(composerRow);
     input.write(`\u001b[<0;5;${y + 1}M`);
     await until(() => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total === 1);

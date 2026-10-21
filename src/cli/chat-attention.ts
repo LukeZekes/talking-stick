@@ -11,7 +11,7 @@ export function renderAttention(attention: HumanAttention | undefined, width: nu
   context: ChatFormatContext): { lines: string[]; hits: AttentionHit[] } {
   if (!attention?.messages.length || rows < 4) return { lines: [], hits: [] };
   const maximum = Math.max(1, Math.floor(rows / 3));
-  const budget = maximum > 1 ? maximum - 1 : maximum;
+  const budget = maximum > 2 ? maximum - 2 : maximum > 1 ? maximum - 1 : maximum;
   const background = `\u001b[${themeStyle("attention", context.color_mode, true)}m`;
   const line = (text: string) => {
     const clipped = truncateStyled(text, width);
@@ -32,6 +32,10 @@ export function renderAttention(attention: HumanAttention | undefined, width: nu
       hits.push({ event_seq: event.event_seq, row: lines.length });
       lines.push(line(text));
     }
+  }
+  if (maximum > 2 && lines.length) {
+    lines.unshift("");
+    for (const hit of hits) hit.row++;
   }
   if (maximum > 1 && lines.length) lines.push("");
   return { lines, hits };

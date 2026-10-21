@@ -47,6 +47,7 @@ Full notes: [`docs/releases/0.29.0.md`](docs/releases/0.29.0.md).
   attachments, otherwise clipboard text is inserted. Ordinary terminal paste is unchanged. (#142)
 - Human-message clicks use the actual visible rows, including wrapped text, resize, incoming
   output and editor resume. Dismissal clears the highlight, including the final pending message.
+  Promoted pins keep a blank separator from the transcript above them.
 - Codex SessionEnd and Interrupt hooks use the supported 3-second timeout; reinstall with
   `tt install codex` to update existing hooks.
 
