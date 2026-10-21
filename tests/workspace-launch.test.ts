@@ -102,6 +102,17 @@ describe("tt up planning", () => {
     ]);
   });
 
+  test("a tmux caller plans the same Herdr verbs and names tmux in its checks", () => {
+    const { base } = fixture();
+    const plan = planWorkspaceLaunch({ ...base, backend: "tmux" });
+    expect(plan.backend).toBe("tmux");
+    expect(plan.checks.find((check) => check.name === "tmux")?.status).toBe("ok");
+    expect(plan.steps.map((step) => step.argv)).toEqual(planWorkspaceLaunch(base).steps.map((step) => step.argv));
+    const outside = planWorkspaceLaunch({ ...base, herdr: null, backend: null });
+    expect(outside.status).toBe("blocked");
+    expect(outside.checks.find((check) => check.status === "failed")?.remedy).toBe("Run tt up from a shell pane inside Herdr or tmux.");
+  });
+
   test("three agents share the side column evenly", () => {
     const { base } = fixture({ executables: ["tt", "claude", "codex", "grok"] });
     const plan = planWorkspaceLaunch({ ...base, agents: ["claude", "codex", "grok"] });

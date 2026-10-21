@@ -11,6 +11,10 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+- `tt up` works in plain tmux. Outside Herdr, a tmux pane runs the same launch: sessions and windows
+  stand in for Herdr workspaces and tabs, agents start in fresh panes, and joins are verified by the
+  member's harness process running in the pane. Escape in chat reaches a verified Codex pane in
+  tmux too. (#135)
 - `tt chat`: Shift+Enter now inserts a new line in terminals with enhanced key reporting (Ghostty,
   kitty, WezTerm, iTerm2 3.5+, foot). Chat requests the kitty keyboard protocol and modifyOtherKeys,
   decodes Ctrl, Alt and Escape reports back to their usual keys, and restores the terminal on exit,

@@ -18,6 +18,7 @@ import {
   type StartTimeReader
 } from "./launch-identity.js";
 import type { LaunchRecord } from "./launch-record.js";
+import type { PaneBackend } from "./pane-backend.js";
 import { resolveContextPath } from "./path-resolution.js";
 import { resolvePrimarySkillTargetPath } from "./skill-install.js";
 import type { RoomMember } from "./types.js";
@@ -95,6 +96,8 @@ export interface WorkspaceLaunchPlan {
   room_id: string | null;
   topology: LaunchTopology;
   herdr: HerdrContext | null;
+  // Which pane manager runs the steps; tmux performs Herdr's verbs itself.
+  backend: PaneBackend | null;
   checks: LaunchCheck[];
   chat: { action: "launch" | "skip" | "inspect"; reason?: string };
   agents: LaunchAgentPlan[];
@@ -106,6 +109,7 @@ export interface PlanWorkspaceLaunchInput {
   context_path: string;
   topology: LaunchTopology;
   herdr: HerdrContext | null;
+  backend?: PaneBackend | null;
   runner: HerdrRunner;
   room: { room_id: string; members: RoomMember[] } | null;
   /**
@@ -169,26 +173,30 @@ export function planWorkspaceLaunch(input: PlanWorkspaceLaunchInput): WorkspaceL
   const resolved = resolveContextPath(input.context_path);
   const canonicalPath = resolved.canonical_context_path;
 
+  const backend = input.herdr ? input.backend ?? "herdr" : null;
+  const manager = backend ?? "herdr";
   if (!input.herdr) {
     checks.push({
       name: "herdr",
       status: "failed",
-      detail: "Not running inside a Herdr pane (HERDR_ENV=1 and HERDR_PANE_ID are required).",
-      remedy: "Run tt up from a shell pane inside Herdr."
+      detail: "Not running inside a Herdr or tmux pane (HERDR_ENV=1 and HERDR_PANE_ID, or TMUX and TMUX_PANE, are required).",
+      remedy: "Run tt up from a shell pane inside Herdr or tmux."
     });
   }
   if (input.topology === "new-tab" && input.herdr && !input.herdr.workspace_id) {
-    checks.push({ name: "herdr", status: "failed", detail: "HERDR_WORKSPACE_ID is missing, so a tab cannot be created in this workspace." });
+    checks.push({ name: manager, status: "failed", detail: backend === "tmux"
+      ? "The caller's tmux session is unknown, so a window cannot be created in it."
+      : "HERDR_WORKSPACE_ID is missing, so a tab cannot be created in this workspace." });
   }
 
   let herdrAgents: HerdrAgent[] = [];
   if (input.herdr) {
     try {
       const layout = readPaneLayout(input.runner, input.herdr.pane_id);
-      checks.push({ name: "herdr", status: "ok", detail: `Caller pane ${layout.pane_id} is ${layout.rect.width}x${layout.rect.height}.` });
+      checks.push({ name: manager, status: "ok", detail: `Caller pane ${layout.pane_id} is ${layout.rect.width}x${layout.rect.height}.` });
       herdrAgents = listHerdrAgents(input.runner);
     } catch (error) {
-      checks.push({ name: "herdr", status: "failed", detail: error instanceof Error ? error.message : String(error) });
+      checks.push({ name: manager, status: "failed", detail: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -270,6 +278,7 @@ export function planWorkspaceLaunch(input: PlanWorkspaceLaunchInput): WorkspaceL
     room_id: input.room?.room_id ?? null,
     topology: input.topology,
     herdr: input.herdr,
+    backend,
     checks,
     chat,
     agents,
