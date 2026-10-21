@@ -42,7 +42,7 @@ tt health [path] [--verbose|--all]                        # concise safety/actio
 tt status [path] [--verbose|--all]                        # alias for health
 tt events [path] [--all] [--after N] [--limit N] [--wait|--follow] [--event TYPE[,TYPE]] [--target self|any|agent]
 tt chat [path] [--history N] [--events] [--fullscreen] [--mouse|--no-mouse]   # operator console
-tt up [--agents claude,codex,grok,opencode,antigravity] [--path DIR] [--in ROOM] [--new-tab|--new-workspace] [--print] [--forget] [--timeout 120s] # experimental Herdr launcher
+tt up [--agents claude,codex,grok,opencode,antigravity] [--path DIR] [--in ROOM] [--new-tab|--new-workspace] [--print] [--forget] [--timeout 120s] # experimental Herdr/tmux launcher
 tt msg send <recipient|room> <body...> [--interrupt] [--stdin] [--attach IMAGE]... [--path DIR]
 tt msg recv [--wait|--follow] [--from agent] [--after N] [--target self|any|agent] [--path DIR]
 tt ack <delivery-token> [--json]                          # acknowledge a native delivery envelope
@@ -130,6 +130,14 @@ experimental launchers; `--new-tab` or `--new-workspace` opens a separate tab or
 - Codex starts with `--no-daemon` so its tools and hooks keep the new pane's process identity for
   join verification. Escape in chat interrupts an active Codex turn in that pane through Herdr after
   matching its session and process. Grok stays unconfirmed when Herdr omits its session identity.
+- Plain tmux works too: outside Herdr, `tt up` run in a tmux pane drives tmux instead. A Herdr
+  workspace becomes a tmux session and a tab becomes a window; `--print` shows the same steps.
+  Agents are started by typing their command line into a fresh pane, which tt labels with the
+  `@tt_agent` pane option. tmux cannot detect agents, so a join is verified by the member's harness
+  process (and its start time) being a foreground process of that pane's terminal. tmux has no
+  busy/idle signal, so Escape in chat goes to a verified Codex pane without checking whether a turn
+  is active. Showing a new session needs an attached client; otherwise select it yourself
+  (`tmux switch-client -t <session>`). Requires tmux 3.1 or later.
 
 ### Rooms and paths
 

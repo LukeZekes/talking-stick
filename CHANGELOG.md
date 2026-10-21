@@ -11,6 +11,11 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+- `tt up` works in plain tmux. Outside Herdr, a tmux pane runs the same launch: sessions and windows
+  stand in for Herdr workspaces and tabs, agents start in fresh panes, and joins are verified by the
+  member's harness process running in the pane. Escape in chat reaches a verified Codex pane in
+  tmux too. (#135)
+
 ## [0.28.1] — 2026-10-20
 
 Full notes: [`docs/releases/0.28.1.md`](docs/releases/0.28.1.md).
