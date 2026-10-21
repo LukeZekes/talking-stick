@@ -2433,15 +2433,16 @@ test.each([true, false])("human pins stay visible and click acknowledges only th
     await until(() => bytes.includes("Type to message the room"));
     const first = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "first pinned request" });
     const second = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "second pinned request" });
-    await until(() => bytes.includes("2 awaiting acknowledgement"));
+    await until(() => bytes.includes("\u001b[?1000h"));
     await new Promise(resolve => setTimeout(resolve, 30)); await flush();
-    const y = screen().findIndex(line => line.includes(`you · #${first.event_seq}`));
+    const matches = screen().map((line, index) => line.includes("first pinned request") ? index : -1).filter(index => index >= 0);
+    const y = inline ? matches.at(-1)! : matches[0];
     expect(y).toBeGreaterThanOrEqual(0);
     const composerRow = screen().findIndex(line => line.startsWith("> "));
     for (let i = 0; i < 12; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `scroll-pin-${i}` });
     await until(() => bytes.includes("scroll-pin-11"));
     await new Promise(resolve => setTimeout(resolve, 30)); await flush();
-    expect(screen().findIndex(line => line.includes(`you · #${first.event_seq}`))).toBe(y);
+    expect(screen()[y]).toContain("first pinned request");
     expect(screen().findIndex(line => line.startsWith("> "))).toBe(composerRow);
     input.write(`\u001b[<0;5;${y + 1}M`);
     await until(() => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total === 1);
@@ -2468,7 +2469,8 @@ test("default inline pins keep native mouse behavior and --no-mouse prevents cli
   try {
     await until(() => bytes.includes("Type to message the room"));
     service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "keyboard acknowledgement" });
-    await until(() => bytes.includes("1 awaiting acknowledgement"));
+    await until(() => bytes.includes("keyboard acknowledgement"));
+    await new Promise(resolve => setTimeout(resolve, 30));
     expect(bytes).not.toContain("\u001b[?1000h");
     input.write("/ack\r");
     await until(() => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total === 0);
@@ -2528,7 +2530,7 @@ test.each([true, false])("bare /ack dismisses all visible pins and clears the fi
     await until(() => bytes.includes("Type to message the room"));
     for (let i = 0; i < 5; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id,
       to_agent_id: "human:op", body: i === 4 ? "last attention message" : `attention-${i}` });
-    await until(() => bytes.includes("5 awaiting acknowledgement"));
+    await until(() => bytes.includes("\u001b[?1000h"));
     await new Promise(resolve => setTimeout(resolve, 30)); await flush();
     expect(bytes).toContain("\u001b[?1000h"); // Clicks work without --mouse.
     expect(backgroundDefault()).toBe(false);

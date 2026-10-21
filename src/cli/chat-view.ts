@@ -787,7 +787,6 @@ export interface ChatScreenInput {
    */
   panel?: string[];
   attention?: HumanAttention;
-  attention_clickable?: boolean;
   transcript: ChatTranscript;
   format: ChatFormatContext;
   status: Omit<ChatStatusInput, "columns">;
@@ -863,7 +862,7 @@ export function chatMemberAt(frame: ChatFrame | null, column: number, row: numbe
 export function renderInlinePanel(input: ChatScreenInput): ChatFrame {
   const width = Math.max(1, input.columns - 1);
   const height = Math.max(1, input.rows - 1);
-  const attention = renderAttention(input.attention, width, input.rows, input.format, input.attention_clickable ?? false);
+  const attention = renderAttention(input.attention, width, input.rows, input.format);
   if (width < 4 || height < 5) {
     const lines = [...(width >= 4 ? attention.lines.slice(0, 1) : []), truncateStyled(CHAT_PROMPT + input.draft.line.replace(/\n/g, " "), width)];
     return { lines, cursor: { row: lines.length - 1, col: 0 } };
@@ -990,7 +989,7 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
     Math.min(MAX_COMPOSER_ROWS, height - 3 - roomHeaderRows(input)),
     highlight
   );
-  const attention = renderAttention(input.attention, width, height, context, input.attention_clickable ?? true);
+  const attention = renderAttention(input.attention, width, height, context);
   const transcriptHeight = Math.max(0, chatTranscriptHeight(input) - attention.lines.length);
   const menuCapacity = Math.min(MAX_MENU_ROWS, Math.max(0, transcriptHeight - (transcriptHeight > 1 ? 1 : 0)));
   const completions = input.completions ?? getChatCompletions(input.draft, []);

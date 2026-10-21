@@ -30,14 +30,32 @@ test("human-directed transcript messages have a reset-safe background; broadcast
   expect(isHumanDirected(event, "human:other")).toBe(false);
 });
 
-test("short attention panels retain a compact acknowledgement hint and do not promise unavailable clicks", async () => {
+test("pins keep normal authored message content without a status preamble", async () => {
   const { renderAttention } = await import("../src/cli/chat-attention.js");
-  const context = { self_agent_id: "human:op", name_of: (id: string) => id, color: false, show_turn_events: false };
+  const context = { self_agent_id: "human:op", name_of: (id: string) => id === "human:op" ? "you" : "codex", color: false, show_turn_events: false };
+  const event: RoomEvent = { event_seq: 42, event_id: "e42", room_id: "r", turn_id: 0, event_type: "message_sent", from_agent_id: "codex:aa", to_agent_id: "human:op", created_at: new Date().toISOString(), handoff: null, reason: null, payload: { delivery_hint: "normal", body: "Keep this message.\nAnd its second line." } };
+  const normal = formatChatEvent(event, context)!;
+  const panel = renderAttention({ messages: [event], total: 99 }, 100, 28, context);
+  expect(panel.lines.slice(0, -1).join("\n")).toBe(normal);
+  expect(panel.lines.join("\n")).not.toMatch(/For you|awaiting|dismiss|acknowledge|#42/);
+  expect(panel.hits.every(hit => hit.event_seq === 42)).toBe(true);
   for (const rows of [4, 5, 6, 7, 8]) {
-    const panel = renderAttention({ messages: [], total: 5 }, 40, rows, context);
-    expect(panel.lines.join("\n")).toContain("For you · 5 · /ack");
-    expect(panel.lines.join("\n")).not.toContain("click");
+    const short = renderAttention({ messages: [event], total: 1 }, 100, rows, context);
+    expect(short.lines[0]).toBe(normal.split("\n")[0]);
+    expect(short.hits[0]).toEqual({ event_seq: 42, row: 0 });
   }
-  expect(renderAttention({ messages: [], total: 5 }, 100, 28, context).lines[0]).not.toContain("click");
-  expect(renderAttention({ messages: [], total: 5 }, 100, 28, context, true).lines[0]).toContain("click");
+});
+
+
+test("a restored pin keeps its colors rather than adopting historical transcript styling", async () => {
+  const { renderAttention } = await import("../src/cli/chat-attention.js");
+  const context = { self_agent_id: "human:op", name_of: (id: string) => id, color: true, show_turn_events: false,
+    now: new Date("2026-10-21T12:00:00Z"), history_before: "2026-10-21T11:00:00Z" };
+  const event: RoomEvent = { event_seq: 42, event_id: "e42", room_id: "r", turn_id: 0, event_type: "message_sent", from_agent_id: "codex:aa", to_agent_id: "human:op", created_at: "2026-10-20T12:00:00Z", handoff: null, reason: null, payload: { delivery_hint: "normal", body: "Still waiting. #42" } };
+  const attention = { messages: [event], total: 1 };
+  const restored = renderAttention(attention, 100, 28, context);
+  const freshView = renderAttention(attention, 100, 28, { ...context, history_before: undefined });
+  expect(restored.lines).toEqual(freshView.lines);
+  expect(restored.lines.join("\n")).toContain("1;38;5;78");
+  expect(formatChatEvent(event, context)).not.toContain("1;38;5;78");
 });

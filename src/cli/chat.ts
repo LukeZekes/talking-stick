@@ -760,7 +760,7 @@ export async function runChatSession(
     if (!inline || closed || externalEditorActive) return;
     const draft = editor?.draft ?? { line: "", cursor: 0 };
     const frame = renderInlinePanel({
-      room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), attention, attention_clickable: options.mouse !== false, transcript, format: formatContext(),
+      room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), attention, transcript, format: formatContext(),
       status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
         interrupt_statuses: interruptStatuses() },
       draft, hint: currentHint(),
@@ -812,7 +812,7 @@ export async function runChatSession(
         syncMouse();
         const frame = renderChatScreen({
           room_path: joined.canonical_path,
-          room_strip: roomStrip, panel: rolesPanelLines(), attention, attention_clickable: options.mouse !== false,
+          room_strip: roomStrip, panel: rolesPanelLines(), attention,
           transcript,
           format: formatContext(),
           status: {
@@ -941,7 +941,7 @@ export async function runChatSession(
       inlinePanelRows = 0;
       editor?.resize(dimensions().columns - 1);
       const draft = editor?.draft ?? { line: "", cursor: 0 };
-      const panel = renderInlinePanel({ room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), attention, attention_clickable: options.mouse !== false, transcript, format: formatContext(),
+      const panel = renderInlinePanel({ room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), attention, transcript, format: formatContext(),
         status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
           interrupt_statuses: interruptStatuses() },
         draft, hint: currentHint(), completions: editor?.completionVisible ? completionsFor(draft) : [],

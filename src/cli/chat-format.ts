@@ -24,6 +24,8 @@ export interface ChatFormatContext {
   show_turn_events: boolean;
   now?: Date;
   history_before?: string;
+  /** Pending pins retain their normal colors across restarts and dates. */
+  dim_history?: boolean;
   // A single-cell delivery icon for one recipient of a message, if tracked.
   delivery_icon?: (event: RoomEvent, agentId: AgentId) => string | undefined;
   human_acknowledged?: (event: RoomEvent) => boolean;
@@ -234,7 +236,7 @@ export function formatChatEvent(
   event: RoomEvent,
   context: ChatFormatContext
 ): string | null {
-  const historical = isHistoricalChatEvent(event, context);
+  const historical = context.dim_history !== false && isHistoricalChatEvent(event, context);
   const text = formatCurrentChatEvent(event, historical ? { ...context, color: false } : context);
   return text === null || !historical ? text : text.split("\n").map((line) => paint(context, `2;${themeStyle("muted", context.color_mode)}`, line)).join("\n");
 }
