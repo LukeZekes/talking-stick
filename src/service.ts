@@ -1,3 +1,4 @@
+import { humanAttentionIdentity, isHumanDirected } from "./human-attention.js";
 import { createHash, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -6045,6 +6046,69 @@ export class TalkingStickService {
     for (const event of addressed) {
       insert.run(roomId, agentId, event.event_seq, deliveredAt, roomId, agentId);
     }
+  }
+
+  getHumanChatTheme(humanId: string): string | undefined {
+    return this.db.prepare<[string], { theme: string }>("SELECT theme FROM human_chat_preferences WHERE human_id = ?")
+      .get(humanAttentionIdentity(humanId))?.theme;
+  }
+
+  setHumanChatTheme(input: { room_id: string; agent_id: string; theme: string }): void {
+    withImmediateTransaction(this.db, () => {
+      const member = this.getMember(input.room_id, input.agent_id);
+      if (!input.agent_id.startsWith("human:") || member?.session_kind !== HUMAN_CHAT_SESSION_KIND) {
+        throw new Error("Only a joined human console can save its theme.");
+      }
+      this.touchMember(input.room_id, input.agent_id, this.now().toISOString());
+      this.db.prepare(`INSERT INTO human_chat_preferences (human_id, theme, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(human_id) DO UPDATE SET theme = excluded.theme, updated_at = excluded.updated_at`)
+        .run(humanAttentionIdentity(input.agent_id), input.theme, this.now().toISOString());
+    });
+  }
+
+  getHumanAttention(input: { room_id: string; human_id: string }): { messages: RoomEvent[]; total: number; acknowledged: number[] } {
+    const human = humanAttentionIdentity(input.human_id);
+    if (!human.startsWith("human:")) throw new Error("Human attention requires a human identity.");
+    // Recipient filtering precedes LIMIT; ordinary delivery receipts never dismiss a pin.
+    const stable = (column: string) => `(CASE WHEN substr(${column}, -14, 6) = ':chat:'
+      AND length(substr(${column}, -8)) = 8 AND substr(${column}, -8) NOT GLOB '*[^a-fA-F0-9]*'
+      THEN substr(${column}, 1, length(${column}) - 14) ELSE ${column} END)`;
+    const where = `e.room_id = ? AND e.event_type = 'message_sent'
+      AND e.event_seq > (SELECT event_seq FROM human_attention_start WHERE id = 1)
+      AND COALESCE(${stable("e.from_agent_id")}, '') != ?
+      AND (${stable("e.to_agent_id")} = ?
+        OR (e.to_agent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(
+          COALESCE(json_extract(e.payload_json, '$.recipients'), '[]')) r
+          WHERE ${stable("r.value")} = ?)))
+      AND NOT EXISTS (SELECT 1 FROM human_message_acknowledgements a
+        WHERE a.room_id = e.room_id AND a.human_id = ? AND a.event_seq = e.event_seq)`;
+    const values = [input.room_id, human, human, human, human];
+    const total = this.db.prepare<unknown[], { count: number }>(`SELECT COUNT(*) AS count FROM room_events e WHERE ${where}`).get(...values)?.count ?? 0;
+    const messages = this.db.prepare<unknown[], RoomEventRow>(`SELECT e.* FROM room_events e WHERE ${where} ORDER BY e.event_seq LIMIT 200`)
+      .all(...values).map(row => this.mapEvent(row));
+    const acknowledged = this.db.prepare<[string, string], { event_seq: number }>(
+      "SELECT event_seq FROM human_message_acknowledgements WHERE room_id = ? AND human_id = ? ORDER BY event_seq")
+      .all(input.room_id, human).map(row => row.event_seq);
+    return { messages, total, acknowledged };
+  }
+
+  acknowledgeHumanMessage(input: { room_id: string; agent_id: string; event_seq: number }): void {
+    withImmediateTransaction(this.db, () => {
+      const member = this.getMember(input.room_id, input.agent_id);
+      if (!input.agent_id.startsWith("human:") || member?.session_kind !== HUMAN_CHAT_SESSION_KIND) {
+        throw new Error("Only a joined human console can acknowledge its messages.");
+      }
+      const row = this.db.prepare<[string, number], RoomEventRow>("SELECT * FROM room_events WHERE room_id = ? AND event_seq = ?")
+        .get(input.room_id, input.event_seq);
+      if (!row || !isHumanDirected(this.mapEvent(row), input.agent_id) ||
+          humanAttentionIdentity(row.from_agent_id ?? "") === humanAttentionIdentity(input.agent_id)) {
+        throw new Error("That message is not addressed to this human.");
+      }
+      this.touchMember(input.room_id, input.agent_id, this.now().toISOString());
+      this.db.prepare(`INSERT OR IGNORE INTO human_message_acknowledgements
+        (room_id, human_id, event_seq, acknowledged_at) VALUES (?, ?, ?, ?)`)
+        .run(input.room_id, humanAttentionIdentity(input.agent_id), input.event_seq, this.now().toISOString());
+    });
   }
 
   getMessageReceipts(input: { room_id: string; event_seqs: number[] }): MessageReceipt[] {

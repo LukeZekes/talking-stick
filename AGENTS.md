@@ -17,6 +17,11 @@ Use Node `>=22`, as declared in `package.json`. For quick manual verification, r
 
 This repo uses strict TypeScript with ESM (`"type": "module"` and `moduleResolution: "NodeNext"`). Match the existing style: 2-space indentation, double quotes, semicolons, and explicit `.js` extensions in local imports from TypeScript files. Keep files focused and name them by responsibility, for example `path-resolution.ts` or `session-store.ts`. Prefer small helpers over deeply nested logic, and keep exported types near the modules that own them.
 
+## Chat UI Rules
+
+- Every menu and completion list must have a blank terminal row separating it from the chat stream. Keep the separator in the shared layout, including on narrow terminals.
+- Menu choices use the same semantic and agent colors as the composer and transcript, with a visible selected row.
+
 ## Testing Guidelines
 
 Vitest runs in a Node environment with global setup from `tests/setup.ts`. Name tests `<feature>.test.ts` and extend the suite that matches the behavior you changed. Add regression coverage for CLI flows, room state transitions, SQLite-backed persistence, and harness install logic when those areas move. Run `npm test` and `npm run typecheck` before opening a PR.

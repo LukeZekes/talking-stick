@@ -418,6 +418,28 @@ const migrations: Migration[] = [
     id: 24,
     name: "wake_error_detail",
     up: `ALTER TABLE member_wake_endpoints ADD COLUMN last_error_detail TEXT;`
+  },
+  {
+    id: 25,
+    name: "human_message_acknowledgements",
+    up: `CREATE TABLE human_message_acknowledgements (
+      room_id TEXT NOT NULL REFERENCES path_rooms(room_id) ON DELETE CASCADE,
+      human_id TEXT NOT NULL,
+      event_seq INTEGER NOT NULL REFERENCES room_events(event_seq) ON DELETE CASCADE,
+      acknowledged_at TEXT NOT NULL,
+      PRIMARY KEY (room_id, human_id, event_seq)
+    );
+    CREATE TABLE human_attention_start (id INTEGER PRIMARY KEY CHECK (id = 1), event_seq INTEGER NOT NULL);
+    INSERT INTO human_attention_start SELECT 1, COALESCE(MAX(event_seq), 0) FROM room_events;`
+  },
+  {
+    id: 26,
+    name: "human_chat_preferences",
+    up: `CREATE TABLE human_chat_preferences (
+      human_id TEXT PRIMARY KEY,
+      theme TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );`
   }
 ];
 

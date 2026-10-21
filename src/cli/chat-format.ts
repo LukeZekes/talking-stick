@@ -1,3 +1,4 @@
+import { isHumanDirected } from "../human-attention.js";
 import { describeAttachment, payloadAttachments } from "../attachments.js";
 import {
   HUMAN_CHAT_SESSION_KIND,
@@ -25,6 +26,7 @@ export interface ChatFormatContext {
   history_before?: string;
   // A single-cell delivery icon for one recipient of a message, if tracked.
   delivery_icon?: (event: RoomEvent, agentId: AgentId) => string | undefined;
+  human_acknowledged?: (event: RoomEvent) => boolean;
   tracks_delivery?: (event: RoomEvent) => boolean;
 }
 
@@ -275,7 +277,12 @@ function formatCurrentChatEvent(event: RoomEvent, context: ChatFormatContext): s
     const images = payloadAttachments(event.payload).map((attachment, index) =>
       paint(context, themeStyle("path", context.color_mode), describeAttachment(attachment, index)));
     const lines = body.length > 0 ? styled.split("\n") : [];
-    return [header, ...[...lines, ...images].map((line) => `  ${line}`)].join("\n");
+    const rendered = [header, ...[...lines, ...images].map((line) => `  ${line}`)];
+    if (context.color && isHumanDirected(event) && !context.human_acknowledged?.(event)) {
+      const background = `\u001b[${themeStyle("attention", context.color_mode, true)}m`;
+      return rendered.map(line => background + line.replace(/\u001b\[0m/g, `\u001b[0m${background}`) + "\u001b[0m").join("\n");
+    }
+    return rendered.join("\n");
   }
 
   const system = describeSystemEvent(event, context);

@@ -1,3 +1,4 @@
+import { renderAttention, type HumanAttention, type AttentionHit } from "./chat-attention.js";
 import stringWidth from "string-width";
 import { draftStyleSpans, type DraftHighlightOptions } from "./chat-draft-highlight.js";
 import { agentStyle, paintStyle, themeStyle, type ChatColorMode } from "./theme.js";
@@ -59,6 +60,7 @@ export const CHAT_COMMANDS: ChatCommandInfo[] = [
     usage: "/bottom",
     description: "jump to the latest messages"
   },
+  { name: "ack", usage: "/ack [#message|all]", description: "acknowledge and dismiss visible pinned messages (or one message/all pending)" },
   { name: "theme", usage: "/theme [lantern|tide|dusk]", description: "show or change the chat palette" },
   { name: "help", usage: "/help", description: "list commands and keys" }
 ];
@@ -784,6 +786,8 @@ export interface ChatScreenInput {
    * place of the suggestion menu above the room bar.
    */
   panel?: string[];
+  attention?: HumanAttention;
+  attention_clickable?: boolean;
   transcript: ChatTranscript;
   format: ChatFormatContext;
   status: Omit<ChatStatusInput, "columns">;
@@ -843,6 +847,7 @@ function completionRow(input: ChatScreenInput, entry: ChatCompletion, active: bo
 export interface ChatMemberHit { agent_id: string; row: number; start: number; end: number }
 
 export interface ChatFrame {
+  attention?: AttentionHit[];
   members?: ChatMemberHit[];
   lines: string[];
   cursor: { row: number; col: number };
@@ -858,16 +863,18 @@ export function chatMemberAt(frame: ChatFrame | null, column: number, row: numbe
 export function renderInlinePanel(input: ChatScreenInput): ChatFrame {
   const width = Math.max(1, input.columns - 1);
   const height = Math.max(1, input.rows - 1);
-  if (width < 4 || height < 4) {
-    return { lines: [truncateStyled(CHAT_PROMPT + input.draft.line.replace(/\n/g, " "), width)], cursor: { row: 0, col: 0 } };
+  const attention = renderAttention(input.attention, width, input.rows, input.format, input.attention_clickable ?? false);
+  if (width < 4 || height < 5) {
+    const lines = [...(width >= 4 ? attention.lines.slice(0, 1) : []), truncateStyled(CHAT_PROMPT + input.draft.line.replace(/\n/g, " "), width)];
+    return { lines, cursor: { row: lines.length - 1, col: 0 } };
   }
   const matches = input.completions ?? [];
   const panel = input.panel ?? null;
   // In the normal terminal screen the menu occupies real terminal rows.
   // Reserve its maximum height even when closed, so suggestions never move
   // the room bar and prompt or scroll the console while someone types.
-  const menuCapacity = panel ? Math.min(panel.length, Math.max(0, height - 4)) : Math.min(MAX_MENU_ROWS, Math.max(0, height - 4));
-  const topRows = menuCapacity + 1;
+  const menuCapacity = panel ? Math.min(panel.length, Math.max(0, height - 5 - attention.lines.length)) : Math.min(MAX_MENU_ROWS, Math.max(0, height - 5 - attention.lines.length));
+  const topRows = attention.lines.length + menuCapacity + 2;
   const composerCapacity = Math.max(1, Math.min(MAX_COMPOSER_ROWS, height - topRows - 2));
   const highlight = draftHighlight(input);
   const composer = layoutComposer(input.draft, width, composerCapacity, highlight);
@@ -875,7 +882,7 @@ export function renderInlinePanel(input: ChatScreenInput): ChatFrame {
   const first = Math.max(0, selected - menuCapacity + 1);
   const visible = matches.slice(first, first + menuCapacity);
   const emptyRows = menuCapacity - visible.length;
-  const menu = panel ? panel.slice(-menuCapacity).map((line) => truncateStyled(line, width)) : Array.from({ length: menuCapacity }, (_, row) => {
+  const menu = panel ? (menuCapacity ? panel.slice(-menuCapacity).map((line) => truncateStyled(line, width)) : []) : Array.from({ length: menuCapacity }, (_, row) => {
     if (row < emptyRows) return "";
     const index = first + row - emptyRows;
     const entry = matches[index];
@@ -888,10 +895,11 @@ export function renderInlinePanel(input: ChatScreenInput): ChatFrame {
   const roomBar = title
     ? truncateStyled(`${dim(input.format, "─ ")}${title}${dim(input.format, " " + "─".repeat(Math.max(0, width - textWidth(title) - 3)))}`, width)
     : rule;
-  const top = [...menu, roomBar];
+  const top = [...attention.lines, "", ...menu, roomBar];
   const lines = [...top, ...composer.rows, rule, renderFooter(input, width)];
   return {
     lines,
+    attention: attention.hits,
     cursor: { row: topRows + composer.cursor_row, col: Math.min(width - 1, composer.cursor_col) }
   };
 }
@@ -982,13 +990,14 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
     Math.min(MAX_COMPOSER_ROWS, height - 3 - roomHeaderRows(input)),
     highlight
   );
-  const transcriptHeight = chatTranscriptHeight(input);
+  const attention = renderAttention(input.attention, width, height, context, input.attention_clickable ?? true);
+  const transcriptHeight = Math.max(0, chatTranscriptHeight(input) - attention.lines.length);
   const menuCapacity = Math.min(MAX_MENU_ROWS, Math.max(0, transcriptHeight - (transcriptHeight > 1 ? 1 : 0)));
   const completions = input.completions ?? getChatCompletions(input.draft, []);
   const selected = Math.max(0, Math.min(input.completion_index ?? 0, completions.length - 1));
   const first = Math.max(0, selected - menuCapacity + 1);
   const menuRows = input.panel
-    ? input.panel.slice(-Math.max(1, transcriptHeight - 1)).map((line) => truncateStyled(line, width))
+    ? (transcriptHeight > 1 ? input.panel.slice(-(transcriptHeight - 1)).map((line) => truncateStyled(line, width)) : [])
     : completions.slice(first, first + menuCapacity).map((entry, index) => {
       const active = first + index === selected;
       return completionRow(input, entry, active, width, highlight);
@@ -1012,7 +1021,7 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
     transcript.splice(transcript.length - overlay.length, overlay.length, ...overlay);
   }
   const header = roomHeaderRows(input) ? [roomTitle({ ...input, format: context }, width)] : [];
-  const lines = [...header, ...transcript, ...fixed]
+  const lines = [...header, ...attention.lines, ...transcript, ...fixed]
     .slice(-height)
     .map((line) => truncateStyled(line, width));
   const composerTop = lines.length - composer.rows.length - 2;
@@ -1020,6 +1029,7 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
   return {
     lines,
     members: memberHits,
+    attention: attention.hits.map(hit => ({ ...hit, row: hit.row + header.length })),
     cursor: {
       row: Math.min(height - 1, Math.max(0, composerTop + composer.cursor_row)),
       col: Math.min(width, composer.cursor_col)

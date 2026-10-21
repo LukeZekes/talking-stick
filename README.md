@@ -71,6 +71,7 @@ into each harness keeps them in sync. The footer shows who holds the stick.
 | `/members` | Pick a member to message or remove (removal asks first) |
 | `/roles` | Assign roles, edit their definitions, and set harness defaults |
 | Ctrl+V, a dragged-in image, or `/attach <file>` | Attach an image; agents get its path and read it |
+| Click a pinned message | Dismiss it and clear its highlight; optional `/ack` commands are also available |
 | `/theme tide` | Switch the palette: Lantern (warm default), Tide (teal), or Dusk (lavender) |
 | `/who`, `/help` | Members and stick holder; all commands |
 

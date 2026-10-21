@@ -558,12 +558,32 @@ recipient selections. The completion menu shares these colors, bolds the matched
 paints the selected row. Accepting a completion with Tab leaves its recognized token highlighted.
 Color never changes the draft text, cursor placement or wrapping. `COLORTERM=truecolor` (or
 `24bit`) selects RGB colors; otherwise the palette uses 256-color fallbacks. Choose Lantern (warm amber, the default), Tide (cool teal), or Dusk (muted lavender)
-with `tt chat --theme tide` or `TT_THEME=tide tt chat`. The flag takes precedence over the
-environment. In chat, `/theme` shows the current choice and `/theme dusk` changes it immediately
-for this console, including after room switches. Agent identity hues stay the same in every
+with `tt chat --theme tide` or `TT_THEME=tide tt chat`. Startup precedence is `--theme`, then `TT_THEME`, then your saved choice, then Lantern. In chat, `/theme` shows the current choice and `/theme dusk` changes it immediately
+and saves the choice for your next chat, including across room switches. `/theme` also shows
+whether the current choice came from a flag, environment, saved preference, or the default. Agent identity hues stay the same in every
 palette. Switching repaints the visible transcript and composer immediately. Older native
 scrollback outside the visible viewport keeps its existing colors.
 `NO_COLOR` disables color in all themes.
+
+Menus and completion lists have a blank row separating them from the transcript.
+Member choices use their agent colors; command results use a separate `│` gutter with
+info, done, or error styling rather than an authored-message layout.
+
+Messages explicitly addressed to your human identity have a subtle background. New messages
+from other senders stay pinned until you acknowledge them: above the composer in inline chat,
+at the top in fullscreen. The pin shows a clipped summary and a count when more are waiting;
+the complete message remains in the transcript. Clicking a pin dismisses it. The optional `/ack`
+command dismisses all visible pins, `/ack #123`
+dismisses one message, and `/ack all` dismisses all pending messages. Acknowledgement also clears
+the message background. Mouse reporting is enabled while pins are pending, then restored when
+the last pin is dismissed; `--mouse` keeps it on and `--no-mouse` disables it. While reporting is
+on, inline native wheel scrolling is unavailable and selection uses Shift-drag (Option-drag in
+iTerm2).
+
+Acknowledgements are separate from delivery receipts and persist per room and local human
+across chat restarts. Displaying a message or replying does not acknowledge it. Broadcasts,
+visitor replies, messages to other humans and your own messages do not become pins. Only
+messages sent after this feature was activated become pins; the old backlog stays in history.
 
 Resizing the window reflows the live panel in place, rebuilding only the visible tail and keeping
 native scrollback. Narrowing a terminal can leave repeated recent lines at the scrollback boundary,

@@ -8,6 +8,7 @@ export const CHAT_THEME = {
     ref: ["92b9d0", 110], code: ["e5bb85", 180], path: ["8dc8c3", 116],
     url: ["86b5dc", 75], muted: ["92949f", 244], ok: ["a2c98c", 114],
     warn: ["d7b577", 179], error: ["e58d90", 203],
+    attention: ["39352f", 236],
     selection: ["343640", 237], selectionText: ["f0e4d0", 223]
   },
   agents: {

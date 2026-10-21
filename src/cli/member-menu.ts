@@ -1,3 +1,4 @@
+import { agentStyle, paintStyle, themeStyle, type ChatColorMode } from "./theme.js";
 import type { ChatModalKey } from "./chat-input.js";
 import { sanitizeChatText } from "./chat-format.js";
 
@@ -37,13 +38,24 @@ export function memberMenuKey(state: MemberMenu, key: ChatModalKey): MemberMenuA
   return state.selected === 1 ? "kick" : "close";
 }
 
-export function renderMemberMenu(state: MemberMenu, maxLines: number, nameOf: (id: string) => string = id => id): string[] {
-  const label = (id: string) => nameOf(id) === id ? id : `${nameOf(id)} · ${id}`;
-  const title = state.phase === "members" ? "Room members" : sanitizeChatText(label(state.target ?? ""));
+export function renderMemberMenu(state: MemberMenu, maxLines: number, nameOf: (id: string) => string = id => id,
+  options: { color?: boolean; color_mode?: ChatColorMode } = {}): string[] {
+  const paint = (style: string, text: string) => paintStyle(Boolean(options.color), style, text);
+  const label = (id: string) => paint(agentStyle(id, options.color_mode), sanitizeChatText(nameOf(id))) +
+    (nameOf(id) === id ? "" : paint(themeStyle("muted", options.color_mode), ` · ${sanitizeChatText(id)}`));
+  const title = state.phase === "members" ? paint(`1;${themeStyle("accent", options.color_mode)}`, "Room members") : label(state.target ?? "");
   const choices = state.phase === "members" ? state.agents.map(label) : state.phase === "actions"
-    ? ["Message", "Remove from room…"] : ["Cancel", "Remove from room (harness keeps running)"];
+    ? [paint(themeStyle("command", options.color_mode), "Message"), paint(themeStyle("warn", options.color_mode), "Remove from room…")]
+    : [paint(themeStyle("command", options.color_mode), "Cancel"), paint(themeStyle("error", options.color_mode), "Remove from room (harness keeps running)")];
   const capacity = Math.max(1, maxLines - 2);
   const start = Math.max(0, state.selected - capacity + 1);
-  return [title, ...choices.slice(start, start + capacity).map((label, i) =>
-    `${start + i === state.selected ? "›" : " "} ${sanitizeChatText(label)}`), "↑↓ choose · Enter select · Esc cancel"];
+  return [title, ...choices.slice(start, start + capacity).map((choice, i) => {
+    const selected = start + i === state.selected;
+    let row = `${paint(`1;${themeStyle("accent", options.color_mode)}`, selected ? "›" : " ")} ${choice}`;
+    if (selected && options.color) {
+      const bg = `\u001b[${themeStyle("selection", options.color_mode, true)}m`;
+      row = bg + row.replace(/\u001b\[0m/g, `\u001b[0m${bg}`) + "\u001b[0m";
+    }
+    return row;
+  }), paint(themeStyle("muted", options.color_mode), "↑↓ choose · Enter select · Esc cancel")];
 }

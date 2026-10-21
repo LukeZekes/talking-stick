@@ -1679,7 +1679,7 @@ test("inline incoming messages erase from the actual draft cursor and restore pa
     await until(() => out.includes("incoming-during-edit"));
     // The reserved suggestion rows are above the room bar. Move back only
     // to that fixed panel start, never into the transcript.
-    expect(out.startsWith("\r\u001b[4A\u001b[J")).toBe(true);
+    expect(out.startsWith("\r\u001b[5A\u001b[J")).toBe(true);
     expect(out).toContain("first");
     expect(out).toContain("second");
   } finally {
@@ -2381,4 +2381,165 @@ test.each([true, false])("/theme repaints existing visible content and keeps the
     input.end(); await session; vt.dispose(); setChatTheme("lantern");
     if (previousColorTerm === undefined) delete process.env.COLORTERM; else process.env.COLORTERM = previousColorTerm;
   }
+});
+
+test("human acknowledgement is explicit, durable across console sessions and scoped to the recipient", async () => {
+  const { root, service } = setupService();
+  const first = "human:op:chat:aaaaaaaa";
+  const second = "human:op:chat:bbbbbbbb";
+  const other = "human:other:chat:cccccccc";
+  const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
+  for (const id of [first, second, other]) service.joinPath({ agent_id: id, context_path: root,
+    process_metadata: { session_kind: "human_chat" } });
+  const direct = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: first, body: "needs attention" });
+  const broadcast = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: "ordinary broadcast" });
+  service.sendMessage({ agent_id: first, room_id: joined.room_id, to_agent_id: second, body: "own console" });
+  service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: other, body: "other user" });
+  const read = () => service.getHumanAttention({ room_id: joined.room_id, human_id: second });
+  expect(read().messages.map(event => event.event_seq)).toEqual([direct.event_seq]);
+  await service.waitForEvents({ room_id: joined.room_id, agent_id: first, target_agent_id: "self", after_event_seq: direct.event_seq - 1, max_wait_ms: 1 });
+  expect(read().total).toBe(1); // Delivery is not a human acknowledgement.
+  expect(() => service.acknowledgeHumanMessage({ room_id: joined.room_id, agent_id: other, event_seq: direct.event_seq })).toThrow();
+  expect(() => service.acknowledgeHumanMessage({ room_id: joined.room_id, agent_id: second, event_seq: broadcast.event_seq })).toThrow();
+  service.acknowledgeHumanMessage({ room_id: joined.room_id, agent_id: second, event_seq: direct.event_seq });
+  service.acknowledgeHumanMessage({ room_id: joined.room_id, agent_id: second, event_seq: direct.event_seq });
+  expect(read().total).toBe(0);
+  expect(service.getHumanAttention({ room_id: joined.room_id, human_id: first }).total).toBe(0);
+  const reopened = new TalkingStickService({ dbPath: path.join(root, ".state", "rooms.sqlite") });
+  try { expect(reopened.getHumanAttention({ room_id: joined.room_id, human_id: first }).total).toBe(0); }
+  finally { reopened.close(); }
+  expect(service.getRoomEvents({ room_id: joined.room_id, include_all: true }).some(event => event.event_seq === direct.event_seq)).toBe(true);
+  // The migration's activation high-water excludes the pre-feature backlog.
+  service.db.prepare("UPDATE human_attention_start SET event_seq = ?").run(service.globalEventSeq());
+  const later = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: second, body: "new attention" });
+  expect(read().messages.map(event => event.event_seq)).toEqual([later.event_seq]);
+});
+
+test.each([true, false])("human pins stay visible and click acknowledges only the chosen message (inline=%s)", async inline => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
+  const input = Object.assign(new PassThrough(), { setRawMode() {} });
+  const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+  const vt = new Terminal({ cols: 100, rows: 28, allowProposedApi: true });
+  vt.onData(data => input.write(data));
+  let bytes = "";
+  output.on("data", chunk => { bytes += chunk.toString(); vt.write(chunk.toString()); });
+  const flush = () => new Promise<void>(resolve => vt.write("\u001b[0m", resolve));
+  const screen = () => Array.from({ length: 28 }, (_, i) => vt.buffer.active.getLine(vt.buffer.active.baseY + i)?.translateToString(true) ?? "");
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline,
+    color: true, history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => bytes.includes("Type to message the room"));
+    const first = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "first pinned request" });
+    const second = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "second pinned request" });
+    await until(() => bytes.includes("2 awaiting acknowledgement"));
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    const y = screen().findIndex(line => line.includes(`you · #${first.event_seq}`));
+    expect(y).toBeGreaterThanOrEqual(0);
+    const composerRow = screen().findIndex(line => line.startsWith("> "));
+    for (let i = 0; i < 12; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `scroll-pin-${i}` });
+    await until(() => bytes.includes("scroll-pin-11"));
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    expect(screen().findIndex(line => line.includes(`you · #${first.event_seq}`))).toBe(y);
+    expect(screen().findIndex(line => line.startsWith("> "))).toBe(composerRow);
+    input.write(`\u001b[<0;5;${y + 1}M`);
+    await until(() => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total === 1);
+    expect(service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).messages[0].event_seq).toBe(second.event_seq);
+    input.write("/ack all\r");
+    await until(() => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total === 0);
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    expect(screen().join("\n")).not.toContain("awaiting acknowledgement");
+    expect(service.getRoomEvents({ room_id: joined.room_id, include_all: true }).some(event => event.event_seq === second.event_seq)).toBe(true);
+  } finally { input.end(); await session; vt.dispose(); }
+});
+
+
+test("default inline pins keep native mouse behavior and --no-mouse prevents click acknowledgement", async () => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
+  const input = Object.assign(new PassThrough(), { setRawMode() {} });
+  const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+  let bytes = "";
+  output.on("data", chunk => { bytes += chunk.toString(); });
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline: true,
+    mouse: false, color: false, history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => bytes.includes("Type to message the room"));
+    service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "keyboard acknowledgement" });
+    await until(() => bytes.includes("1 awaiting acknowledgement"));
+    expect(bytes).not.toContain("\u001b[?1000h");
+    input.write("/ack\r");
+    await until(() => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total === 0);
+  } finally { input.end(); await session; }
+});
+
+test("upgrading to human attention starts at the migration high-water instead of old messages", () => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
+  service.joinPath({ agent_id: "human:op", context_path: root, process_metadata: { session_kind: "human_chat" } });
+  service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "pre-feature backlog" });
+  service.db.exec("DROP TABLE human_message_acknowledgements; DROP TABLE human_attention_start; DELETE FROM schema_migrations WHERE id = 25");
+  const upgraded = new TalkingStickService({ dbPath: path.join(root, ".state", "rooms.sqlite") });
+  try {
+    expect(upgraded.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total).toBe(0);
+    upgraded.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "after activation" });
+    expect(upgraded.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).messages[0].payload?.body).toBe("after activation");
+  } finally { upgraded.close(); }
+});
+
+test("theme choices persist for the same human across sessions and database reopens", () => {
+  const { root, service } = setupService();
+  const first = "human:theme:chat:aaaaaaaa";
+  const second = "human:theme:chat:bbbbbbbb";
+  const joined = service.joinPath({ agent_id: first, context_path: root, process_metadata: { session_kind: "human_chat" } });
+  service.setHumanChatTheme({ room_id: joined.room_id, agent_id: first, theme: "dusk" });
+  const reopened = new TalkingStickService({ dbPath: path.join(root, ".state", "rooms.sqlite") });
+  try {
+    expect(reopened.getHumanChatTheme(second)).toBe("dusk");
+    expect(reopened.getHumanChatTheme("human:another")).toBeUndefined();
+    expect(() => reopened.setHumanChatTheme({ room_id: joined.room_id, agent_id: "codex:intruder", theme: "tide" })).toThrow();
+    expect(reopened.getHumanChatTheme(first)).toBe("dusk");
+  } finally { reopened.close(); }
+});
+
+test.each([true, false])("bare /ack dismisses all visible pins and clears the final transcript background (inline=%s)", async inline => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
+  const input = Object.assign(new PassThrough(), { setRawMode() {} });
+  const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+  const vt = new Terminal({ cols: 100, rows: 28, allowProposedApi: true });
+  vt.onData(data => input.write(data));
+  let bytes = "";
+  output.on("data", chunk => { bytes += chunk.toString(); vt.write(chunk.toString()); });
+  const flush = () => new Promise<void>(resolve => vt.write("\u001b[0m", resolve));
+  const pending = () => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" });
+  const backgroundDefault = () => {
+    const lines = Array.from({ length: 28 }, (_, i) => vt.buffer.active.getLine(vt.buffer.active.baseY + i));
+    const line = lines.reverse().find(line => line?.translateToString(true).includes("last attention message"))!;
+    expect(line).toBeDefined();
+    return line.getCell(line.translateToString(true).indexOf("last attention message"))!.isBgDefault();
+  };
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline,
+    color: true, history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => bytes.includes("Type to message the room"));
+    for (let i = 0; i < 5; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id,
+      to_agent_id: "human:op", body: i === 4 ? "last attention message" : `attention-${i}` });
+    await until(() => bytes.includes("5 awaiting acknowledgement"));
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    expect(bytes).toContain("\u001b[?1000h"); // Clicks work without --mouse.
+    expect(backgroundDefault()).toBe(false);
+    input.write("/ack\r");
+    await until(() => pending().total === 2); // The bounded panel showed three pins.
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    expect(backgroundDefault()).toBe(false); // Last message is still pending.
+    input.write("/ack\r");
+    await until(() => pending().total === 0);
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    expect(backgroundDefault()).toBe(true);
+    expect(bytes).toContain("\u001b[?1000l");
+  } finally { input.end(); await session; vt.dispose(); }
 });

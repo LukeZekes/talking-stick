@@ -464,6 +464,22 @@ export class TalkingStickCommands {
     });
   }
 
+  getHumanChatTheme(humanId: string): string | undefined {
+    return this.service.getHumanChatTheme(humanId);
+  }
+
+  setHumanChatTheme(identity: DerivedIdentity, input: { room_id: string; theme: string }): void {
+    this.service.setHumanChatTheme({ ...input, agent_id: identity.agent_id });
+  }
+
+  getHumanAttention(input: { room_id: string; human_id: string }): { messages: RoomEvent[]; total: number; acknowledged: number[] } {
+    return this.service.getHumanAttention(input);
+  }
+
+  acknowledgeHumanMessage(identity: DerivedIdentity, input: { room_id: string; event_seq: number }): void {
+    this.service.acknowledgeHumanMessage({ ...input, agent_id: identity.agent_id });
+  }
+
   getMessageReceipts(input: { room_id: string; event_seqs: number[] }): MessageReceipt[] {
     return this.service.getMessageReceipts(input);
   }
