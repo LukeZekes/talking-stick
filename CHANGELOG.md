@@ -11,6 +11,17 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+- `tt chat`: Shift+Enter now inserts a new line in terminals with enhanced key reporting (Ghostty,
+  kitty, WezTerm, iTerm2 3.5+, foot). Chat requests the kitty keyboard protocol and modifyOtherKeys,
+  decodes Ctrl, Alt and Escape reports back to their usual keys, and restores the terminal on exit,
+  suspend and external edits. (#136)
+- `tt chat`: a Cmd+V that the terminal forwards as a key (a kitty Super+V report) pastes the
+  clipboard: its image as `[Image #N]`, otherwise its text. An ordinary terminal paste is unchanged.
+- `tt chat` help lists Shift+Enter first for a new line; Alt+Enter still works everywhere.
+- `tt install codex`: the SessionEnd and Interrupt hooks use a 3-second timeout, Codex's limit for
+  those events, so Codex's `/hooks` panel no longer warns about clamping them. Reinstall to update
+  existing hooks (`tt install codex`).
+
 ## [0.28.1] — 2026-10-20
 
 Full notes: [`docs/releases/0.28.1.md`](docs/releases/0.28.1.md).

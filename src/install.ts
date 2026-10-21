@@ -313,14 +313,19 @@ export function buildClaudeStopGuardHook(): Record<string, unknown> {
   };
 }
 
+const CODEX_HOOK_TIMEOUTS: Record<string, number> = { SessionEnd: 3, Interrupt: 3 };
+
 export function mergeSessionHooks(existing: string | null, harness: string, remove = false): string | null {
   const marker = `talking-stick-lifecycle-${harness}`;
+  // Codex clamps SessionEnd and Interrupt hooks to 3s and warns about any
+  // longer timeout in /hooks; both hooks finish in milliseconds anyway.
+  const timeouts = harness === "codex" ? CODEX_HOOK_TIMEOUTS : {};
   const lifecycle = mergeMarkedHooks(existing, marker, ["SessionStart", "SessionEnd"],
-    `: ${marker}; if command -v tt >/dev/null 2>&1; then tt session-hook ${harness} >/dev/null 2>/dev/null || true; fi`, remove);
+    `: ${marker}; if command -v tt >/dev/null 2>&1; then tt session-hook ${harness} >/dev/null 2>/dev/null || true; fi`, remove, timeouts);
   if (harness === "codex" && lifecycle !== null) {
     const inbox = "talking-stick-inbox-codex";
     return mergeMarkedHooks(lifecycle, inbox, ["UserPromptSubmit", "Stop", "Interrupt"],
-      `: ${inbox}; if command -v tt >/dev/null 2>&1; then tt codex-inbox-hook 2>/dev/null || true; fi`, remove);
+      `: ${inbox}; if command -v tt >/dev/null 2>&1; then tt codex-inbox-hook 2>/dev/null || true; fi`, remove, timeouts);
   }
   if (harness !== "claude" || lifecycle === null) return lifecycle;
   // Tool-boundary interrupts from tt chat. A shell glob keeps the common case
@@ -331,7 +336,8 @@ export function mergeSessionHooks(existing: string | null, harness: string, remo
     `: ${interrupt}; set -- "${flags}"/${harness}-*; if [ -e "$1" ] && command -v tt >/dev/null 2>&1; then tt interrupt-hook ${harness} 2>/dev/null || true; fi`, remove);
 }
 
-function mergeMarkedHooks(existing: string | null, marker: string, events: string[], command: string, remove: boolean): string | null {
+function mergeMarkedHooks(existing: string | null, marker: string, events: string[], command: string, remove: boolean,
+  timeouts: Record<string, number> = {}): string | null {
   try {
     const isRecord = (value: unknown): value is Record<string, unknown> =>
       value !== null && typeof value === "object" && !Array.isArray(value);
@@ -346,7 +352,7 @@ function mergeMarkedHooks(existing: string | null, marker: string, events: strin
         const remaining = entry.hooks.filter((hook: unknown) => !isRecord(hook) || typeof hook.command !== "string" || !hook.command.includes(marker));
         return remaining.length ? [{ ...entry, hooks: remaining }] : [];
       });
-      if (!remove) entries.push({ hooks: [{ type: "command", timeout: 5, command }] });
+      if (!remove) entries.push({ hooks: [{ type: "command", timeout: timeouts[event] ?? 5, command }] });
       if (entries.length) hooks[event] = entries;
       else delete hooks[event];
     }

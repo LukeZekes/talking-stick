@@ -488,7 +488,12 @@ accepted cancellation. Idle and unsupported peers show no indicator. When neithe
 the transient hint says `nothing to interrupt`. No interrupt result is added to the transcript, room,
 or harness prompt. Holding Escape keeps sliding a one-second guard, so it arms only once until
 released. Ctrl+C clears the draft. Neither quits.
-Alt+Enter (or Shift+Enter where supported) adds a new line. With suggestions closed, Up/Down move
+Shift+Enter or Alt+Enter adds a new line. Chat asks the terminal for enhanced key reporting (the
+kitty keyboard protocol, or xterm's modifyOtherKeys) so Shift+Enter is distinguishable from Enter, and
+restores the terminal's keyboard mode when it exits, suspends, or opens an editor. Ghostty, kitty,
+WezTerm, iTerm2 3.5+ and foot support this; inside tmux, set `extended-keys on`. Where Shift+Enter
+still sends, map it to send `ESC Enter` (Ghostty: `keybind = shift+enter=text:\x1b\r`), or use
+Alt+Enter. With suggestions closed, Up/Down move
 through multiline drafts or recall single-line prompt history; Ctrl+P/Ctrl+N also recall prompts.
 Pasted multiline text stays in the draft until Enter. The conversation remains in terminal scrollback
 after exit.

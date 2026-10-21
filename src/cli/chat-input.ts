@@ -3,6 +3,7 @@ import { PassThrough, Writable, type Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { sanitizeChatText } from "./chat-format.js";
 import { moveChatCursorVertical, type ChatDraft } from "./chat-view.js";
+import { isShiftEnter, isSuperPaste, legacyKey } from "./terminal-keys.js";
 
 export interface ChatInputOptions {
   input: Readable;
@@ -24,6 +25,9 @@ export interface ChatInputOptions {
    * Keys typed while it resolves wait, so the marker lands where the paste was.
    */
   onImagePaste?: () => Promise<string | null>;
+  // Cmd+V forwarded as a key: the clipboard's image marker or text, inserted
+  // as is. Falls back to onImagePaste.
+  onClipboardPaste?: () => Promise<string | null>;
   /** Replacement text for a paste (image paths become markers), or null to keep it. */
   transformPaste?: (text: string) => string | null;
   now?: () => number;
@@ -169,14 +173,15 @@ export class ChatInputController {
     return this.imagePending;
   }
 
-  private requestImage(): void {
-    const request = this.options.onImagePaste;
+  private requestImage(clipboard = false): void {
+    const request = clipboard && this.options.onClipboardPaste ? this.options.onClipboardPaste : this.options.onImagePaste;
     if (!request) return;
+    const verbatim = request === this.options.onClipboardPaste;
     this.imagePending = true;
     const settle = (marker: string | null) => {
       if (this.closed) return;
       this.imagePending = false;
-      if (marker) this.insertText(`${marker} `);
+      if (marker) this.insertText(verbatim ? marker : `${marker} `);
       // Replay what was typed meanwhile, in order.
       this.onData("");
     };
@@ -233,6 +238,13 @@ export class ChatInputController {
           }
         }, 50);
         return;
+      }
+      const enhanced = /^\u001b\[[\d:;]*[u~]/.exec(rest)?.[0];
+      const legacy = enhanced === undefined ? null
+        : isShiftEnter(enhanced) ? "\r" : legacyKey(enhanced);
+      if (enhanced !== undefined && legacy !== null) {
+        rest = legacy + rest.slice(enhanced.length);
+        continue;
       }
       const match = keys.find(([sequence]) => rest.startsWith(sequence));
       if (match) {
@@ -346,19 +358,21 @@ export class ChatInputController {
           // A typed draft wins over the suggestion list: one Esc clears `@c`.
           // Two presses buffered together must still act as two presses.
           const presses = this.pending.length;
-          for (let press = 0; press < presses; press++) {
-            if (this.draft.line.length > 0) this.clear();
-            else if (this.completionVisible) {
-              this.completionDismissed = true;
-              this.options.onChange();
-            } else this.requestEmptyEscape();
-          }
+          for (let press = 0; press < presses; press++) this.pressEscape();
         }
         this.pending = "";
       }, 50);
     }
     this.options.onChange();
   };
+
+  private pressEscape(): void {
+    if (this.draft.line.length > 0) this.clear();
+    else if (this.completionVisible) {
+      this.completionDismissed = true;
+      this.options.onChange();
+    } else this.requestEmptyEscape();
+  }
 
   private writeKeys(text: string): void {
     this.completionDismissed = false;
@@ -460,6 +474,7 @@ export class ChatInputController {
           }
           const sequence = match[0];
           this.pending = this.pending.slice(sequence.length);
+          let legacy: string | null;
           const mouse = /^\u001b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(sequence);
           if (mouse) {
             if (mouse[4] === "M") {
@@ -471,8 +486,16 @@ export class ChatInputController {
                 else this.options.onScroll("lines", direction * 3);
               }
             }
-          } else if (sequence === "\u001b[13;2u" || sequence === "\u001b[27;2;13~") {
+          } else if (isShiftEnter(sequence)) {
             this.insertNewline();
+          } else if (isSuperPaste(sequence)) {
+            this.requestImage(true);
+          } else if (sequence === "\u001b[27u") {
+            // An enhanced Escape report is complete; no timeout is needed.
+            this.pressEscape();
+          } else if ((legacy = legacyKey(sequence)) !== null) {
+            // An enhanced report of an ordinary key: decode it as typed.
+            this.pending = legacy + this.pending;
           } else if (sequence === "\u001b[A" || sequence === "\u001b[B") {
             this.moveVertical(sequence.endsWith("A") ? -1 : 1, sequence);
           } else if (sequence === "\u001b[5~" || sequence === "\u001b[6~") {

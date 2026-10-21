@@ -36,6 +36,53 @@ function setup(
   return { editor, input, submit, quit, scroll, bottom };
 }
 
+describe("enhanced keyboard reports", () => {
+  test("kitty reports for Ctrl, Alt and Escape act like their legacy keys", () => {
+    const onRoomTree = vi.fn();
+    const { editor, input, submit } = setup(false, undefined, { onRoomTree });
+    try {
+      input.write("draft\u001b[99;5u");
+      expect(editor.draft.line).toBe("");
+      input.write("one\u001b[13;2utwo\u001b[13;3uthree\u001b[13;66ufour");
+      expect(editor.draft.line).toBe("one\ntwo\nthree\nfour");
+      expect(submit).not.toHaveBeenCalled();
+      input.write("\u001b[27u");
+      expect(editor.draft.line).toBe("");
+      input.write("\u001b[116;5u");
+      expect(onRoomTree).toHaveBeenCalledOnce();
+      input.write("sent\r");
+      expect(submit).toHaveBeenCalledWith("sent");
+    } finally { editor.close(); }
+  });
+
+  test("a forwarded Cmd+V inserts the clipboard paste as is", async () => {
+    const input = Object.assign(new PassThrough(), { isRaw: false, setRawMode: vi.fn() });
+    const onImagePaste = vi.fn(async () => "[Image #1]");
+    const onClipboardPaste = vi.fn(async () => "line one\nline two");
+    const editor = new ChatInputController({ input, columns: 40, onSubmit: vi.fn(), onQuit: vi.fn(), onScroll: vi.fn(),
+      onBottom: vi.fn(), onChange: vi.fn(), onClear: vi.fn(), onImagePaste, onClipboardPaste, complete: () => null });
+    try {
+      input.write("a \u001b[118;9u!");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(onClipboardPaste).toHaveBeenCalledOnce();
+      expect(onImagePaste).not.toHaveBeenCalled();
+      expect(editor.draft.line).toBe("a line one\nline two!");
+    } finally { editor.close(); }
+  });
+
+  test("a modal reads kitty Escape and Ctrl+C as escape", async () => {
+    const { editor, input } = setup();
+    const keys: string[] = [];
+    try {
+      editor.setModal((key) => keys.push(key));
+      input.write("\u001b[99;5u\u001b[106;1u\u001b[13;2u");
+      input.write("\u001b[27u");
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(keys).toEqual(["escape", "down", "enter", "escape"]);
+    } finally { editor.close(); }
+  });
+});
+
 describe("full-screen chat input", () => {
   test("Ctrl+C clears and empty Escape interrupts once without quitting", async () => {
     let now = 0;

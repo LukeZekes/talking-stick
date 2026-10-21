@@ -166,6 +166,16 @@ test("hook installation preserves foreign entries, is idempotent, and uninstalls
   expect(JSON.parse(removed)).toEqual(JSON.parse(foreign));
 });
 
+test("Codex hooks stay within Codex's 3s SessionEnd and Interrupt limit, and reinstall rewrites old timeouts", () => {
+  const timeouts = (text: string) => Object.fromEntries(Object.entries(JSON.parse(text).hooks as Record<string, Array<{ hooks: Array<{ timeout: number }> }>>)
+    .map(([event, entries]) => [event, entries.at(-1)!.hooks[0]!.timeout]));
+  const merged = mergeSessionHooks(null, "codex")!;
+  expect(timeouts(merged)).toEqual({ SessionStart: 5, SessionEnd: 3, UserPromptSubmit: 5, Stop: 5, Interrupt: 3 });
+  const old = merged.replace(/"timeout": 3/g, "\"timeout\": 5");
+  expect(timeouts(mergeSessionHooks(old, "codex")!)).toEqual(timeouts(merged));
+  expect(timeouts(mergeSessionHooks(null, "claude")!).SessionEnd).toBe(5);
+});
+
 test("a failed hook write restores native fallback and missing state never creates a DB", async () => {
   const { service, root, send, deliver } = setup();
   const inspector = { inspect: (pid: number) => pid === 123 ? { pid, ppid: 1, startTime: "start", command: "codex app-server" } : null };
