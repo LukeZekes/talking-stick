@@ -5,6 +5,7 @@ import type { ChatModalKey } from "./chat-input.js";
 import { sanitizeChatText, type ChatFormatContext } from "./chat-format.js";
 import { textWidth, truncateStyled, wrapStyledLine } from "./chat-view.js";
 import { highlightChatBody } from "./chat-highlight.js";
+import { roleStyle, themeStyle } from "./theme.js";
 
 export interface RolesEditorRow {
   subject: RoleSubject;
@@ -50,7 +51,6 @@ export type RolesEditorAction =
 
 const same = (a: string[], b: string[]) => [...a].sort().join(",") === [...b].sort().join(",");
 const clean = (text: string) => sanitizeChatText(text).replace(/\n/g, " ");
-const COLORS = [75, 214, 170, 114, 203, 229, 147, 81];
 
 export function createRolesEditor(input: {
   agents: readonly string[];
@@ -199,6 +199,9 @@ const HELP = [
 export function renderRolesEditor(state: RolesEditorState, context: ChatFormatContext, maxLines = 22, maxColumns = 80): string[] {
   const height = Math.max(1, maxLines), width = Math.max(1, maxColumns);
   const paint = (code: string, text: string) => context.color ? `\u001b[${code}m${text}\u001b[0m` : text;
+  const highlight = (line: string) => highlightChatBody(sanitizeChatText(line), {
+    paint, color_mode: context.color_mode
+  });
   const fit = (text: string, size: number) => truncateStyled(text, size) + " ".repeat(Math.max(0, size - textWidth(text)));
   const lines = Array<string>(height).fill("");
   const set = (row: number, text: string) => { if (row >= 0 && row < height) lines[row] = truncateStyled(text, width); };
@@ -210,7 +213,7 @@ export function renderRolesEditor(state: RolesEditorState, context: ChatFormatCo
   }
   if (state.view !== "grid") {
     const body = (state.view === "help" ? HELP.join("\n\n") : state.view === "notifications" ? "On apply · affected agents\n\n" + (state.notifications.join("\n") || "No agent notifications.") : state.preview || "No instructions to preview.");
-    const wrapped = body.split("\n").flatMap(line => wrapStyledLine(highlightChatBody(sanitizeChatText(line), { paint, agent_color: () => 75 }), width));
+    const wrapped = body.split("\n").flatMap(line => wrapStyledLine(highlight(line), width));
     const capacity = height - 3;
     const start = Math.min(state.scroll, Math.max(0, wrapped.length - capacity));
     wrapped.slice(start, start + capacity).forEach((line, i) => set(i + 1, line));
@@ -223,14 +226,16 @@ export function renderRolesEditor(state: RolesEditorState, context: ChatFormatCo
   const first = Math.max(0, Math.min(state.col - count + 1, state.columns.length - count));
   const columns = state.columns.slice(first, first + count);
   set(1, fit(first ? "‹ Agents / roles" : state.tab === "room" ? "Agents / roles" : "Harness / roles", nameWidth) + columns.map((name, i) =>
-    fit(paint(`38;5;${COLORS[(first + i) % COLORS.length]}${first + i === state.col ? ";1;4" : ""}`, name), colWidth)).join("") + (first + count < state.columns.length ? "›" : ""));
+    fit(paint(`${roleStyle(first + i, context.color_mode)}${first + i === state.col ? ";1;4" : ""}`, name), colWidth)).join("") + (first + count < state.columns.length ? "›" : ""));
   const gridRows = height - 12;
   const top = Math.max(0, Math.min(state.row - gridRows + 1, rows.length - gridRows));
   rows.slice(top, top + gridRows).forEach((row, i) => {
     const marks = columns.map((role, j) => {
       const on = row.roles.includes(role), before = row.original.includes(role);
       const mark = on === before ? on ? "●" : "·" : on ? "+●" : "−·";
-      const code = state.row === top + i && state.col === first + j ? "7" : `38;5;${COLORS[(first + j) % COLORS.length]}`;
+      const code = state.row === top + i && state.col === first + j
+        ? `${themeStyle("selection", context.color_mode, true)};${themeStyle("selectionText", context.color_mode)}`
+        : roleStyle(first + j, context.color_mode);
       return fit(paint(code, ` ${mark} `), colWidth);
     }).join("");
     const identity = row.agent_id.slice(row.agent_id.indexOf(":") + 1);
@@ -247,7 +252,7 @@ export function renderRolesEditor(state: RolesEditorState, context: ChatFormatCo
   const defTop = height - 10;
   set(defTop, paint("1", clean(role ?? "No roles")) + paint("2", definition ? ` · ${definition.source}` : ""));
   const body = definition?.text || "No definition. In This room, e adds a project definition.";
-  body.split("\n").flatMap(line => wrapStyledLine(highlightChatBody(sanitizeChatText(line), { paint, agent_color: () => 75 }), width)).slice(0, 2)
+  body.split("\n").flatMap(line => wrapStyledLine(highlight(line), width)).slice(0, 2)
     .forEach((line, i) => set(defTop + 1 + i, line));
   const notesTop = height - 6;
   set(notesTop, paint("2", rolesEditorDirty(state) ? "On apply · affected agents" : selected ? `${clean(selected.label)} · ${selected.reset ? "inherit" : selected.edited ? "override (draft)" : selected.source}` : "No changes"));

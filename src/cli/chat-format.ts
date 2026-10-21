@@ -6,6 +6,7 @@ import {
   type RoomMember
 } from "../types.js";
 import { highlightChatBody } from "./chat-highlight.js";
+import { agentColorIndex, agentStyle, themeStyle, type ChatColorMode } from "./theme.js";
 
 export type ChatInput =
   | { kind: "empty" }
@@ -18,6 +19,7 @@ export interface ChatFormatContext {
   self_agent_id: AgentId;
   name_of: (agentId: AgentId) => string;
   color: boolean;
+  color_mode?: ChatColorMode;
   show_turn_events: boolean;
   now?: Date;
   history_before?: string;
@@ -30,19 +32,6 @@ const ANSI_PATTERN =
   // CSI, OSC (BEL or ST terminated), and single-character escape sequences.
   /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]/g;
 const CONTROL_PATTERN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
-
-// 256-color foregrounds. Known harnesses keep a stable color across rooms so
-// the operator learns "orange is claude"; unknown ids hash into the palette.
-const HARNESS_COLORS: Record<string, number> = {
-  claude: 209,
-  codex: 78,
-  gemini: 75,
-  antigravity: 141,
-  grok: 177,
-  opencode: 44,
-  human: 220
-};
-const FALLBACK_COLORS = [81, 214, 170, 114, 39, 203, 229, 147];
 
 // Message bodies and names are written by other processes; strip escape and
 // control sequences so a peer cannot repaint or hijack the operator terminal.
@@ -245,7 +234,7 @@ export function formatChatEvent(
 ): string | null {
   const historical = isHistoricalChatEvent(event, context);
   const text = formatCurrentChatEvent(event, historical ? { ...context, color: false } : context);
-  return text === null || !historical ? text : text.split("\n").map((line) => paint(context, "2;90", line)).join("\n");
+  return text === null || !historical ? text : text.split("\n").map((line) => paint(context, `2;${themeStyle("muted", context.color_mode)}`, line)).join("\n");
 }
 
 function formatCurrentChatEvent(event: RoomEvent, context: ChatFormatContext): string | null {
@@ -276,14 +265,15 @@ function formatCurrentChatEvent(event: RoomEvent, context: ChatFormatContext): s
         : "";
     const marker =
       event.payload?.delivery_hint === "interrupt"
-        ? ` ${paint(context, "1;31", "‼ interrupt")}`
+        ? ` ${paint(context, `1;${themeStyle("error", context.color_mode)}`, "‼ interrupt")}`
         : "";
     const header = `${sender}${route}${marker}  ${paint(context, "2", time)}`;
     const styled = context.color
-      ? highlightChatBody(body, { paint: (code, text) => paint(context, code, text), agent_color: agentColor })
+      ? highlightChatBody(body, { paint: (code, text) => paint(context, code, text), agent_color: agentColor,
+        agent_style: name => agentStyle(name, context.color_mode), color_mode: context.color_mode })
       : body;
     const images = payloadAttachments(event.payload).map((attachment, index) =>
-      paint(context, "36", describeAttachment(attachment, index)));
+      paint(context, themeStyle("path", context.color_mode), describeAttachment(attachment, index)));
     const lines = body.length > 0 ? styled.split("\n") : [];
     return [header, ...[...lines, ...images].map((line) => `  ${line}`)].join("\n");
   }
@@ -407,28 +397,17 @@ export function formatChatAgent(
 ): string {
   return paint(
     context,
-    `1;38;5;${agentColor(agentId)}`,
+    `1;${agentStyle(agentId, context.color_mode)}`,
     context.name_of(agentId)
   );
 }
 
 export function agentColor(agentId: AgentId): number {
-  return (
-    HARNESS_COLORS[agentPrefix(agentId).toLowerCase()] ??
-    FALLBACK_COLORS[hashString(agentId) % FALLBACK_COLORS.length]
-  );
+  return agentColorIndex(agentId);
 }
 
 function paint(context: ChatFormatContext, code: string, text: string): string {
   return context.color ? `\u001b[${code}m${text}\u001b[0m` : text;
-}
-
-function hashString(text: string): number {
-  let hash = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    hash = (hash * 31 + text.charCodeAt(index)) >>> 0;
-  }
-  return hash;
 }
 
 export interface ChatStatusInput {
@@ -561,7 +540,7 @@ export function formatRoomStrip(entries: readonly RoomStripEntry[], context: Cha
     .sort((left, right) => right.directed - left.directed || right.unread - left.unread || left.name.localeCompare(right.name))
     .map((entry) => {
       const name = `#${sanitizeChatText(entry.name).replace(/\s+/g, "-")}`;
-      if (entry.directed > 0) return paint(context, "1;33", `${name} ${entry.directed}@`);
+      if (entry.directed > 0) return paint(context, `1;${themeStyle("warn", context.color_mode)}`, `${name} ${entry.directed}@`);
       if (entry.unread > 0) return paint(context, "1", `${name} ${entry.unread}●`);
       return paint(context, "2", name);
     })

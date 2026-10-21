@@ -7,6 +7,7 @@ import { planChatInterrupts } from "./chat-interrupt.js";
 import { interruptCodexThread } from "./codex-interrupt.js";
 import { interruptCodexHerdr } from "./codex-herdr-interrupt.js";
 import { ChatImages } from "./chat-images.js";
+import { chatThemeName, paintStyle, setChatTheme, terminalColorMode, themeStyle } from "./theme.js";
 import { ChatInputController, type ChatModalKey } from "./chat-input.js";
 import { createRolesEditor, renderRolesEditor, rolesEditorKey, rolesEditorDraft, rolesEditorDirty, refreshRolesEditor, type RolesEditorState } from "./roles-editor.js";
 import { applyRoleChanges, liveAgents, parseRoleList, parseRoleSubject, roomRoleBlock } from "./role-commands.js";
@@ -194,6 +195,9 @@ export async function handleChatCommand(
   runtime: Runtime,
   parsed: ParsedCommand
 ): Promise<void> {
+  if (parsed.options.get("theme") === true) throw new Error("--theme needs lantern, tide or dusk.");
+  const theme = getStringOption(parsed, "theme") ?? process.env.TT_THEME ?? "lantern";
+  setChatTheme(theme);
   const agentId = getStringOption(parsed, "agent");
   const identity = createChatIdentity(agentId);
   const terminal = chatTerminalCapable(process.stdin, process.stdout, process.env);
@@ -670,8 +674,8 @@ export async function runChatSession(
   const deliveryIcon = (event: RoomEvent, agent: string) => {
     const state = deliveryStates.get(event.event_seq)?.get(agent);
     if (!state || !terminal) return undefined;
-    if (state === "delivered") return options.color ? "\u001b[32m✓\u001b[0m" : "✓";
-    if (state === "unreachable") return options.color ? "\u001b[31m!\u001b[0m" : "!";
+    if (state === "delivered") return paintStyle(options.color, themeStyle("ok", terminalColorMode()), "✓");
+    if (state === "unreachable") return paintStyle(options.color, themeStyle("error", terminalColorMode()), "!");
     return options.color ? "\u001b[2m…\u001b[0m" : "…";
   };
   // Events whose header shows delivery icons, kept so a receipt can repaint it.
@@ -685,6 +689,7 @@ export async function runChatSession(
     self_agent_id: selfId,
     name_of: nameOf,
     color: options.color,
+    color_mode: terminalColorMode(),
     show_turn_events: showTurnEvents,
     now: new Date(),
     history_before: historyBefore,
@@ -1015,6 +1020,7 @@ export async function runChatSession(
         self_agent_id: selfId,
         name_of: nameOf,
         color: options.color,
+        color_mode: terminalColorMode(),
         show_turn_events: showTurnEvents
       },
       agentId
@@ -1233,13 +1239,24 @@ export async function runChatSession(
         print(`Removed ${sanitizeChatText(target.agent_id)} from the room.${ownershipNote} The harness was not stopped.`);
         return;
       }
+      case "theme": {
+        try {
+          if (args.trim()) setChatTheme(args);
+          transcript.invalidate();
+          previousFrame = null;
+          print(`Theme: ${chatThemeName()}. Choose /theme lantern, /theme tide or /theme dusk.`);
+        } catch (error) {
+          print(`! ${error instanceof Error ? error.message : String(error)}`);
+        }
+        return;
+      }
       case "events":
         showTurnEvents = !showTurnEvents;
         transcript.invalidate();
         print(`Stick events ${showTurnEvents ? "shown" : "hidden"}.`);
         return;
       case "help":
-        print(formatChatHelp(dimensions().columns - 1, options.color, args.trim() === "keys", inline));
+        print(formatChatHelp(dimensions().columns - 1, options.color, args.trim() === "keys", inline, terminalColorMode()));
         return;
       default:
         print(`! Unknown command /${name}. Try /help.`);

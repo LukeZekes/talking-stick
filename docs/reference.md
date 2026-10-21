@@ -548,6 +548,22 @@ member changes the recipient, not privacy. Colors require an interactive termina
 when `NO_COLOR` is set to a nonempty value. If an existing console was opened before a local
 rebuild, quit and reopen `tt chat` to load the new display.
 
+The Lantern house palette uses warm amber accents, lavender slash commands, and stable agent
+identity colors. Highlighting updates while you type: exact command/member names are emphasized,
+partial names are muted, and unknown names are underlined. This indicates token recognition,
+not delivery or permission to act. Aliases that address several live members use the broadcast
+color rather than the first member's identity color. `@everyone` and `@all` use that color too;
+`!@name` also emphasizes the interrupt marker. Email addresses and backtick code do not look like
+recipient selections. The completion menu shares these colors, bolds the matched prefix, and
+paints the selected row. Accepting a completion with Tab leaves its recognized token highlighted.
+Color never changes the draft text, cursor placement or wrapping. `COLORTERM=truecolor` (or
+`24bit`) selects RGB colors; otherwise the palette uses 256-color fallbacks. Choose Lantern (warm amber, the default), Tide (cool teal), or Dusk (muted lavender)
+with `tt chat --theme tide` or `TT_THEME=tide tt chat`. The flag takes precedence over the
+environment. In chat, `/theme` shows the current choice and `/theme dusk` changes it immediately
+for this console, including after room switches. Agent identity hues stay the same in every
+palette. Inline scrollback keeps its existing colors; new output uses the selected palette.
+`NO_COLOR` disables color in all themes.
+
 Resizing the window reflows the live panel in place, rebuilding only the visible tail and keeping
 native scrollback. Narrowing a terminal can leave repeated recent lines at the scrollback boundary,
 and the redraw replaces any pre-chat shell output still in the visible area.

@@ -26,6 +26,7 @@ import {
 } from "../src/cli/chat-format.js";
 import { chatInlineEnabled, chatTerminalCapable, createChatIdentity, runChatConsole, runChatSession, uniqueRoomNames } from "../src/cli/chat.js";
 import { formatRoomStrip } from "../src/cli/chat-format.js";
+import { chatThemeName, setChatTheme } from "../src/cli/theme.js";
 import { parseCommand } from "../src/cli/parser.js";
 
 const cleanups: Array<() => void> = [];
@@ -218,7 +219,7 @@ describe("chat rendering", () => {
     const context = { self_agent_id: "human:op", name_of: () => "codex", color: true, show_turn_events: false, now };
     const text = formatChatEvent(event({ event_type: "message_sent", from_agent_id: "codex:aa", created_at: yesterday,
       payload: { body: "old message", delivery_hint: "normal" } }), context)!;
-    expect(text).toBe("\u001b[2;90mcodex  Yesterday at 09:05\u001b[0m\n\u001b[2;90m  old message\u001b[0m");
+    expect(text).toBe("\u001b[2;38;5;244mcodex  Yesterday at 09:05\u001b[0m\n\u001b[2;38;5;244m  old message\u001b[0m");
     expect(chatDayLabel(new Date(2026, 8, 13).toISOString(), now)).toBe("2026-09-13");
     expect(formatChatTime(now.toISOString(), now)).toBe("10:00");
     expect(formatChatTime("invalid", now)).toBe("--:--");
@@ -2303,4 +2304,31 @@ fi
     if (previous === undefined) delete process.env.VISUAL; else process.env.VISUAL = previous;
     input.end(); await session;
   }
+});
+
+
+test("/theme switches palettes locally and rejects unknown names without sending a message", async () => {
+  const { root, service } = setupService();
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let text = "";
+  output.on("data", chunk => { text += chunk.toString(); });
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: false, color: false,
+    history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => text.includes("Talking Stick chat"));
+    input.write("/theme tide\n");
+    await until(() => text.includes("Theme: tide"));
+    expect(chatThemeName()).toBe("tide");
+    input.write("/theme missing\n");
+    await until(() => text.includes('Unknown theme "missing"'));
+    expect(chatThemeName()).toBe("tide");
+    input.write("/theme dusk\n/theme\n");
+    await until(() => text.includes("Theme: dusk"));
+    expect(chatThemeName()).toBe("dusk");
+    const room = service.listRooms({}).rooms.find(room => room.canonical_path === root)!;
+    expect(service.getRoomEvents({ room_id: room.room_id, include_all: true })
+      .filter(event => event.event_type === "message_sent")).toHaveLength(0);
+  } finally { input.write("/quit\n"); await session; setChatTheme("lantern"); }
 });

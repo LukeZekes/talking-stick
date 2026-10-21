@@ -25,6 +25,10 @@ changes will be called out under **Breaking changes**.
 - `tt install codex`: the SessionEnd and Interrupt hooks use a 3-second timeout, Codex's limit for
   those events, so Codex's `/hooks` panel no longer warns about clamping them. Reinstall to update
   existing hooks (`tt install codex`).
+### Added
+
+- Selectable chat palettes: Lantern (warm), Tide (teal), and Dusk (lavender), via `--theme`, `TT_THEME`, or `/theme`. Agent colors remain consistent across themes.
+- Live `tt chat` composer highlighting and a shared Lantern house palette: amber accents, lavender commands, stable agent colors, and distinct references, paths and status signals. Exact member names and command names are emphasized, partial tokens stay muted, and unknown tokens are underlined. Completions use the same token colors, emphasize the typed prefix, and mark the selected row with a background in both inline and fullscreen chat. True-color terminals use the RGB palette; other color terminals use 256-color fallbacks. `NO_COLOR` keeps the display plain.
 
 ## [0.28.1] — 2026-10-20
 
