@@ -1,6 +1,6 @@
 {
   "name": "talking-stick",
-  "version": "0.28.1",
+  "version": "0.29.0",
   "description": "CLI coordination tool for path-scoped agent handoffs.",
   "type": "module",
   "bin": {
