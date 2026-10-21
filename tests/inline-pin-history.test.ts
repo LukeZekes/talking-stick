@@ -63,3 +63,36 @@ test("top-pin layout stays bounded on small terminals with multiline drafts and 
     expect(frame.lines.every(line => textWidth(line) <= columns - 1)).toBe(true);
   }
 });
+
+
+test.each(["inline", "fullscreen"])("%s promotes only after the original leaves the live viewport", async mode => {
+  const { ChatTranscript, renderInlineTopPanel, renderChatScreen } = await import("../src/cli/chat-view.js");
+  const event = { event_seq: 1, event_id: "e1", room_id: "room", turn_id: 0, event_type: "message_sent" as const,
+    from_agent_id: "codex:test", to_agent_id: "human:op", created_at: new Date().toISOString(),
+    handoff: null, reason: null, payload: { body: "Original pending message", delivery_hint: "normal" as const } };
+  const transcript = new ChatTranscript();
+  transcript.appendEvent(event);
+  const input = { rows: 28, columns: 100, transcript, attention: { messages: [event], total: 1 },
+    room_path: "/repo", hint: null,
+    format: { self_agent_id: "human:op", name_of: (id: string) => id, color: false, show_turn_events: false },
+    status: { members: [], owner: null, reserved_for: null, owner_since: null, now: new Date() }, draft: { line: "", cursor: 0 } };
+  const render = mode === "inline" ? renderInlineTopPanel : renderChatScreen;
+  expect(render(input).attention ?? []).toHaveLength(0);
+  expect(render(input).human_messages?.some(hit => hit.event_seq === 1)).toBe(true);
+  if (mode === "fullscreen") {
+    expect(render({ ...input, panel: ["menu choice"] }).attention ?? []).toHaveLength(0);
+  }
+  transcript.scrollBy(1, 18, 99, input.format);
+  expect(transcript.wasManuallyTraversed(1)).toBe(false); // No movement at the live bottom.
+
+  for (let i = 0; i < 35; i++) transcript.appendNotice(`Later output ${i}`);
+  const frame = render(input);
+  expect(frame.attention?.some(hit => hit.event_seq === 1)).toBe(true);
+  expect(frame.lines.filter(line => line.includes("Original pending message"))).toHaveLength(1);
+  transcript.scrollBy(-100, 18, 99, input.format);
+  expect(transcript.wasManuallyTraversed(1)).toBe(true);
+  if (mode === "fullscreen") expect(render(input).attention ?? []).toHaveLength(0);
+  transcript.scrollToBottom();
+  expect(render(input).attention ?? []).toHaveLength(0);
+  expect(input.attention.total).toBe(1); // Traversal changes presentation, never the stored acknowledgement.
+});

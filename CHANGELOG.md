@@ -15,9 +15,10 @@ changes will be called out under **Breaking changes**.
 
 - `tt install herdr` links a Herdr plugin and `tt chat-link` handler so a Ctrl-click on a pinned
   chat message acknowledges it without mouse capture (#160).
-- Pending operator messages stay at the top while the transcript scrolls underneath in both
-  layouts. The live transcript omits the pinned copy, and inline scrolling preserves message
-  text in native scrollback with mouse capture off.
+- Pending operator messages remain in their original timeline position while visible and pin
+  only after newer output pushes them above the live transcript. The live transcript omits
+  the pinned copy, and inline scrolling preserves message text in native scrollback with
+  mouse capture off. Fullscreen manual traversal suppresses re-pinning without acknowledging.
 
 ### Fixed
 

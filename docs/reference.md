@@ -569,11 +569,16 @@ Menus and completion lists have a blank row separating them from the transcript.
 Member choices use their agent colors; command results use a separate `│` gutter with
 info, done, or error styling rather than an authored-message layout.
 
-Messages explicitly addressed to your human identity have a subtle background and stay pinned
-at the top of the pane until acknowledged. The transcript scrolls underneath and the composer
-stays at the bottom, in both layouts. Pins retain the normal header and content, without a
-status preamble. Messages shown in the pinned area are omitted from the live transcript so
-there is only one visible copy; the complete original remains in saved history.
+Messages explicitly addressed to your human identity have a subtle background and remain at
+their original position while visible. Only after newer output pushes them above the live
+transcript do they pin at the top. The composer stays at the bottom in both layouts. Pins
+retain the normal header and content, without a status preamble. Messages shown in the pinned
+area are omitted from the live transcript so there is only one visible copy; the complete
+original remains in saved history.
+
+In fullscreen mode, manually scrolling through a pending message suppresses its pin for this
+chat session, without recording an acknowledgement. Pins are hidden while browsing history.
+Native inline scrollback needs a terminal scroll signal; typing alone never dismisses a pin.
 
 In Herdr, run `tt install herdr` once and restart chat, then **Ctrl-click** a pin to dismiss it.
 The native link handler reaches only the live console in the clicked pane; expired links do

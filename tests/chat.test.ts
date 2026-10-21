@@ -2612,7 +2612,13 @@ test.each([true, false])("native Ctrl-click dismisses top pins without capturing
   try {
     await until(() => bytes.includes("Type to message the room"));
     service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "Native acknowledgement target" });
-    await until(() => bytes.includes("https://talking-stick.invalid/ack/"));
+    await until(() => bytes.includes("Native acknowledgement target"));
+    await flush();
+    expect(bytes).not.toContain("https://talking-stick.invalid/ack/");
+    expect(screen().filter(line => line.includes("Native acknowledgement target"))).toHaveLength(1);
+    input.write("draft stays put");
+    for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `native-flow-${i}` });
+    await until(() => bytes.includes("native-flow-24") && bytes.includes("https://talking-stick.invalid/ack/"));
     await new Promise(resolve => setTimeout(resolve, 30)); await flush();
     url = /\u001b\]8;;(https:\/\/talking-stick\.invalid\/ack\/[a-f0-9]{32}\/[1-9][0-9]*)\u001b\\/.exec(bytes)![1];
     const pinRow = screen().findIndex(line => line.includes("Native acknowledgement target"));
@@ -2620,10 +2626,6 @@ test.each([true, false])("native Ctrl-click dismisses top pins without capturing
     expect(screen().filter(line => line.includes("Native acknowledgement target"))).toHaveLength(1);
     expect(await sendChatLinkClick({ url, paneId: "w1:another-pane" })).toBe("ignored");
     expect(pending()).toBe(1);
-    input.write("draft stays put");
-    for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `native-flow-${i}` });
-    await until(() => bytes.includes("native-flow-24"));
-    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
     expect(screen()[pinRow]).toContain("Native acknowledgement target");
     expect(screen().join("\n")).toContain("draft stays put");
     expect(vt.modes.mouseTrackingMode).toBe("none");

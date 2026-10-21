@@ -1,5 +1,5 @@
 import { isHumanAttentionMessage } from "../human-attention.js";
-import { renderAttention, type HumanAttention, type AttentionHit } from "./chat-attention.js";
+import { renderAttention, resolveAttentionFrame, type HumanAttention, type AttentionHit } from "./chat-attention.js";
 import stringWidth from "string-width";
 import { draftStyleSpans, type DraftHighlightOptions } from "./chat-draft-highlight.js";
 import { agentStyle, paintStyle, themeStyle, type ChatColorMode } from "./theme.js";
@@ -336,6 +336,7 @@ interface Layout {
 }
 
 export class ChatTranscript {
+  private traversedHumanMessages = new Set<number>();
   private blocks: ChatBlock[] = [];
   private nextId = 1;
   private earlierId = 0;
@@ -349,6 +350,14 @@ export class ChatTranscript {
   private layoutCache: { key: string; layout: Layout } | null = null;
 
   constructor(private readonly maxBlocks = MAX_TRANSCRIPT_BLOCKS) {}
+
+  markHumanMessagesTraversed(seqs: Iterable<number>): void {
+    for (const seq of seqs) this.traversedHumanMessages.add(seq);
+  }
+
+  wasManuallyTraversed(seq: number): boolean {
+    return this.traversedHumanMessages.has(seq);
+  }
 
   get following(): boolean {
     return this.anchor.follow;
@@ -420,10 +429,17 @@ export class ChatTranscript {
   ): void {
     const layout = this.layout(width, context);
     const maxTop = Math.max(0, layout.rows.length - height);
+    const previousTop = this.topRow(layout, maxTop);
     const top = Math.min(
       maxTop,
       Math.max(0, this.topRow(layout, maxTop) + deltaRows)
     );
+    if (top !== previousTop) {
+      const start = Math.min(top, previousTop);
+      const end = Math.max(top, previousTop) + height;
+      this.markHumanMessagesTraversed(layout.human_messages
+        .filter(hit => hit.row >= start && hit.row < end).map(hit => hit.event_seq));
+    }
     if (top >= maxTop) {
       this.scrollToBottom();
       return;
@@ -984,6 +1000,14 @@ export function renderInlinePanel(input: ChatScreenInput): ChatFrame {
 
 /** A normal-screen viewport with pins above the flowing transcript. */
 export function renderInlineTopPanel(input: ChatScreenInput): ChatFrame {
+  const pending = untraversedAttention(input);
+  return resolveAttentionFrame(pending, attention => {
+    const frame = renderInlineTopPanelFrame({ ...input, attention });
+    return { frame, visible: (frame.human_messages ?? []).map(hit => hit.event_seq) };
+  });
+}
+
+function renderInlineTopPanelFrame(input: ChatScreenInput): ChatFrame {
   const width = Math.max(1, input.columns - 1);
   const pins = renderAttention(input.attention, width, input.rows, input.format);
   const footer = renderInlinePanel({ ...input, attention: undefined, rows: input.rows - pins.lines.length });
@@ -1073,7 +1097,22 @@ function roomHeader(path: string, width: number, context: ChatFormatContext): st
 // over its last rows), rule, composer, rule, status. Every row stays one cell short of the terminal
 // width so the terminal never auto-wraps a full row.
 export function renderChatScreen(input: ChatScreenInput): ChatFrame {
-  return renderChatScreenFrame(input);
+  if (!input.transcript.following) return renderChatScreenFrame({ ...input, attention: undefined });
+  return resolveAttentionFrame(untraversedAttention(input), attention => {
+    const frame = renderChatScreenFrame({ ...input, attention });
+    const width = Math.max(1, input.columns - 1);
+    const pins = renderAttention(attention, width, input.rows, input.format);
+    const height = Math.max(0, chatTranscriptHeight(input) - pins.lines.length);
+    const context = { ...input.format, excluded_events: new Set(pins.hits.map(hit => hit.event_seq)) };
+    // A menu overlays recent rows; it must not turn a covered message into
+    // an off-the-top pin or move it away from its original timeline position.
+    return { frame, visible: input.transcript.humanMessageRows(height, width, context).map(hit => hit.event_seq) };
+  });
+}
+
+function untraversedAttention(input: ChatScreenInput): HumanAttention | undefined {
+  return input.attention && { ...input.attention,
+    messages: input.attention.messages.filter(event => !input.transcript.wasManuallyTraversed(event.event_seq)) };
 }
 
 function renderChatScreenFrame(input: ChatScreenInput): ChatFrame {
