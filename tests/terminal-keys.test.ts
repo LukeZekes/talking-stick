@@ -42,4 +42,11 @@ describe("legacyKey", () => {
       expect(isShiftEnter(sequence), sequence).toBe(false);
     }
   });
+
+  test("ignores key release events", () => {
+    expect(isShiftEnter("\u001b[13;2:3u")).toBe(false);
+    expect(legacyKey("\u001b[13;1:3u")).toBe("");
+    expect(legacyKey("\u001b[99;5:3u")).toBe("");
+    expect(legacyKey("\u001b[99;5:2u")).toBe("\u0003");
+  });
 });

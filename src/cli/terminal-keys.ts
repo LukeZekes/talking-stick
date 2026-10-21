@@ -11,22 +11,25 @@ export const ENHANCED_KEYS_OFF = "\u001b[<u\u001b[>4m";
 
 // CSI code[:alternates] ; modifiers[:event] u   (kitty)
 // CSI 27 ; modifiers ; code ~                   (xterm modifyOtherKeys)
-const KITTY = /^\u001b\[(\d+)(?::\d*)*(?:;(\d+)(?::\d+)?)?(?:;[\d:]*)?u$/;
+const KITTY = /^\u001b\[(\d+)(?::\d*)*(?:;(\d+)(?::(\d+))?)?(?:;[\d:]*)?u$/;
+// Kitty event types: 1 press, 2 repeat, 3 release.
+const RELEASE = 3;
 const XTERM = /^\u001b\[27;(\d+);(\d+)~$/;
 
-function parse(sequence: string): { code: number; bits: number } | null {
+function parse(sequence: string): { code: number; bits: number; release: boolean } | null {
   const kitty = KITTY.exec(sequence);
   const xterm = kitty ? null : XTERM.exec(sequence);
   if (!kitty && !xterm) return null;
+  const release = Number(kitty?.[3] ?? 1) === RELEASE;
   // Modifiers are 1 + a bit set; Caps Lock and Num Lock carry no meaning here.
   const bits = (Number((kitty ? kitty[2] : xterm![1]) ?? 1) - 1) & ~(64 | 128);
-  return { code: Number(kitty ? kitty[1] : xterm![2]), bits };
+  return { code: Number(kitty ? kitty[1] : xterm![2]), bits, release };
 }
 
 /** Shift+Enter in either report form, whatever the lock keys. */
 export function isShiftEnter(sequence: string): boolean {
   const key = parse(sequence);
-  return key !== null && key.code === 13 && key.bits === 1;
+  return key !== null && !key.release && key.code === 13 && key.bits === 1;
 }
 
 /**
@@ -37,7 +40,8 @@ export function legacyKey(sequence: string): string | null {
   const report = parse(sequence);
   if (!report) return null;
   const { code, bits } = report;
-  if (bits & (8 | 16 | 32) || code > 0x10ffff) return "";
+  // Chat never asks for release events; ignore any a terminal sends.
+  if (report.release || bits & (8 | 16 | 32) || code > 0x10ffff) return "";
   const shift = (bits & 1) !== 0;
   const alt = (bits & 2) !== 0;
   const ctrl = (bits & 4) !== 0;
