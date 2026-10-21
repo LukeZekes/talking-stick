@@ -2,6 +2,7 @@ import { createSystemHerdrRunner, readHerdrContext, type HerdrRunner } from "../
 import { readHerdrPluginState } from "../herdr-plugin.js";
 import { startChatLinkServer, type ChatLinkServer } from "./chat-links.js";
 import { InlinePinHistory, appendNativeHistory } from "./inline-pin-history.js";
+import { NativeScrollLedger, subscribePaneScroll, type PaneScrollSubscription } from "./native-scroll.js";
 import { isHumanAttentionMessage } from "../human-attention.js";
 import { formatChatNotice, type ChatNoticeKind } from "./chat-notice.js";
 import { resolveAttentionFrame, renderAttention, type HumanAttention } from "./chat-attention.js";
@@ -161,7 +162,7 @@ export interface ChatSessionOptions {
   poll_ms?: number;
   theme_source?: string;
   mouse?: boolean;
-  herdr?: { pane_id: string; runner: HerdrRunner };
+  herdr?: { pane_id: string; runner: HerdrRunner; socket_path?: string };
   // Inline mode prints into the terminal's normal screen instead of taking it
   // over, so the terminal (or multiplexer) keeps scrollback, selection, and
   // copy. The pinned full-screen layout stays available behind --fullscreen.
@@ -238,7 +239,8 @@ export async function handleChatCommand(
     show_turn_events: hasOption(parsed, "events"),
     mouse: hasOption(parsed, "no-mouse") ? false : hasOption(parsed, "mouse") ? true : undefined,
     inline: chatInlineEnabled(parsed),
-    herdr: herdr ? { pane_id: herdr.pane_id, runner: createSystemHerdrRunner() } : undefined
+    herdr: herdr ? { pane_id: herdr.pane_id, runner: createSystemHerdrRunner(),
+      socket_path: process.env.HERDR_SOCKET_PATH?.trim() || undefined } : undefined
   });
 }
 
@@ -304,6 +306,7 @@ export async function runChatSession(
   let visibleAttention = new Set<number>();
   let mouseActive = false;
   let chatLinks: ChatLinkServer | undefined;
+  let nativeScroll: PaneScrollSubscription | undefined;
   const consoleState = options.console;
   let themeSource = consoleState?.theme_source ?? options.theme_source ?? "session";
   consoleState?.visited.add(roomId);
@@ -752,6 +755,14 @@ export async function runChatSession(
   let inlineOutputRows = 0;
   const inlinePinHistory = new InlinePinHistory();
   let inlineHistoryInitialized = false;
+  // Rows committed to Herdr's scrollback while pins show, so a pending
+  // message the operator scrolls past natively stops pinning.
+  const nativeScrollLedger = new NativeScrollLedger();
+  // While the operator browses Herdr scrollback, chat writes nothing to the
+  // pane: no repaint, no commits. Herdr returns a pane to the bottom on any
+  // key, and the scroll event that follows brings the frame up to date.
+  let nativeAway = false;
+  let inlineNeedsRebuild = false;
   let inlineVisibleFloor = 0;
   const inlineReceiptRows = new Map<number, number>();
   const inlineHumanRows = new Map<number, number>();
@@ -790,8 +801,11 @@ export async function runChatSession(
       inlinePinHistory.observe(all, Math.max(0, all.length - (size.rows - footer.lines.length)));
       inlineHistoryInitialized = true;
     }
+    if (nativeAway) { inlineNeedsRebuild = true; return; }
     const frame = renderInlineTopPanel(input);
-    const history = inlinePinHistory.evicted(all, frame.history_top ?? 0);
+    const evicted = inlinePinHistory.evict(all, frame.history_top ?? 0);
+    const history = evicted.map(entry => entry.text);
+    nativeScrollLedger.commit(evicted.map(entry => transcript.eventSeqForRow(entry.row)));
     if (!history.length && inlineFrame?.inline_top && JSON.stringify(frame) === JSON.stringify(inlineFrame)) return;
     output.write("\u001b[?2026h" + appendNativeHistory(history, size.rows) + "\u001b[H\u001b[J" + frame.lines.join("\r\n") +
       `\u001b[${frame.cursor.row + 1};${frame.cursor.col + 1}H\u001b[?2026l`);
@@ -803,10 +817,35 @@ export async function runChatSession(
     visibleAttention = new Set([...(frame.attention ?? []), ...(frame.human_messages ?? [])].map(hit => hit.event_seq));
     syncMouse();
   };
+  const freezeInlineHistory = () => {
+    transcript.setOutputBuffered(true);
+    if (inlineHistoryInitialized) return;
+    // Capture what was already printed before buffering any new events.
+    // Initializing from the later catch-up tail would silently skip them.
+    const size = dimensions();
+    const all = transcript.historyRows(Math.max(1, size.columns - 1), formatContext());
+    const bodyHeight = Math.max(0, size.rows - (inlineFrame?.lines.length ?? 0));
+    inlinePinHistory.observe(all, Math.max(0, all.length - bodyHeight));
+    inlineHistoryInitialized = true;
+  };
+  const resumeInlineTail = () => {
+    const buffered = inlineNeedsRebuild;
+    inlineNeedsRebuild = false;
+    if (buffered && inlineHistoryInitialized) {
+      // Evict every row after the frozen frontier, even if the last pending
+      // message was acknowledged elsewhere while we were browsing.
+      drawTopViewport();
+      if (attention.total === 0) onResize();
+    } else if (attention.total > 0) drawComposer();
+    else onResize();
+    transcript.setOutputBuffered(false);
+  };
   const drawComposer = () => {
     if (!inline || closed || externalEditorActive) return;
+    if (nativeAway) { inlineNeedsRebuild = true; return; }
     if (attention.total > 0) { drawTopViewport(); return; }
     inlineHistoryInitialized = false;
+    nativeScrollLedger.reset();
     const draft = editor?.draft ?? { line: "", cursor: 0 };
     const frame = resolveAttentionFrame(attention, pins => {
       const frame = renderInlinePanel({
@@ -850,6 +889,7 @@ export async function runChatSession(
   // line, then redraw the draft underneath.
   const writeInline = (text: string) => {
     if (externalEditorActive) { deferredInline.push(text); return; }
+    if (nativeAway) { inlineNeedsRebuild = true; return; }
     if (attention.total > 0) { drawTopViewport(); return; }
     eraseComposer();
     const lines = text.split(/\r?\n/).flatMap(line => wrapStyledLine(line, Math.max(1, dimensions().columns - 1)));
@@ -922,6 +962,7 @@ export async function runChatSession(
   const setDelivery = (seq: number, agent: string, state: string) => {
     rememberDelivery(seq, agent, state);
     transcript.invalidate();
+    if (inline && nativeAway) { inlineNeedsRebuild = true; return; }
     if (inline && attention.total > 0) { redraw(); return; }
     const row = inlineReceiptRows.get(seq);
     const event = trackedEvents.get(seq);
@@ -962,8 +1003,11 @@ export async function runChatSession(
     if (!fullscreen) print("The room has closed.");
   };
   const restore = () => {
+    options.input.off("data", resumeNativeScrollOnInput);
     chatLinks?.close();
     chatLinks = undefined;
+    nativeScroll?.close();
+    nativeScroll = undefined;
     editor?.close();
     if (inlineActive) {
       eraseComposer();
@@ -987,6 +1031,9 @@ export async function runChatSession(
   };
   const onResize = () => {
     if (externalEditorActive) return;
+    // Herdr may rewrap scrollback; committed rows no longer map one to one.
+    nativeScrollLedger.reset();
+    if (inline && nativeAway) { inlineNeedsRebuild = true; return; }
     if (inline && attention.total > 0) {
       editor?.resize(dimensions().columns - 1);
       drawTopViewport();
@@ -1625,6 +1672,14 @@ export async function runChatSession(
   };
   const onSignal = () => stop();
   const onInterrupt = () => { if (!externalEditorActive) editor?.clear(); };
+  const resumeNativeScrollOnInput = () => {
+    if (closed || externalEditorActive || !nativeAway) return;
+    // Herdr returns to the live tail before forwarding operator input. Resume
+    // even if its scroll event lags or the stream died, without pretending
+    // that any pending message was read or acknowledged.
+    nativeAway = false;
+    resumeInlineTail();
+  };
   process.on("SIGTERM", onSignal);
   process.on("SIGHUP", onSignal);
   if (terminal) {
@@ -1642,6 +1697,23 @@ export async function runChatSession(
           return !attention.messages.some(event => event.event_seq === seq);
         } });
       } catch { /* Pins and /ack still work without a local link endpoint. */ }
+    }
+    const herdrSocket = options.herdr?.socket_path;
+    if (inline && terminal && options.herdr && herdrSocket) {
+      options.input.on("data", resumeNativeScrollOnInput);
+      // Without the stream, pending messages simply pin when pushed off screen.
+      nativeScroll = subscribePaneScroll({ socketPath: herdrSocket, paneId: options.herdr.pane_id, onScroll: scroll => {
+        if (closed) return;
+        const away = scroll.offset_from_bottom > 0;
+        const awayChanged = away !== nativeAway;
+        if (away && awayChanged) freezeInlineHistory();
+        nativeAway = away;
+        const seqs = nativeScrollLedger.observe(scroll);
+        transcript.markHumanMessagesTraversed(seqs);
+        if (!away && awayChanged && inlineNeedsRebuild) {
+          resumeInlineTail();
+        } else if (attention.total > 0 && (awayChanged || attention.messages.some(event => seqs.includes(event.event_seq)))) drawComposer();
+      } });
     }
     if (fullscreen) {
       screenActive = true;
