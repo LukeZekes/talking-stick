@@ -7,7 +7,7 @@ import { truncateStyled, textWidth, wrapStyledLine } from "./chat-view.js";
 export interface HumanAttention { messages: RoomEvent[]; total: number; acknowledged?: number[] }
 export interface AttentionHit { event_seq: number; row: number }
 
-/** Pin the ordinary message rendering, without status chrome or rewritten text. */
+/** Keep authored messages together on one quiet surface for earlier messages. */
 export function renderAttention(attention: HumanAttention | undefined, width: number, rows: number,
   context: ChatFormatContext): { lines: string[]; hits: AttentionHit[] } {
   if (!attention?.messages.length || rows < 4) return { lines: [], hits: [] };
@@ -28,7 +28,7 @@ export function renderAttention(attention: HumanAttention | undefined, width: nu
     const message = rendered.split("\n").flatMap(text => wrapStyledLine(text, width));
     // Keep normal spacing between messages, but never leave a header stranded.
     if (lines.length && budget - lines.length < 3) break;
-    if (lines.length) lines.push("");
+    if (lines.length) lines.push(line(""));
     for (const text of message.slice(0, budget - lines.length)) {
       hits.push({ event_seq: event.event_seq, row: lines.length });
       const url = context.pin_link?.(event.event_seq);
@@ -37,10 +37,11 @@ export function renderAttention(attention: HumanAttention | undefined, width: nu
     }
   }
   if (maximum > 2 && lines.length) {
-    lines.unshift("");
+    const earlier = context.color ? `\u001b[${themeStyle("muted", context.color_mode)}mEarlier\u001b[0m` : "Earlier";
+    lines.unshift(line(earlier));
     for (const hit of hits) hit.row++;
   }
-  if (maximum > 1 && lines.length) lines.push("");
+  if (maximum > 1 && lines.length) lines.push(line(""));
   return { lines, hits };
 }
 
