@@ -1,5 +1,5 @@
 import { isHumanAttentionMessage } from "../human-attention.js";
-import { resolveAttentionFrame, renderAttention, type HumanAttention, type AttentionHit } from "./chat-attention.js";
+import { renderAttention, type HumanAttention, type AttentionHit } from "./chat-attention.js";
 import stringWidth from "string-width";
 import { draftStyleSpans, type DraftHighlightOptions } from "./chat-draft-highlight.js";
 import { agentStyle, paintStyle, themeStyle, type ChatColorMode } from "./theme.js";
@@ -149,13 +149,19 @@ interface Cell {
   width: number;
   // SGR escapes active for this cell, accumulated since the last reset.
   style: string;
+  link?: string;
+  offset?: number;
 }
 
 function toCells(text: string): Cell[] {
   const cells: Cell[] = [];
   let style = "";
+  let link = "";
+  let plainOffset = 0;
   let index = 0;
   while (index < text.length) {
+    const osc = /^\u001b\]8;[^;]*;([^\u0007\u001b]*)(?:\u0007|\u001b\\)/.exec(text.slice(index));
+    if (osc) { link = osc[1]; index += osc[0].length; continue; }
     SGR_PATTERN.lastIndex = index;
     const match = SGR_PATTERN.exec(text);
     if (match) {
@@ -171,13 +177,15 @@ function toCells(text: string): Cell[] {
     const chunk = text.slice(index, end);
     for (const { segment } of graphemes.segment(chunk)) {
       const width = graphemeWidth(segment);
+      const offset = plainOffset;
+      plainOffset += segment.length;
       if (width === 0 && cells.length > 0 && segment.codePointAt(0)! >= 0x20) {
         // Attach combining marks to the preceding cell.
         cells[cells.length - 1].text += segment;
         continue;
       }
       if (width > 0) {
-        cells.push({ text: segment, width, style });
+        cells.push({ text: segment, width, style, link, offset });
       }
     }
     index += chunk.length;
@@ -188,7 +196,13 @@ function toCells(text: string): Cell[] {
 function serializeCells(cells: Cell[]): string {
   let output = "";
   let active = "";
+  let activeLink = "";
   for (const cell of cells) {
+    const link = cell.link ?? "";
+    if (link !== activeLink) {
+      output += `\u001b]8;;${link}\u001b\\`;
+      activeLink = link;
+    }
     if (cell.style !== active) {
       if (active) output += "\u001b[0m";
       output += cell.style;
@@ -197,17 +211,18 @@ function serializeCells(cells: Cell[]): string {
     output += cell.text;
   }
   if (active) output += "\u001b[0m";
+  if (activeLink) output += "\u001b]8;;\u001b\\";
   return output;
 }
 
 // Wrap one logical line (which may carry SGR color codes) to rows of at most
 // `width` cells. Breaks at the last space when one is available, and keeps a
 // line's leading indentation on its continuation rows.
-export function wrapStyledLine(text: string, width: number): string[] {
+function wrapStyledCells(text: string, width: number): Cell[][] {
   const usable = Math.max(1, width);
   const cells = toCells(text);
   if (cells.length === 0) {
-    return [""];
+    return [[]];
   }
 
   let leading = 0;
@@ -219,7 +234,7 @@ export function wrapStyledLine(text: string, width: number): string[] {
     style: ""
   }));
 
-  const rows: string[] = [];
+  const rows: Cell[][] = [];
   let row: Cell[] = [];
   let rowWidth = 0;
   let lastSpace = -1;
@@ -243,16 +258,16 @@ export function wrapStyledLine(text: string, width: number): string[] {
       original.width > usable ? { ...original, text: "�", width: 1 } : original;
     if (rowWidth + cell.width > usable && row.length > 0) {
       if (cell.text === " ") {
-        rows.push(serializeCells(row));
+        rows.push([...row]);
         startRow([]);
         continue;
       }
       if (lastSpace > indent) {
         const carry = row.slice(lastSpace + 1);
-        rows.push(serializeCells(row.slice(0, lastSpace)));
+        rows.push(row.slice(0, lastSpace));
         startRow(carry);
       } else {
-        rows.push(serializeCells(row));
+        rows.push([...row]);
         startRow([]);
       }
     }
@@ -260,8 +275,27 @@ export function wrapStyledLine(text: string, width: number): string[] {
     row.push(cell);
     rowWidth += cell.width;
   }
-  rows.push(serializeCells(row));
+  rows.push([...row]);
   return rows;
+}
+
+export interface StyledRow { text: string; start: number; end: number; indent: number }
+
+export function wrapStyledRows(text: string, width: number): StyledRow[] {
+  return wrapStyledCells(text, width).map(cells => {
+    const source = cells.filter(cell => cell.offset !== undefined);
+    return { text: serializeCells(cells), start: source[0]?.offset ?? 0,
+      end: source.length ? source.at(-1)!.offset! + source.at(-1)!.text.length : 0,
+      indent: cells.findIndex(cell => cell.offset !== undefined) };
+  });
+}
+
+export function wrapStyledLine(text: string, width: number): string[] {
+  return wrapStyledRows(text, width).map(row => row.text);
+}
+
+export function skipStyledText(text: string, count: number): string {
+  return serializeCells(toCells(text).filter(cell => (cell.offset ?? 0) >= count));
 }
 
 export function truncateStyled(text: string, width: number): string {
@@ -290,7 +324,10 @@ export type ChatBlock =
 type ChatAnchor =
   { follow: true } | { follow: false; block_id: number; offset: number };
 
+export interface TranscriptRow extends StyledRow { block_id: number; line: number }
+
 interface Layout {
+  history_rows: TranscriptRow[];
   rows: string[];
   starts: Map<number, number>;
   order: number[];
@@ -307,7 +344,7 @@ export class ChatTranscript {
   private epoch = 0;
   private wrapCache = new Map<
     number,
-    { key: string; lines: string[] | null }
+    { key: string; lines: string[] | null; anchors: Array<StyledRow & { line: number }> }
   >();
   private layoutCache: { key: string; layout: Layout } | null = null;
 
@@ -461,6 +498,10 @@ export class ChatTranscript {
     };
   }
 
+  historyRows(width: number, context: ChatFormatContext): TranscriptRow[] {
+    return this.layout(width, context).history_rows;
+  }
+
   // Physical row anchors for message receipts in the same viewport geometry.
   receiptRows(height: number, width: number, context: ChatFormatContext): Map<number, number> {
     const layout = this.layout(width, context);
@@ -479,10 +520,12 @@ export class ChatTranscript {
   }
 
   private layout(width: number, context: ChatFormatContext): Layout {
-    const key = `${width}|${this.epoch}|${context.show_turn_events}|${context.color}|${context.now?.toDateString()}|${context.history_before}`;
+    const wrapKey = `${width}|${this.epoch}|${context.show_turn_events}|${context.color}|${context.now?.toDateString()}|${context.history_before}`;
+    const key = wrapKey + "|" + [...(context.excluded_events ?? [])].join(",");
     if (this.layoutCache?.key === key) return this.layoutCache.layout;
 
     const rows: string[] = [];
+    const historyRows: TranscriptRow[] = [];
     const starts = new Map<number, number>();
     const order: number[] = [];
     const receipts = new Map<number, number>();
@@ -492,12 +535,14 @@ export class ChatTranscript {
     let section: string | undefined;
 
     for (const block of this.blocks) {
-      const lines = this.wrapBlock(block, width, context, key);
+      if (block.kind === "event" && context.excluded_events?.has(block.event.event_seq)) continue;
+      const lines = this.wrapBlock(block, width, context, wrapKey);
       if (lines === null) continue;
       const isMessage =
         block.kind === "event" && block.event.event_type === "message_sent";
       if (previous !== null && (isMessage || previous === "message")) {
         rows.push("");
+        historyRows.push({ text: "", block_id: block.id, line: -2, start: 0, end: 0, indent: 0 });
       }
       starts.set(block.id, rows.length);
       order.push(block.id);
@@ -505,7 +550,9 @@ export class ChatTranscript {
         const label = chatSectionLabel(block.event, context);
         const newConversation = startsChatConversation(previousEvent, block.event);
         if (label !== section || newConversation) {
-          rows.push(...wrapStyledLine(dim(context, `── ${newConversation ? "New conversation · " : ""}${label} ──`), width));
+          const headings = wrapStyledRows(dim(context, `── ${newConversation ? "New conversation · " : ""}${label} ──`), width);
+          rows.push(...headings.map(row => row.text));
+          historyRows.push(...headings.map(row => ({ ...row, block_id: block.id, line: -1 })));
           section = label;
         }
         if (isChatConversationActivity(block.event)) previousEvent = block.event;
@@ -520,10 +567,11 @@ export class ChatTranscript {
         }
       }
       rows.push(...lines);
+      historyRows.push(...this.wrapCache.get(block.id)!.anchors.map(row => ({ ...row, block_id: block.id })));
       previous = isMessage ? "message" : "other";
     }
 
-    const layout = { rows, starts, order, receipts, human_messages: humanMessages };
+    const layout = { history_rows: historyRows, rows, starts, order, receipts, human_messages: humanMessages };
     this.layoutCache = { key, layout };
     return layout;
   }
@@ -540,11 +588,10 @@ export class ChatTranscript {
       block.kind === "event"
         ? formatChatEvent(block.event, context)
         : block.text;
-    const lines =
-      text === null
-        ? null
-        : text.split("\n").flatMap((line) => wrapStyledLine(line, width));
-    this.wrapCache.set(block.id, { key, lines });
+    const anchors = text === null ? [] : text.split("\n").flatMap((text, line) =>
+      wrapStyledRows(text, width).map(row => ({ ...row, line })));
+    const lines = text === null ? null : anchors.map(row => row.text);
+    this.wrapCache.set(block.id, { key, lines, anchors });
     return lines;
   }
 }
@@ -877,6 +924,8 @@ export interface ChatMemberHit { agent_id: string; row: number; start: number; e
 export interface ChatFrame {
   human_messages?: AttentionHit[];
   attention?: AttentionHit[];
+  inline_top?: boolean;
+  history_top?: number;
   members?: ChatMemberHit[];
   lines: string[];
   cursor: { row: number; col: number };
@@ -930,6 +979,30 @@ export function renderInlinePanel(input: ChatScreenInput): ChatFrame {
     lines,
     attention: attention.hits,
     cursor: { row: topRows + composer.cursor_row, col: Math.min(width - 1, composer.cursor_col) }
+  };
+}
+
+/** A normal-screen viewport with pins above the flowing transcript. */
+export function renderInlineTopPanel(input: ChatScreenInput): ChatFrame {
+  const width = Math.max(1, input.columns - 1);
+  const pins = renderAttention(input.attention, width, input.rows, input.format);
+  const footer = renderInlinePanel({ ...input, attention: undefined, rows: input.rows - pins.lines.length });
+  const context = { ...input.format, excluded_events: new Set(pins.hits.map(hit => hit.event_seq)) };
+  const height = Math.max(0, input.rows - footer.lines.length - pins.lines.length);
+  const body = input.transcript.viewport(height, width, context);
+  const filtered = input.transcript.historyRows(width, context);
+  const full = input.transcript.historyRows(width, input.format);
+  const positions = new Map(full.map((row, index) => [`${row.block_id}:${row.line}:${row.start}`, index]));
+  const first = filtered.slice(Math.max(0, filtered.length - height)).find(row => positions.has(`${row.block_id}:${row.line}:${row.start}`));
+  const top = first ? positions.get(`${first.block_id}:${first.line}:${first.start}`)! : full.length;
+  return {
+    lines: [...pins.lines, ...body, ...footer.lines],
+    cursor: { row: pins.lines.length + body.length + footer.cursor.row, col: footer.cursor.col },
+    attention: pins.hits,
+    human_messages: input.transcript.humanMessageRows(height, width, context)
+      .map(hit => ({ ...hit, row: hit.row + pins.lines.length })),
+    inline_top: true,
+    history_top: Math.max(0, top)
   };
 }
 
@@ -1000,10 +1073,7 @@ function roomHeader(path: string, width: number, context: ChatFormatContext): st
 // over its last rows), rule, composer, rule, status. Every row stays one cell short of the terminal
 // width so the terminal never auto-wraps a full row.
 export function renderChatScreen(input: ChatScreenInput): ChatFrame {
-  return resolveAttentionFrame(input.attention, attention => {
-    const frame = renderChatScreenFrame({ ...input, attention });
-    return { frame, visible: (frame.human_messages ?? []).map(hit => hit.event_seq) };
-  });
+  return renderChatScreenFrame(input);
 }
 
 function renderChatScreenFrame(input: ChatScreenInput): ChatFrame {
@@ -1027,6 +1097,7 @@ function renderChatScreenFrame(input: ChatScreenInput): ChatFrame {
     highlight
   );
   const attention = renderAttention(input.attention, width, height, context);
+  const bodyContext = { ...context, excluded_events: new Set(attention.hits.map(hit => hit.event_seq)) };
   const transcriptHeight = Math.max(0, chatTranscriptHeight(input) - attention.lines.length);
   const menuCapacity = Math.min(MAX_MENU_ROWS, Math.max(0, transcriptHeight - (transcriptHeight > 1 ? 1 : 0)));
   const completions = input.completions ?? getChatCompletions(input.draft, []);
@@ -1048,7 +1119,7 @@ function renderChatScreenFrame(input: ChatScreenInput): ChatFrame {
   const transcript = input.transcript.viewport(
     transcriptHeight,
     width,
-    context
+    bodyContext
   );
   // Occlude the transcript's bottom rows with a blank separator and the menu;
   // keep the selection visible even if only one menu row fits.
@@ -1066,7 +1137,7 @@ function renderChatScreenFrame(input: ChatScreenInput): ChatFrame {
     lines,
     members: memberHits,
     attention: attention.hits.map(hit => ({ ...hit, row: hit.row + header.length })),
-    human_messages: input.transcript.humanMessageRows(transcriptHeight, width, context)
+    human_messages: input.transcript.humanMessageRows(transcriptHeight, width, bodyContext)
       .filter(hit => hit.row < transcriptHeight - (menuRows.length ? menuRows.length + 1 : 0))
       .map(hit => ({ ...hit, row: hit.row + header.length + attention.lines.length })),
     cursor: {

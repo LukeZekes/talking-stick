@@ -58,8 +58,8 @@ tt take [path] [--reason TEXT] [--operator-requested]     # deliberate claim whe
 tt takeover [path] [--reason TEXT] [--operator-requested] # alias for take
 tt notes add <body> [--turn N] [--path DIR] [--stdin]     # leave an async note
 tt notes list [--all] [--after ID] [--limit N] [--path DIR]
-tt install <harness...> | --all [--print] [--copy] [--link] [--replace] [--no-guard]
-tt uninstall <harness...|agents> | --all | --shared [--print]
+tt install <harness...|herdr> | --all [--print] [--copy] [--link] [--replace] [--no-guard]
+tt uninstall <harness...|agents|herdr> | --all | --shared [--print]
 tt self-update [--print] [--manager npm|pnpm|yarn|bun]
 ```
 
@@ -569,20 +569,22 @@ Menus and completion lists have a blank row separating them from the transcript.
 Member choices use their agent colors; command results use a separate `│` gutter with
 info, done, or error styling rather than an authored-message layout.
 
-Messages explicitly addressed to your human identity have a subtle background. New messages
-from other senders keep a faint highlight until acknowledged. Once an original leaves the visible transcript,
-it appears as a pin above the composer in inline chat,
-at the top in fullscreen. Pins use the normal message header and content with a slight background, without a
-status preamble. The bounded area shows as many message rows as fit; the complete message remains
-in the transcript. A message appears only once in the live pane: in the transcript while visible, otherwise as a pin.
-With `tt chat --mouse`, clicking either dismisses it. The `/ack`
-command dismisses all visible highlighted messages, `/ack #123`
-dismisses one message, and `/ack all` dismisses all pending messages. Acknowledgement also clears
-the message background. Pending messages never enable mouse capture automatically: default
-inline chat preserves native wheel scrolling and text selection. `--mouse` explicitly enables
-click acknowledgement in either layout; `--no-mouse` disables it and wins over `--mouse`.
-While reporting is on, inline native wheel scrolling is unavailable and selection uses
-Shift-drag (Option-drag in iTerm2).
+Messages explicitly addressed to your human identity have a subtle background and stay pinned
+at the top of the pane until acknowledged. The transcript scrolls underneath and the composer
+stays at the bottom, in both layouts. Pins retain the normal header and content, without a
+status preamble. Messages shown in the pinned area are omitted from the live transcript so
+there is only one visible copy; the complete original remains in saved history.
+
+In Herdr, run `tt install herdr` once and restart chat, then **Ctrl-click** a pin to dismiss it.
+The native link handler reaches only the live console in the clicked pane; expired links do
+nothing. This path never enables terminal mouse capture, so default inline scrolling and
+selection keep working. Outside Herdr, or without its plugin, use `/ack`.
+
+`/ack` dismisses all visible highlighted messages, `/ack #123` dismisses one, and `/ack all`
+dismisses every pending message. Acknowledgement clears the pin and its highlight. Explicit
+`--mouse` remains available for plain click acknowledgement; it captures wheel and drag input
+as well, so inline selection uses Shift-drag (Option-drag in iTerm2). `--no-mouse` wins over
+`--mouse` and does not disable Herdr's native Ctrl-click path.
 
 Acknowledgements are separate from delivery receipts and persist per room and local human
 across chat restarts. Displaying a message or replying does not acknowledge it. Broadcasts,
@@ -725,6 +727,17 @@ present instead of failing or creating new harness config roots.
 Single-harness uninstalls for shared-reading harnesses leave `~/.agents/skills/talking-stick` in
 place because Codex, Antigravity, Grok, and OpenCode share that one skill location. Use
 `tt uninstall agents` or `tt uninstall --shared` to remove only the shared skill target.
+
+### The Herdr plugin
+
+`tt install herdr` links a small Herdr plugin, `talking-stick.chat`, that turns a Ctrl-click on
+a pinned chat message into an acknowledgement without mouse capture. It needs Herdr 0.7.0 or
+newer. The manifest is generated under the data directory and runs `tt chat-link` by absolute
+path (through `<install-dir>/current` for a release, so it survives updates). Each chat
+inside Herdr links its pins to `https://talking-stick.invalid/ack/<token>/<message>`; the token
+names a private socket in `/tmp/tt-chat-<uid>` owned by that chat, which acknowledges only
+pending messages clicked in its own pane. Stale or foreign links do nothing.
+`tt uninstall herdr` unlinks the plugin and removes the generated files.
 
 ### The Claude Code stop guard
 

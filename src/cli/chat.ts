@@ -1,3 +1,7 @@
+import { createSystemHerdrRunner, readHerdrContext, type HerdrRunner } from "../herdr.js";
+import { readHerdrPluginState } from "../herdr-plugin.js";
+import { startChatLinkServer, type ChatLinkServer } from "./chat-links.js";
+import { InlinePinHistory, appendNativeHistory } from "./inline-pin-history.js";
 import { isHumanAttentionMessage } from "../human-attention.js";
 import { formatChatNotice, type ChatNoticeKind } from "./chat-notice.js";
 import { resolveAttentionFrame, renderAttention, type HumanAttention } from "./chat-attention.js";
@@ -32,6 +36,7 @@ import {
   getChatCompletions,
   formatChatHelp,
   renderInlinePanel,
+  renderInlineTopPanel,
   inlineCursorRow,
   textWidth,
   truncateStyled,
@@ -156,6 +161,7 @@ export interface ChatSessionOptions {
   poll_ms?: number;
   theme_source?: string;
   mouse?: boolean;
+  herdr?: { pane_id: string; runner: HerdrRunner };
   // Inline mode prints into the terminal's normal screen instead of taking it
   // over, so the terminal (or multiplexer) keeps scrollback, selection, and
   // copy. The pinned full-screen layout stays available behind --fullscreen.
@@ -215,6 +221,7 @@ export async function handleChatCommand(
   const explicit = positional?.startsWith("#")
     ? resolveRoomSelector(runtime.commands.listRooms({}).rooms, positional)
     : selectedRoom(runtime, parsed);
+  const herdr = terminal ? readHerdrContext() : null;
   await runChatConsole({
     runtime,
     identity,
@@ -230,7 +237,8 @@ export async function handleChatCommand(
     history: parseOptionalInteger(parsed, "history") ?? DEFAULT_HISTORY,
     show_turn_events: hasOption(parsed, "events"),
     mouse: hasOption(parsed, "no-mouse") ? false : hasOption(parsed, "mouse") ? true : undefined,
-    inline: chatInlineEnabled(parsed)
+    inline: chatInlineEnabled(parsed),
+    herdr: herdr ? { pane_id: herdr.pane_id, runner: createSystemHerdrRunner() } : undefined
   });
 }
 
@@ -295,6 +303,7 @@ export async function runChatSession(
   let humanAcknowledged = new Set(attention.acknowledged ?? []);
   let visibleAttention = new Set<number>();
   let mouseActive = false;
+  let chatLinks: ChatLinkServer | undefined;
   const consoleState = options.console;
   let themeSource = consoleState?.theme_source ?? options.theme_source ?? "session";
   consoleState?.visited.add(roomId);
@@ -719,6 +728,7 @@ export async function runChatSession(
     now: new Date(),
     history_before: historyBefore,
     delivery_icon: deliveryIcon,
+    pin_link: chatLinks?.url,
     human_acknowledged: (event: RoomEvent) => humanAcknowledged.has(event.event_seq),
     tracks_delivery: (event: RoomEvent) => terminal && (deliveryStates.get(event.event_seq)?.size ?? 0) > 0
   });
@@ -740,6 +750,8 @@ export async function runChatSession(
   let inlineFrameColumns = { columns: 80, rows: 24 };
   let inlineActive = false;
   let inlineOutputRows = 0;
+  const inlinePinHistory = new InlinePinHistory();
+  let inlineHistoryInitialized = false;
   let inlineVisibleFloor = 0;
   const inlineReceiptRows = new Map<number, number>();
   const inlineHumanRows = new Map<number, number>();
@@ -762,8 +774,39 @@ export async function runChatSession(
     output.write(active ? "\u001b[?1000h\u001b[?1006h" : "\u001b[?1000l\u001b[?1006l");
     mouseActive = active;
   };
+  const drawTopViewport = () => {
+    const size = dimensions();
+    const context = formatContext();
+    const draft = editor?.draft ?? { line: "", cursor: 0 };
+    const input = {
+      room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), attention, transcript, format: context,
+      status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(), interrupt_statuses: interruptStatuses() },
+      draft, hint: currentHint(), completions: editor?.completionVisible ? completionsFor(draft) : [],
+      completion_index: editor?.completionIndex ?? 0, ...size
+    };
+    const all = transcript.historyRows(Math.max(1, size.columns - 1), context);
+    if (!inlineHistoryInitialized) {
+      const footer = renderInlinePanel({ ...input, attention: undefined });
+      inlinePinHistory.observe(all, Math.max(0, all.length - (size.rows - footer.lines.length)));
+      inlineHistoryInitialized = true;
+    }
+    const frame = renderInlineTopPanel(input);
+    const history = inlinePinHistory.evicted(all, frame.history_top ?? 0);
+    if (!history.length && inlineFrame?.inline_top && JSON.stringify(frame) === JSON.stringify(inlineFrame)) return;
+    output.write("\u001b[?2026h" + appendNativeHistory(history, size.rows) + "\u001b[H\u001b[J" + frame.lines.join("\r\n") +
+      `\u001b[${frame.cursor.row + 1};${frame.cursor.col + 1}H\u001b[?2026l`);
+    inlineFrame = frame;
+    inlineFrameColumns = size;
+    inlinePanelRows = 0;
+    inlineReceiptRows.clear();
+    inlineHumanRows.clear();
+    visibleAttention = new Set([...(frame.attention ?? []), ...(frame.human_messages ?? [])].map(hit => hit.event_seq));
+    syncMouse();
+  };
   const drawComposer = () => {
     if (!inline || closed || externalEditorActive) return;
+    if (attention.total > 0) { drawTopViewport(); return; }
+    inlineHistoryInitialized = false;
     const draft = editor?.draft ?? { line: "", cursor: 0 };
     const frame = resolveAttentionFrame(attention, pins => {
       const frame = renderInlinePanel({
@@ -807,6 +850,7 @@ export async function runChatSession(
   // line, then redraw the draft underneath.
   const writeInline = (text: string) => {
     if (externalEditorActive) { deferredInline.push(text); return; }
+    if (attention.total > 0) { drawTopViewport(); return; }
     eraseComposer();
     const lines = text.split(/\r?\n/).flatMap(line => wrapStyledLine(line, Math.max(1, dimensions().columns - 1)));
     output.write(lines.join("\r\n") + "\r\n");
@@ -878,6 +922,7 @@ export async function runChatSession(
   const setDelivery = (seq: number, agent: string, state: string) => {
     rememberDelivery(seq, agent, state);
     transcript.invalidate();
+    if (inline && attention.total > 0) { redraw(); return; }
     const row = inlineReceiptRows.get(seq);
     const event = trackedEvents.get(seq);
     const header = event ? render(event)?.split("\n")[0] : undefined;
@@ -917,6 +962,8 @@ export async function runChatSession(
     if (!fullscreen) print("The room has closed.");
   };
   const restore = () => {
+    chatLinks?.close();
+    chatLinks = undefined;
     editor?.close();
     if (inlineActive) {
       eraseComposer();
@@ -940,6 +987,12 @@ export async function runChatSession(
   };
   const onResize = () => {
     if (externalEditorActive) return;
+    if (inline && attention.total > 0) {
+      editor?.resize(dimensions().columns - 1);
+      drawTopViewport();
+      return;
+    }
+    inlineHistoryInitialized = false;
     // Reflow invalidates physical row anchors; never overwrite a different
     // message using coordinates recorded at the old width.
     inlineReceiptRows.clear();
@@ -965,15 +1018,17 @@ export async function runChatSession(
         return { frame, visible: transcript.humanMessageRows(height, Math.max(1, dimensions().columns - 1), formatContext()).map(hit => hit.event_seq) };
       });
       const tailHeight = Math.max(0, dimensions().rows - panel.lines.length);
-      const tail = transcript.viewport(tailHeight, Math.max(1, dimensions().columns - 1), formatContext());
+      const bodyRows = transcript.historyRows(Math.max(1, dimensions().columns - 1), formatContext());
+      const tail = bodyRows.slice(Math.max(0, bodyRows.length - tailHeight)).map(row => inlinePinHistory.visible(row));
+      while (tail.length < tailHeight) tail.unshift("");
       output.write("\u001b[?2026h\u001b[H\u001b[J");
       if (tail.length) output.write(tail.join("\r\n") + "\r\n");
       inlineOutputRows = tail.length;
       for (const hit of transcript.humanMessageRows(tailHeight, Math.max(1, dimensions().columns - 1), formatContext())) {
-        inlineHumanRows.set(hit.row, hit.event_seq);
+        if (tail[hit.row]) inlineHumanRows.set(hit.row, hit.event_seq);
       }
       for (const [seq, row] of transcript.receiptRows(tailHeight, Math.max(1, dimensions().columns - 1), formatContext())) {
-        inlineReceiptRows.set(seq, row);
+        if (tail[row]) inlineReceiptRows.set(seq, row);
       }
       drawComposer();
       output.write("\u001b[?2026l");
@@ -1181,7 +1236,7 @@ export async function runChatSession(
     const offset = inline && frame ? dimensions().rows - frame.lines.length : 0;
     const hit = frame?.attention?.find(hit => hit.row + offset === row - 1);
     if (hit) { acknowledge(String(hit.event_seq)); return; }
-    const message = inline
+    const message = inline && !frame?.inline_top
       ? row - 1 < offset ? inlineHumanRows.get(inlineOutputRows - offset + row - 1) : undefined
       : frame?.human_messages?.find(hit => hit.row === row - 1)?.event_seq;
     if (message !== undefined) acknowledge(String(message));
@@ -1418,6 +1473,11 @@ export async function runChatSession(
       redraw();
       return;
     }
+    if (inline && attention.total > 0) {
+      drawTopViewport();
+      lastPrinted = event.event_type === "message_sent" ? "message" : "system";
+      return;
+    }
     const line = render(event);
     if (line === null) {
       return;
@@ -1574,6 +1634,15 @@ export async function runChatSession(
     output.on("resize", onResize);
   }
   try {
+    if (terminal && options.herdr && readHerdrPluginState(options.herdr.runner) === "enabled") {
+      try {
+        chatLinks = await startChatLinkServer({ paneId: options.herdr.pane_id, onAck: seq => {
+          if (closed || externalEditorActive || !attention.messages.some(event => event.event_seq === seq)) return false;
+          acknowledge(String(seq));
+          return !attention.messages.some(event => event.event_seq === seq);
+        } });
+      } catch { /* Pins and /ack still work without a local link endpoint. */ }
+    }
     if (fullscreen) {
       screenActive = true;
       output.write(

@@ -1,3 +1,4 @@
+import { osc8 } from "./chat-links.js";
 import type { RoomEvent } from "../types.js";
 import { formatChatEvent, type ChatFormatContext } from "./chat-format.js";
 import { themeStyle } from "./theme.js";
@@ -30,7 +31,9 @@ export function renderAttention(attention: HumanAttention | undefined, width: nu
     if (lines.length) lines.push("");
     for (const text of message.slice(0, budget - lines.length)) {
       hits.push({ event_seq: event.event_seq, row: lines.length });
-      lines.push(line(text));
+      const url = context.pin_link?.(event.event_seq);
+      const content = line(text);
+      lines.push(url ? osc8(content, url) : content);
     }
   }
   if (maximum > 2 && lines.length) {

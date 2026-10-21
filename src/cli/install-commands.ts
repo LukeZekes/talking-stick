@@ -49,6 +49,8 @@ import {
   STANDALONE_MIGRATION_NOTICE,
   type InstallSource
 } from "../self-update.js";
+import { createSystemHerdrRunner, type HerdrRunner } from "../herdr.js";
+import { chatLinkArgv, installHerdrPlugin, uninstallHerdrPlugin } from "../herdr-plugin.js";
 import { shouldUseJson } from "./output.js";
 import { isInstalledRelease, isStandalone, standaloneRoot } from "../standalone-mode.js";
 import { advanceCurrentLink, findRemovableNpmCopy, repointManagedSkillLinks, skillLinksInto } from "../standalone-migration.js";
@@ -59,7 +61,13 @@ import {
   type ParsedCommand
 } from "./parser.js";
 
-export async function runInstallCommand(parsed: ParsedCommand): Promise<void> {
+export async function runInstallCommand(parsed: ParsedCommand, cliEntryUrl: string): Promise<void> {
+  const herdr = splitHerdrTarget(parsed);
+  if (herdr.requested) {
+    runHerdrPluginCommand("install", hasOption(parsed, "print"), { cliEntryUrl });
+    if (herdr.rest.positionals.length === 0 && !hasOption(parsed, "all")) return;
+    parsed = herdr.rest;
+  }
   const harnesses = selectHarnesses(parsed);
   const dryRun = hasOption(parsed, "print");
   const installOptions = {
@@ -156,6 +164,12 @@ export async function runInstallCommand(parsed: ParsedCommand): Promise<void> {
 export async function runUninstallCommand(
   parsed: ParsedCommand
 ): Promise<void> {
+  const herdr = splitHerdrTarget(parsed);
+  if (herdr.requested) {
+    runHerdrPluginCommand("uninstall", hasOption(parsed, "print"));
+    if (herdr.rest.positionals.length === 0 && !hasOption(parsed, "all") && !hasOption(parsed, "shared")) return;
+    parsed = herdr.rest;
+  }
   const { harnesses, removeShared } = selectUninstallTargets(parsed);
   const dryRun = hasOption(parsed, "print");
   const installOptions = { skipMissing: true };
@@ -546,6 +560,35 @@ async function runCleanup(
     ...installOptions
   });
   return skillResults;
+}
+
+// `herdr` is not a harness: it names the Herdr plugin that turns a Ctrl-click
+// on a pinned chat message into an acknowledgement.
+function splitHerdrTarget(parsed: ParsedCommand): { requested: boolean; rest: ParsedCommand } {
+  const positionals = parsed.positionals.filter((value) => value !== "herdr");
+  return { requested: positionals.length !== parsed.positionals.length, rest: { ...parsed, positionals } };
+}
+
+export function runHerdrPluginCommand(
+  operation: "install" | "uninstall",
+  dryRun: boolean,
+  options: { cliEntryUrl?: string; runner?: HerdrRunner; dataDir?: string } = {}
+): void {
+  const dataDir = options.dataDir ?? resolveDataDir();
+  if (dryRun) {
+    process.stdout.write(operation === "install"
+      ? `would link the Herdr plugin talking-stick.chat (runs ${chatLinkArgv(options.cliEntryUrl ?? "").join(" ")})\n`
+      : "would unlink the Herdr plugin talking-stick.chat\n");
+    return;
+  }
+  const runner = options.runner ?? createSystemHerdrRunner();
+  if (operation === "uninstall") {
+    const status = uninstallHerdrPlugin({ runner, dataDir });
+    process.stdout.write(`${status === "removed" ? "removed" : "not-installed"} herdr plugin talking-stick.chat\n`);
+    return;
+  }
+  const result = installHerdrPlugin({ runner, dataDir, argv: chatLinkArgv(options.cliEntryUrl ?? "") });
+  process.stdout.write(`${result.status} herdr plugin talking-stick.chat (${result.dir})\n`);
 }
 
 function selectHarnesses(parsed: ParsedCommand): HarnessId[] {
