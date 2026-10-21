@@ -1245,6 +1245,9 @@ export async function runChatSession(
           transcript.invalidate();
           previousFrame = null;
           print(`Theme: ${chatThemeName()}. Choose /theme lantern, /theme tide or /theme dusk.`);
+          // Inline output already written to the normal screen is outside the
+          // composer diff. Rebuild its visible tail, as for terminal reflow.
+          if (inline) onResize();
         } catch (error) {
           print(`! ${error instanceof Error ? error.message : String(error)}`);
         }

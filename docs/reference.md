@@ -561,7 +561,8 @@ Color never changes the draft text, cursor placement or wrapping. `COLORTERM=tru
 with `tt chat --theme tide` or `TT_THEME=tide tt chat`. The flag takes precedence over the
 environment. In chat, `/theme` shows the current choice and `/theme dusk` changes it immediately
 for this console, including after room switches. Agent identity hues stay the same in every
-palette. Inline scrollback keeps its existing colors; new output uses the selected palette.
+palette. Switching repaints the visible transcript and composer immediately. Older native
+scrollback outside the visible viewport keeps its existing colors.
 `NO_COLOR` disables color in all themes.
 
 Resizing the window reflows the live panel in place, rebuilding only the visible tail and keeping
