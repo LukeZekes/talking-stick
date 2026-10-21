@@ -755,7 +755,9 @@ export async function runChatSession(
     inlineFrame = null;
   };
   const syncMouse = () => {
-    const active = Boolean(options.mouse) || (options.mouse !== false && attention.total > 0);
+    // Mouse reporting captures the entire terminal, including wheel and drag.
+    // Pending pins must never silently disable native scrollback or selection.
+    const active = options.mouse === true;
     if (active === mouseActive || !terminal || externalEditorActive) return;
     output.write(active ? "\u001b[?1000h\u001b[?1006h" : "\u001b[?1000l\u001b[?1006l");
     mouseActive = active;

@@ -11,6 +11,12 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+### Fixed
+
+- Pending operator messages no longer enable terminal-wide mouse capture automatically, which
+  blocked native scrollback and text selection. Click acknowledgement now requires explicit
+  `tt chat --mouse` in either layout; `/ack` works with the default native mouse behavior.
+
 ## [0.29.0] — 2026-10-21
 
 Full notes: [`docs/releases/0.29.0.md`](docs/releases/0.29.0.md).

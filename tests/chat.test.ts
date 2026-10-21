@@ -2428,7 +2428,7 @@ test.each([true, false])("human pins stay visible and click acknowledges only th
   const screen = () => Array.from({ length: output.rows }, (_, i) => vt.buffer.active.getLine(vt.buffer.active.baseY + i)?.translateToString(true) ?? "");
   const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
     identity: observerIdentity(), context_path: root, input, output, terminal: true, inline,
-    color: true, history: 0, show_turn_events: false, poll_ms: 5 });
+    mouse: true, color: true, history: 0, show_turn_events: false, poll_ms: 5 });
   try {
     await until(() => bytes.includes("Type to message the room"));
     const first = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "first pinned request" });
@@ -2458,7 +2458,8 @@ test.each([true, false])("human pins stay visible and click acknowledges only th
 });
 
 
-test("default inline pins keep native mouse behavior and --no-mouse prevents click acknowledgement", async () => {
+test.each([true, false].flatMap(inline => [undefined, false, true].map(mouse => ({ inline, mouse }))))(
+  "pending pins capture mouse only with explicit --mouse (inline=$inline, mouse=$mouse)", async ({ inline, mouse }) => {
   const { root, service } = setupService();
   const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
   const input = Object.assign(new PassThrough(), { setRawMode() {} });
@@ -2466,14 +2467,15 @@ test("default inline pins keep native mouse behavior and --no-mouse prevents cli
   let bytes = "";
   output.on("data", chunk => { bytes += chunk.toString(); });
   const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
-    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline: true,
-    mouse: false, color: false, history: 0, show_turn_events: false, poll_ms: 5 });
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline,
+    mouse, color: false, history: 0, show_turn_events: false, poll_ms: 5 });
   try {
     await until(() => bytes.includes("Type to message the room"));
     service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "keyboard acknowledgement" });
     await until(() => bytes.includes("keyboard acknowledgement"));
     await new Promise(resolve => setTimeout(resolve, 30));
-    expect(bytes).not.toContain("\u001b[?1000h");
+    expect(bytes.includes("\u001b[?1000h")).toBe(mouse === true);
+    expect(bytes.includes("\u001b[?1006h")).toBe(mouse === true);
     input.write("/ack\r");
     await until(() => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total === 0);
   } finally { input.end(); await session; }
@@ -2532,15 +2534,15 @@ test.each([true, false])("bare /ack dismisses all visible pins and clears the fi
     await until(() => bytes.includes("Type to message the room"));
     for (let i = 0; i < 5; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id,
       to_agent_id: "human:op", body: i === 4 ? "last attention message" : `attention-${i}` });
-    await until(() => bytes.includes("\u001b[?1000h"));
+    await until(() => bytes.includes("last attention message"));
     await new Promise(resolve => setTimeout(resolve, 30)); await flush();
-    expect(bytes).toContain("\u001b[?1000h"); // Clicks work without --mouse.
+    expect(bytes).not.toContain("\u001b[?1000h"); // Keyboard acknowledgement preserves native mouse behavior.
     expect(backgroundDefault()).toBe(false);
     input.write("/ack\r");
     await until(() => pending().total === 0); // All five originals are visible once, without duplicate pins.
     await new Promise(resolve => setTimeout(resolve, 30)); await flush();
     expect(backgroundDefault()).toBe(true);
-    expect(bytes).toContain("\u001b[?1000l");
+    expect(bytes).not.toContain("\u001b[?1000h");
   } finally { input.end(); await session; vt.dispose(); }
 });
 
@@ -2559,7 +2561,7 @@ test.each([[true, false, true], [false, false, true], [true, true, true], [false
   const pending = () => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total;
   const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
     identity: observerIdentity(), context_path: root, input, output, terminal: true, inline,
-    color: true, history: 0, show_turn_events: false, poll_ms: 5 });
+    mouse: true, color: true, history: 0, show_turn_events: false, poll_ms: 5 });
   try {
     await until(() => bytes.includes("Type to message the room"));
     service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "click either copy\nWrapped text with 👩🏽‍💻 and 界 plus enough words to cross a narrow row." });
