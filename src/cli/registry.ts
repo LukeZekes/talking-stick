@@ -8,6 +8,7 @@ import { deriveCliIdentity } from "./identity.js";
 import { printResult } from "./output.js";
 import { runGuardCommand } from "./guardian.js";
 import { handleChatCommand } from "./chat.js";
+import { runChatLinkCommand } from "./chat-links.js";
 import { runClaudeStopHookCommand } from "./claude-stop-hook.js";
 import { runGrokSessionHookCommand } from "./grok-session-hook.js";
 import {
@@ -80,6 +81,11 @@ export const COMMAND_REGISTRY: CommandEntry[] = [
     handler: () => runGrokInboxHookCommand()
   },
   {
+    name: "chat-link", needsRuntime: false, startupMaintenance: false, internal: true,
+    usage: "tt chat-link", description: "Acknowledge a pinned chat message Ctrl-clicked in Herdr.",
+    handler: () => runChatLinkCommand()
+  },
+  {
     name: "ack", needsRuntime: true, startupMaintenance: false, internal: false,
     usage: "tt ack <delivery-token> [--json]",
     description: "Acknowledge native event delivery without claiming the stick.",
@@ -137,16 +143,16 @@ export const COMMAND_REGISTRY: CommandEntry[] = [
     needsRuntime: false,
     startupMaintenance: false,
     internal: false,
-    usage: "tt install <harness...> | --all [--print] [--copy] [--link] [--replace] [--no-guard]",
+    usage: "tt install <harness...|herdr> | --all [--print] [--copy] [--link] [--replace] [--no-guard]",
     description: "Install or explicitly replace the Talking Stick skill.",
-    handler: ({ parsed }) => runInstallCommand(parsed)
+    handler: ({ parsed, cliEntryUrl }) => runInstallCommand(parsed, cliEntryUrl)
   },
   {
     name: "uninstall",
     needsRuntime: false,
     startupMaintenance: false,
     internal: false,
-    usage: "tt uninstall <harness...|agents> | --all | --shared [--print]",
+    usage: "tt uninstall <harness...|agents|herdr> | --all | --shared [--print]",
     description: "Remove the Talking Stick skill.",
     handler: ({ parsed }) => runUninstallCommand(parsed)
   },

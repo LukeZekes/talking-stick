@@ -58,8 +58,8 @@ tt take [path] [--reason TEXT] [--operator-requested]     # deliberate claim whe
 tt takeover [path] [--reason TEXT] [--operator-requested] # alias for take
 tt notes add <body> [--turn N] [--path DIR] [--stdin]     # leave an async note
 tt notes list [--all] [--after ID] [--limit N] [--path DIR]
-tt install <harness...> | --all [--print] [--copy] [--link] [--replace] [--no-guard]
-tt uninstall <harness...|agents> | --all | --shared [--print]
+tt install <harness...|herdr> | --all [--print] [--copy] [--link] [--replace] [--no-guard]
+tt uninstall <harness...|agents|herdr> | --all | --shared [--print]
 tt self-update [--print] [--manager npm|pnpm|yarn|bun]
 ```
 
@@ -725,6 +725,17 @@ present instead of failing or creating new harness config roots.
 Single-harness uninstalls for shared-reading harnesses leave `~/.agents/skills/talking-stick` in
 place because Codex, Antigravity, Grok, and OpenCode share that one skill location. Use
 `tt uninstall agents` or `tt uninstall --shared` to remove only the shared skill target.
+
+### The Herdr plugin
+
+`tt install herdr` links a small Herdr plugin, `talking-stick.chat`, that turns a Ctrl-click on
+a pinned chat message into an acknowledgement without mouse capture. It needs Herdr 0.7.0 or
+newer. The manifest is generated under the data directory and runs `tt chat-link` by absolute
+path (through `<install-dir>/current` for a release, so it survives updates). Each chat
+inside Herdr links its pins to `https://talking-stick.invalid/ack/<token>/<message>`; the token
+names a private socket in `/tmp/tt-chat-<uid>` owned by that chat, which acknowledges only
+pending messages clicked in its own pane. Stale or foreign links do nothing.
+`tt uninstall herdr` unlinks the plugin and removes the generated files.
 
 ### The Claude Code stop guard
 

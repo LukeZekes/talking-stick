@@ -11,6 +11,11 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+### Added
+
+- `tt install herdr` links a Herdr plugin and `tt chat-link` handler so a Ctrl-click on a pinned
+  chat message can acknowledge it without mouse capture (#160).
+
 ### Fixed
 
 - Pending operator messages no longer enable terminal-wide mouse capture automatically, which
