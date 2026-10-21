@@ -2332,3 +2332,53 @@ test("/theme switches palettes locally and rejects unknown names without sending
       .filter(event => event.event_type === "message_sent")).toHaveLength(0);
   } finally { input.write("/quit\n"); await session; setChatTheme("lantern"); }
 });
+
+test.each([true, false])("/theme repaints existing visible content and keeps the composer anchored (inline=%s)", async (inline) => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:paint", context_path: root });
+  for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:paint", room_id: joined.room_id,
+    body: `visible-theme-${i} #137` });
+  const input = Object.assign(new PassThrough(), { setRawMode() {} });
+  const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+  const vt = new Terminal({ cols: 100, rows: 28, allowProposedApi: true, scrollback: 1000 });
+  vt.onData(data => input.write(data));
+  let bytes = "";
+  output.on("data", chunk => { bytes += chunk.toString(); vt.write(chunk.toString()); });
+  const flush = () => new Promise<void>(resolve => vt.write("\u001b[0m", resolve));
+  const rows = () => Array.from({ length: 28 }, (_, i) =>
+    vt.buffer.active.getLine(vt.buffer.active.baseY + i)?.translateToString(true) ?? "");
+  const referenceColor = () => {
+    const y = rows().findIndex(row => row.includes("visible-theme-24 #137"));
+    expect(y).toBeGreaterThanOrEqual(0);
+    const line = vt.buffer.active.getLine(vt.buffer.active.baseY + y)!;
+    return line.getCell(line.translateToString(true).indexOf("#137"))!.getFgColor();
+  };
+  const previousColorTerm = process.env.COLORTERM;
+  process.env.COLORTERM = "";
+  setChatTheme("lantern");
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline,
+    color: true, history: 20, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => bytes.includes("visible-theme-24"));
+    await flush();
+    expect(referenceColor()).toBe(110);
+    const composerRow = rows().findIndex(row => row.startsWith("> "));
+    const oldest = vt.buffer.active.getLine(0)?.translateToString(true);
+    for (const [name, color] of [["dusk", 147], ["tide", 110], ["lantern", 110]] as const) {
+      bytes = "";
+      input.write(`/theme ${name}\r`);
+      await until(() => bytes.includes(`Theme: ${name}`));
+      await new Promise(resolve => setTimeout(resolve, 30));
+      await flush();
+      expect(referenceColor()).toBe(color);
+      expect(rows().findIndex(row => row.startsWith("> "))).toBe(composerRow);
+      expect(rows().filter(row => row.includes("visible-theme-24"))).toHaveLength(1);
+      expect(bytes).not.toContain("\u001b[3J");
+      if (inline) expect(vt.buffer.active.getLine(0)?.translateToString(true)).toBe(oldest);
+    }
+  } finally {
+    input.end(); await session; vt.dispose(); setChatTheme("lantern");
+    if (previousColorTerm === undefined) delete process.env.COLORTERM; else process.env.COLORTERM = previousColorTerm;
+  }
+});
