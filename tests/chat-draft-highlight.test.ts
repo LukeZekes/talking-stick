@@ -3,6 +3,7 @@ import { draftStyleSpans } from "../src/cli/chat-draft-highlight.js";
 import { ChatTranscript, getChatCompletions, layoutComposer, renderChatScreen, renderInlinePanel, textWidth } from "../src/cli/chat-view.js";
 import { agentStyle, terminalColorMode, themeStyle, type ChatColorMode } from "../src/cli/theme.js";
 import type { RoomMember } from "../src/types.js";
+import { parseChatInput, resolveChatRecipient } from "../src/cli/chat-format.js";
 
 const strip = (text: string) => text.replace(/\u001b\[[0-9;]*m/g, "");
 const options = {
@@ -32,6 +33,12 @@ describe("live draft highlighting", () => {
     expect(spans.find(span => text.slice(span.start, span.end) === "@missing")!.style).toContain(themeStyle("error"));
     expect(spans.find(span => text.slice(span.start, span.end) === "!")!.style).toContain(themeStyle("warn"));
     expect(spans.some(span => text.slice(span.start, span.end) === "!@codex:aa")).toBe(true);
+  });
+
+  test.each(["`open @codex", "``` @codex", "https://example.test/@codex"])("never conceals a routed mention in %s", text => {
+    expect(parseChatInput(text)).toMatchObject({ kind: "send", to: ["codex"] });
+    const span = draftStyleSpans(text, options).find(span => text.slice(span.start, span.end) === "@codex");
+    expect(span?.style).toContain(agentStyle("codex:aa"));
   });
 
   test.each(["256", "truecolor"] as const)("painting never changes text, wrapping or cursor geometry (%s)", mode => {
@@ -85,6 +92,23 @@ describe("house theme in both chat layouts", () => {
         draft: { line: "/roles", cursor: 6 }, completions: [] });
       expect(frame.lines.join("\n")).toContain(themeStyle("command", mode));
       expect(frame.lines.join("\n")).toContain(mode === "truecolor" ? "38;2;" : "38;5;");
+    }
+  });
+
+  test.each([
+    { selector: "codex", members: [member, { ...member, agent_id: "codex:bb" }] },
+    { selector: "reviewer", members: [{ ...member, display_name: "reviewer" }, { ...member, agent_id: "grok:bb", display_name: "reviewer" }] },
+    { selector: "codex", members: [{ ...member, agent_id: "custom:aa" }, { ...member, agent_id: "codex:bb", display_name: "terminal" }] }
+  ])("shared alias $selector uses group styling, never the first recipient's identity", ({ selector, members }) => {
+    const resolved = resolveChatRecipient(selector, members, base.format.self_agent_id);
+    expect(resolved).toMatchObject({ agent_ids: expect.any(Array) });
+    expect("agent_ids" in resolved && resolved.agent_ids.length).toBe(2);
+    for (const render of [renderInlinePanel, renderChatScreen]) {
+      const frame = render({ ...base, status: { ...base.status, members },
+        draft: { line: `@${selector} `, cursor: selector.length + 2 }, completions: [] });
+      const composer = frame.lines.find(line => strip(line).startsWith(`> @${selector}`))!;
+      expect(composer).toContain(`1;${themeStyle("mention")}m@${selector}`);
+      expect(composer).not.toContain(`1;${agentStyle(members[0].agent_id)}m@${selector}`);
     }
   });
 });

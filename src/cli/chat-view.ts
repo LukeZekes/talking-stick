@@ -9,6 +9,7 @@ import {
   isChatConversationActivity,
   formatChatStatus,
   sanitizeChatText,
+  resolveChatRecipient,
   type ChatFormatContext,
   type ChatStatusInput
 } from "./chat-format.js";
@@ -803,9 +804,14 @@ function draftHighlight(input: ChatScreenInput): DraftHighlightOptions | undefin
     commands: [...CHAT_COMMANDS.map(command => command.name), "exit", "q", "dm", "msg", "all", "room", "int"],
     color_mode: input.format.color_mode,
     mention: selector => {
-      if (selector === "everyone" || selector === "all") return { state: "resolved" };
+      if (selector === "everyone" || selector === "all") return { state: "group" };
       const exact = aliases.find(alias => alias.name === selector);
-      if (exact) return { state: "resolved", id: exact.id };
+      if (exact) {
+        const recipients = resolveChatRecipient(selector, members, input.format.self_agent_id);
+        if ("error" in recipients) return { state: "unknown" };
+        return recipients.agent_ids.length === 1
+          ? { state: "resolved", id: recipients.agent_ids[0] } : { state: "group" };
+      }
       return { state: aliases.some(alias => alias.name.startsWith(selector)) || !selector ? "partial" : "unknown" };
     }
   };

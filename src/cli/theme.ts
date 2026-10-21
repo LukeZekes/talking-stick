@@ -39,7 +39,7 @@ export function themeStyle(token: ChatThemeToken, mode: ChatColorMode = "256", b
 export function agentColorIndex(id: string): number {
   const known = CHAT_THEME.agents[id.split(":")[0].toLowerCase() as keyof typeof CHAT_THEME.agents];
   let hash = 0;
-  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  for (let index = 0; index < id.length; index++) hash = (hash * 31 + id.charCodeAt(index)) >>> 0;
   return known?.[1] ?? CHAT_THEME.fallback[hash % CHAT_THEME.fallback.length];
 }
 

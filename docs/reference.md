@@ -538,7 +538,8 @@ rebuild, quit and reopen `tt chat` to load the new display.
 The Lantern house palette uses warm amber accents, lavender slash commands, and stable agent
 identity colors. Highlighting updates while you type: exact command/member names are emphasized,
 partial names are muted, and unknown names are underlined. This indicates token recognition,
-not delivery or permission to act. `@everyone` and `@all` have a separate broadcast color;
+not delivery or permission to act. Aliases that address several live members use the broadcast
+color rather than the first member's identity color. `@everyone` and `@all` use that color too;
 `!@name` also emphasizes the interrupt marker. Email addresses and backtick code do not look like
 recipient selections. The completion menu shares these colors, bolds the matched prefix, and
 paints the selected row. Accepting a completion with Tab leaves its recognized token highlighted.
