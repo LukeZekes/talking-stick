@@ -1,3 +1,4 @@
+import { isHumanAttentionMessage } from "../human-attention.js";
 import { formatChatNotice, type ChatNoticeKind } from "./chat-notice.js";
 import { renderAttention, type HumanAttention } from "./chat-attention.js";
 import { randomUUID } from "node:crypto";
@@ -556,6 +557,8 @@ export async function runChatSession(
             inlineReceiptRows.clear();
             output.write("\r\n");
             for (const line of deferredInline.splice(0)) writeInline(line);
+            // Re-establish absolute viewport anchors after an editor moved the cursor.
+            onResize();
           }
           redraw();
         }
@@ -739,6 +742,7 @@ export async function runChatSession(
   let inlineOutputRows = 0;
   let inlineVisibleFloor = 0;
   const inlineReceiptRows = new Map<number, number>();
+  const inlineHumanRows = new Map<number, number>();
   // Erase with the geometry the panel was drawn at: after a resize the current
   // width would compute the wrong row count and strand a stale copy.
   const eraseComposer = () => {
@@ -786,6 +790,7 @@ export async function runChatSession(
     inlineFrameColumns = dimensions();
     inlineVisibleFloor = Math.max(inlineVisibleFloor, inlineOutputRows + frame.lines.length - dimensions().rows);
     for (const [seq, row] of inlineReceiptRows) if (row < inlineVisibleFloor) inlineReceiptRows.delete(seq);
+    for (const row of inlineHumanRows.keys()) if (row < inlineVisibleFloor) inlineHumanRows.delete(row);
     const up = frame.lines.length - 1 - frame.cursor.row;
     output.write(`\r${up > 0 ? `\u001b[${up}A` : ""}${frame.cursor.col > 0 ? `\u001b[${frame.cursor.col}C` : ""}\u001b[?2026l`);
     syncMouse();
@@ -930,6 +935,7 @@ export async function runChatSession(
     // Reflow invalidates physical row anchors; never overwrite a different
     // message using coordinates recorded at the old width.
     inlineReceiptRows.clear();
+    inlineHumanRows.clear();
     inlineOutputRows = 0;
     inlineVisibleFloor = 0;
     // Reflow can move rows both before and after the editor cursor. Rebuild
@@ -951,6 +957,9 @@ export async function runChatSession(
       output.write("\u001b[?2026h\u001b[H\u001b[J");
       if (tail.length) output.write(tail.join("\r\n") + "\r\n");
       inlineOutputRows = tail.length;
+      for (const hit of transcript.humanMessageRows(tailHeight, Math.max(1, dimensions().columns - 1), formatContext())) {
+        inlineHumanRows.set(hit.row, hit.event_seq);
+      }
       for (const [seq, row] of transcript.receiptRows(tailHeight, Math.max(1, dimensions().columns - 1), formatContext())) {
         inlineReceiptRows.set(seq, row);
       }
@@ -1154,12 +1163,16 @@ export async function runChatSession(
     } catch (error) { print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`); }
   };
   const onClick = (column: number, row: number) => {
-    if (options.mouse === false || column < 1 || column >= dimensions().columns || rolesPanel || roomTree || memberMenu) return;
+    if (options.mouse === false || column < 1 || column >= dimensions().columns || row < 1 || row > dimensions().rows || rolesPanel || roomTree || memberMenu) return;
     if (!mouseActive) return;
     const frame = inline ? inlineFrame : previousFrame;
     const offset = inline && frame ? dimensions().rows - frame.lines.length : 0;
     const hit = frame?.attention?.find(hit => hit.row + offset === row - 1);
-    if (hit) acknowledge(String(hit.event_seq));
+    if (hit) { acknowledge(String(hit.event_seq)); return; }
+    const message = inline
+      ? row - 1 < offset ? inlineHumanRows.get(inlineOutputRows - offset + row - 1) : undefined
+      : frame?.human_messages?.find(hit => hit.row === row - 1)?.event_seq;
+    if (message !== undefined) acknowledge(String(message));
   };
   const runCommand = (name: string, args = "") => {
     switch (name) {
@@ -1415,6 +1428,10 @@ export async function runChatSession(
     if (inline) writeInline(forMe ? `${line}\u0007` : line);
     else print(forMe && terminal ? `${line}\u0007` : line);
     if (inline && deliveryStates.has(event.event_seq)) inlineReceiptRows.set(event.event_seq, headerRow);
+    if (inline && isHumanAttentionMessage(event, selfId) && !humanAcknowledged.has(event.event_seq)) {
+      const rows = line.split(/\r?\n/).flatMap(text => wrapStyledLine(text, Math.max(1, dimensions().columns - 1)));
+      for (let offset = 0; offset < rows.length; offset++) inlineHumanRows.set(headerRow + offset, event.event_seq);
+    }
     lastPrinted = isMessage ? "message" : "system";
   };
 
@@ -1701,6 +1718,7 @@ export async function runChatSession(
       printEvent(event, true);
     }
 
+    refreshAttention();
     redraw();
     if (inline && attention.total) onResize();
 

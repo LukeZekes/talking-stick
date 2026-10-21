@@ -2545,3 +2545,41 @@ test.each([true, false])("bare /ack dismisses all visible pins and clears the fi
     expect(bytes).toContain("\u001b[?1000l");
   } finally { input.end(); await session; vt.dispose(); }
 });
+
+test.each([[true, false, true], [false, false, true], [true, true, true], [false, true, true], [true, false, false], [true, true, false]])("clicking either highlighted copy works after layout changes (inline=%s, reflow=%s, cursorReply=%s)", async (inline, reflow, cursorReply) => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
+  const input = Object.assign(new PassThrough(), { setRawMode() {} });
+  const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+  const vt = new Terminal({ cols: 100, rows: 28, allowProposedApi: true });
+  if (cursorReply) vt.onData(data => input.write(data));
+  else vt.write("\u001b[6;1H");
+  let bytes = "";
+  output.on("data", chunk => { bytes += chunk.toString(); vt.write(chunk.toString()); });
+  const flush = () => new Promise<void>(resolve => vt.write("\u001b[0m", resolve));
+  const screen = () => Array.from({ length: output.rows }, (_, i) => vt.buffer.active.getLine(vt.buffer.active.baseY + i)?.translateToString(true) ?? "");
+  const pending = () => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total;
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline,
+    color: true, history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => bytes.includes("Type to message the room"));
+    service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "click either copy\nWrapped text with 👩🏽‍💻 and 界 plus enough words to cross a narrow row." });
+    await until(() => bytes.includes("\u001b[?1000h"));
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    if (reflow) {
+      input.write("\u001b[200~draft first\ndraft second\u001b[201~");
+      vt.resize(50, 30); output.columns = 50; output.rows = 30; output.emit("resize");
+      service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: "layout changed" });
+      await until(() => bytes.includes("layout changed"));
+      await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    }
+    const target = reflow ? "界" : "click either copy";
+    const copies = screen().map((line, index) => line.includes(target) ? index : -1).filter(index => index >= 0);
+    expect(copies).toHaveLength(2);
+    const y = inline ? copies[0] : copies[1]; // The normal transcript, outside the pin.
+    input.write(`\u001b[<0;5;${y + 1}M`);
+    await until(() => pending() === 0);
+    if (reflow) { await flush(); expect(screen().join("\n")).toContain("draft second"); }
+  } finally { input.end(); await session; vt.dispose(); }
+});

@@ -13,3 +13,9 @@ export function isHumanDirected(event: RoomEvent, viewer?: string): boolean {
   return targets.some(target => typeof target === "string" && target.startsWith("human:") &&
     (!viewer || humanAttentionIdentity(target) === humanAttentionIdentity(viewer)));
 }
+
+
+export function isHumanAttentionMessage(event: RoomEvent, viewer: string): boolean {
+  return isHumanDirected(event, viewer) &&
+    humanAttentionIdentity(event.from_agent_id ?? "") !== humanAttentionIdentity(viewer);
+}

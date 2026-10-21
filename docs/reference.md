@@ -573,7 +573,7 @@ Messages explicitly addressed to your human identity have a subtle background. N
 from other senders stay pinned until you acknowledge them: above the composer in inline chat,
 at the top in fullscreen. Pins use the normal message header and content with a slight background, without a
 status preamble. The bounded area shows as many message rows as fit; the complete message remains
-in the transcript. Clicking a pin dismisses it. The optional `/ack`
+in the transcript. Clicking a pin or its highlighted copy in the live transcript dismisses it. The optional `/ack`
 command dismisses all visible pins, `/ack #123`
 dismisses one message, and `/ack all` dismisses all pending messages. Acknowledgement also clears
 the message background. Mouse reporting is enabled while pins are pending, then restored when

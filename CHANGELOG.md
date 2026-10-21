@@ -11,6 +11,8 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+- Clicking a human-directed message now works on both its pin and its highlighted live transcript copy, including wrapped rows and after resize.
+
 - `/theme` now saves the palette per human across restarts. Startup precedence is `--theme`, `TT_THEME`, saved choice, then Lantern.
 - Explicit human-message acknowledgement: pending messages above the inline composer or at the top in fullscreen, click-to-dismiss with automatic mouse reporting, and optional `/ack` commands. Bare `/ack` dismisses every visible pin and clears its highlight. Acknowledgements persist across restarts, separate from delivery receipts; old messages before activation do not become pins. (#146)
 - Human-directed messages have a subtle background; `/members` uses agent and selection colors; all menus have a blank separator above them, now a project rule. (#145, #147)

@@ -1,3 +1,4 @@
+import { isHumanAttentionMessage } from "../human-attention.js";
 import { renderAttention, type HumanAttention, type AttentionHit } from "./chat-attention.js";
 import stringWidth from "string-width";
 import { draftStyleSpans, type DraftHighlightOptions } from "./chat-draft-highlight.js";
@@ -294,6 +295,7 @@ interface Layout {
   starts: Map<number, number>;
   order: number[];
   receipts: Map<number, number>;
+  human_messages: AttentionHit[];
 }
 
 export class ChatTranscript {
@@ -468,6 +470,14 @@ export class ChatTranscript {
       .map(([seq, row]) => [seq, padding + row - top]));
   }
 
+  humanMessageRows(height: number, width: number, context: ChatFormatContext): AttentionHit[] {
+    const layout = this.layout(width, context);
+    const top = this.topRow(layout, Math.max(0, layout.rows.length - height));
+    const padding = Math.max(0, height - Math.min(height, layout.rows.length - top));
+    return layout.human_messages.filter(hit => hit.row >= top && hit.row < top + height)
+      .map(hit => ({ ...hit, row: padding + hit.row - top }));
+  }
+
   private layout(width: number, context: ChatFormatContext): Layout {
     const key = `${width}|${this.epoch}|${context.show_turn_events}|${context.color}|${context.now?.toDateString()}|${context.history_before}`;
     if (this.layoutCache?.key === key) return this.layoutCache.layout;
@@ -476,6 +486,7 @@ export class ChatTranscript {
     const starts = new Map<number, number>();
     const order: number[] = [];
     const receipts = new Map<number, number>();
+    const humanMessages: AttentionHit[] = [];
     let previous: "message" | "other" | null = null;
     let previousEvent: RoomEvent | undefined;
     let section: string | undefined;
@@ -502,11 +513,17 @@ export class ChatTranscript {
       if (block.kind === "event" && context.tracks_delivery?.(block.event)) {
         receipts.set(block.event.event_seq, rows.length);
       }
+      if (block.kind === "event" && isHumanAttentionMessage(block.event, context.self_agent_id) &&
+          !context.human_acknowledged?.(block.event)) {
+        for (let offset = 0; offset < lines.length; offset++) {
+          humanMessages.push({ event_seq: block.event.event_seq, row: rows.length + offset });
+        }
+      }
       rows.push(...lines);
       previous = isMessage ? "message" : "other";
     }
 
-    const layout = { rows, starts, order, receipts };
+    const layout = { rows, starts, order, receipts, human_messages: humanMessages };
     this.layoutCache = { key, layout };
     return layout;
   }
@@ -846,6 +863,7 @@ function completionRow(input: ChatScreenInput, entry: ChatCompletion, active: bo
 export interface ChatMemberHit { agent_id: string; row: number; start: number; end: number }
 
 export interface ChatFrame {
+  human_messages?: AttentionHit[];
   attention?: AttentionHit[];
   members?: ChatMemberHit[];
   lines: string[];
@@ -1029,6 +1047,9 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
     lines,
     members: memberHits,
     attention: attention.hits.map(hit => ({ ...hit, row: hit.row + header.length })),
+    human_messages: input.transcript.humanMessageRows(transcriptHeight, width, context)
+      .filter(hit => hit.row < transcriptHeight - (menuRows.length ? menuRows.length + 1 : 0))
+      .map(hit => ({ ...hit, row: hit.row + header.length + attention.lines.length })),
     cursor: {
       row: Math.min(height - 1, Math.max(0, composerTop + composer.cursor_row)),
       col: Math.min(width, composer.cursor_col)
