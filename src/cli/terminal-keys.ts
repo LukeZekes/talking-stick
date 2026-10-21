@@ -14,8 +14,19 @@ export const ENHANCED_KEYS_OFF = "\u001b[<u\u001b[>4m";
 const KITTY = /^\u001b\[(\d+)(?::\d*)*(?:;(\d+)(?::\d+)?)?(?:;[\d:]*)?u$/;
 const XTERM = /^\u001b\[27;(\d+);(\d+)~$/;
 
-export function isEnhancedKey(sequence: string): boolean {
-  return KITTY.test(sequence) || XTERM.test(sequence);
+function parse(sequence: string): { code: number; bits: number } | null {
+  const kitty = KITTY.exec(sequence);
+  const xterm = kitty ? null : XTERM.exec(sequence);
+  if (!kitty && !xterm) return null;
+  // Modifiers are 1 + a bit set; Caps Lock and Num Lock carry no meaning here.
+  const bits = (Number((kitty ? kitty[2] : xterm![1]) ?? 1) - 1) & ~(64 | 128);
+  return { code: Number(kitty ? kitty[1] : xterm![2]), bits };
+}
+
+/** Shift+Enter in either report form, whatever the lock keys. */
+export function isShiftEnter(sequence: string): boolean {
+  const key = parse(sequence);
+  return key !== null && key.code === 13 && key.bits === 1;
 }
 
 /**
@@ -23,12 +34,9 @@ export function isEnhancedKey(sequence: string): boolean {
  * no use for (Super/Hyper/Meta), or null when `sequence` is not such a report.
  */
 export function legacyKey(sequence: string): string | null {
-  const kitty = KITTY.exec(sequence);
-  const xterm = kitty ? null : XTERM.exec(sequence);
-  if (!kitty && !xterm) return null;
-  const code = Number(kitty ? kitty[1] : xterm![2]);
-  // Modifiers are 1 + a bit set; Caps Lock and Num Lock carry no meaning here.
-  const bits = (Number((kitty ? kitty[2] : xterm![1]) ?? 1) - 1) & ~(64 | 128);
+  const report = parse(sequence);
+  if (!report) return null;
+  const { code, bits } = report;
   if (bits & (8 | 16 | 32) || code > 0x10ffff) return "";
   const shift = (bits & 1) !== 0;
   const alt = (bits & 2) !== 0;

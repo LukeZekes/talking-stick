@@ -3,7 +3,7 @@ import { PassThrough, Writable, type Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { sanitizeChatText } from "./chat-format.js";
 import { moveChatCursorVertical, type ChatDraft } from "./chat-view.js";
-import { legacyKey } from "./terminal-keys.js";
+import { isShiftEnter, legacyKey } from "./terminal-keys.js";
 
 export interface ChatInputOptions {
   input: Readable;
@@ -237,7 +237,7 @@ export class ChatInputController {
       }
       const enhanced = /^\u001b\[[\d:;]*[u~]/.exec(rest)?.[0];
       const legacy = enhanced === undefined ? null
-        : enhanced === "\u001b[13;2u" || enhanced === "\u001b[27;2;13~" ? "\r" : legacyKey(enhanced);
+        : isShiftEnter(enhanced) ? "\r" : legacyKey(enhanced);
       if (enhanced !== undefined && legacy !== null) {
         rest = legacy + rest.slice(enhanced.length);
         continue;
@@ -482,7 +482,7 @@ export class ChatInputController {
                 else this.options.onScroll("lines", direction * 3);
               }
             }
-          } else if (sequence === "\u001b[13;2u" || sequence === "\u001b[27;2;13~") {
+          } else if (isShiftEnter(sequence)) {
             this.insertNewline();
           } else if (sequence === "\u001b[27u") {
             // An enhanced Escape report is complete; no timeout is needed.

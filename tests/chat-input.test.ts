@@ -43,8 +43,9 @@ describe("enhanced keyboard reports", () => {
     try {
       input.write("draft\u001b[99;5u");
       expect(editor.draft.line).toBe("");
-      input.write("one\u001b[13;2utwo\u001b[13;3uthree");
-      expect(editor.draft.line).toBe("one\ntwo\nthree");
+      input.write("one\u001b[13;2utwo\u001b[13;3uthree\u001b[13;66ufour");
+      expect(editor.draft.line).toBe("one\ntwo\nthree\nfour");
+      expect(submit).not.toHaveBeenCalled();
       input.write("\u001b[27u");
       expect(editor.draft.line).toBe("");
       input.write("\u001b[116;5u");

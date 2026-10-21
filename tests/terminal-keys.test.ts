@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { legacyKey } from "../src/cli/terminal-keys.js";
+import { isShiftEnter, legacyKey } from "../src/cli/terminal-keys.js";
 
 describe("legacyKey", () => {
   test("ignores sequences that are not enhanced key reports", () => {
@@ -32,5 +32,14 @@ describe("legacyKey", () => {
   test("decodes xterm modifyOtherKeys reports", () => {
     expect(legacyKey("\u001b[27;5;99~")).toBe("\u0003");
     expect(legacyKey("\u001b[27;3;13~")).toBe("\u001b\r");
+  });
+
+  test("recognizes Shift+Enter with lock keys and kitty event suffixes", () => {
+    for (const sequence of ["\u001b[13;2u", "\u001b[13;66u", "\u001b[13;130u", "\u001b[13;2:1u", "\u001b[27;2;13~", "\u001b[27;66;13~"]) {
+      expect(isShiftEnter(sequence), sequence).toBe(true);
+    }
+    for (const sequence of ["\u001b[13u", "\u001b[13;3u", "\u001b[13;6u", "\u001b[9;2u", "\r"]) {
+      expect(isShiftEnter(sequence), sequence).toBe(false);
+    }
   });
 });
