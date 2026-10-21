@@ -70,7 +70,7 @@ export function formatChatHelp(width: number, color: boolean, keys = false, inli
     ["Tab", "Accept the selected suggestion"],
     ["↑ / ↓", "Recall prompts; choose suggestions or edit draft lines"],
     ["Ctrl+P / Ctrl+N", "Recall previous / next submitted prompt"],
-    ["Alt+Enter", "Insert a new line"],
+    ["Shift+Enter", "Insert a new line (Alt+Enter also works)"],
     ["Ctrl+V", "Attach the clipboard's image as [Image #N]; delete the marker to drop it"],
     ["Esc", "Clear text; interrupt agents when the draft is empty"],
     ["Ctrl+C", "Clear the draft"],
@@ -108,7 +108,7 @@ export function formatChatHelp(width: number, color: boolean, keys = false, inli
   lines.push("");
   for (const note of keys ? [
     "Single-line drafts use ↑ / ↓ for history when suggestions are closed.",
-    "Paste stays in the draft until sent. Shift+Enter also works in supported terminals.",
+    "Paste stays in the draft until sent. Shift+Enter needs a terminal with enhanced keys; Alt+Enter works anywhere.",
     "/help returns to commands."
   ] : [
     "Type to message every agent in the room. @agent narrows it to that agent.",

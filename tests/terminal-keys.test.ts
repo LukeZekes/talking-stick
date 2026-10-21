@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { isShiftEnter, legacyKey } from "../src/cli/terminal-keys.js";
+import { isShiftEnter, isSuperPaste, legacyKey } from "../src/cli/terminal-keys.js";
 
 describe("legacyKey", () => {
   test("ignores sequences that are not enhanced key reports", () => {
@@ -48,5 +48,13 @@ describe("legacyKey", () => {
     expect(legacyKey("\u001b[13;1:3u")).toBe("");
     expect(legacyKey("\u001b[99;5:3u")).toBe("");
     expect(legacyKey("\u001b[99;5:2u")).toBe("\u0003");
+  });
+
+  test("recognizes a forwarded Cmd+V", () => {
+    expect(isSuperPaste("\u001b[118;9u")).toBe(true);
+    expect(isSuperPaste("\u001b[118;73u")).toBe(true); // with Caps Lock
+    expect(isSuperPaste("\u001b[118;9:3u")).toBe(false); // release
+    expect(isSuperPaste("\u001b[118;5u")).toBe(false); // Ctrl+V
+    expect(isSuperPaste("\u001b[99;9u")).toBe(false); // Cmd+C
   });
 });

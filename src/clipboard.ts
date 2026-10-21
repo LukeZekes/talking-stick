@@ -58,6 +58,22 @@ export async function readClipboardImage(options: ClipboardOptions = {}): Promis
   return null;
 }
 
+// Clipboard text, for a Cmd+V the terminal forwarded as a key instead of
+// pasting itself. Null when there is no text or no clipboard tool.
+export async function readClipboardText(options: ClipboardOptions = {}): Promise<string | null> {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const run = options.run ?? runCommand;
+  let data: Buffer | null = null;
+  if (platform === "darwin") data = await run("pbpaste", []);
+  else if (platform === "linux") {
+    if (env.WAYLAND_DISPLAY) data = await run("wl-paste", ["--no-newline"]);
+    if (!data && env.DISPLAY) data = await run("xclip", ["-selection", "clipboard", "-o"]);
+  }
+  const text = data?.toString("utf8") ?? "";
+  return text.length > 0 ? text : null;
+}
+
 // AppleScript writes the clipboard's PNG to a file (binary-safe, unlike its
 // hex text form). A copied image file in Finder is a file URL instead.
 async function readMacClipboard(run: ClipboardRunner, tmpDir: string): Promise<ClipboardImage | null> {

@@ -3,7 +3,7 @@ import { PassThrough, Writable, type Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { sanitizeChatText } from "./chat-format.js";
 import { moveChatCursorVertical, type ChatDraft } from "./chat-view.js";
-import { isShiftEnter, legacyKey } from "./terminal-keys.js";
+import { isShiftEnter, isSuperPaste, legacyKey } from "./terminal-keys.js";
 
 export interface ChatInputOptions {
   input: Readable;
@@ -25,6 +25,9 @@ export interface ChatInputOptions {
    * Keys typed while it resolves wait, so the marker lands where the paste was.
    */
   onImagePaste?: () => Promise<string | null>;
+  // Cmd+V forwarded as a key: the clipboard's image marker or text, inserted
+  // as is. Falls back to onImagePaste.
+  onClipboardPaste?: () => Promise<string | null>;
   /** Replacement text for a paste (image paths become markers), or null to keep it. */
   transformPaste?: (text: string) => string | null;
   now?: () => number;
@@ -170,14 +173,15 @@ export class ChatInputController {
     return this.imagePending;
   }
 
-  private requestImage(): void {
-    const request = this.options.onImagePaste;
+  private requestImage(clipboard = false): void {
+    const request = clipboard && this.options.onClipboardPaste ? this.options.onClipboardPaste : this.options.onImagePaste;
     if (!request) return;
+    const verbatim = request === this.options.onClipboardPaste;
     this.imagePending = true;
     const settle = (marker: string | null) => {
       if (this.closed) return;
       this.imagePending = false;
-      if (marker) this.insertText(`${marker} `);
+      if (marker) this.insertText(verbatim ? marker : `${marker} `);
       // Replay what was typed meanwhile, in order.
       this.onData("");
     };
@@ -484,6 +488,8 @@ export class ChatInputController {
             }
           } else if (isShiftEnter(sequence)) {
             this.insertNewline();
+          } else if (isSuperPaste(sequence)) {
+            this.requestImage(true);
           } else if (sequence === "\u001b[27u") {
             // An enhanced Escape report is complete; no timeout is needed.
             this.pressEscape();

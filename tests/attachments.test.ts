@@ -11,7 +11,7 @@ import {
   storeAttachment,
   validateAttachments
 } from "../src/attachments.js";
-import { readClipboardImage, type ClipboardRunner } from "../src/clipboard.js";
+import { readClipboardImage, readClipboardText, type ClipboardRunner } from "../src/clipboard.js";
 import { formatChatEvent } from "../src/cli/chat-format.js";
 import { getStringOptions, parseCommand } from "../src/cli/parser.js";
 import { formatNativeEventText, TalkingStickService } from "../src/index.js";
@@ -119,6 +119,13 @@ describe("clipboard", () => {
       }
     };
   }
+
+  test("reads clipboard text for a forwarded Cmd+V", async () => {
+    expect(await readClipboardText({ platform: "darwin", run: runner({ "pbpaste ": Buffer.from("hello\n") }).run })).toBe("hello\n");
+    expect(await readClipboardText({ platform: "darwin", run: runner({ "pbpaste ": Buffer.from("") }).run })).toBeNull();
+    expect(await readClipboardText({ platform: "linux", env: { DISPLAY: ":0" },
+      run: runner({ "xclip -selection clipboard -o": Buffer.from("x") }).run })).toBe("x");
+  });
 
   test("reads a Wayland image by the best type the clipboard offers", async () => {
     const { run, calls } = runner({

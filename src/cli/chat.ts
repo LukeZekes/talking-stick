@@ -75,6 +75,7 @@ import {
 } from "./parser.js";
 import type { Runtime } from "./runtime.js";
 import { ENHANCED_KEYS_OFF, ENHANCED_KEYS_ON } from "./terminal-keys.js";
+import { readClipboardText } from "../clipboard.js";
 
 const DEFAULT_HISTORY = 20;
 const HISTORY_SCAN_EVENTS = 500;
@@ -1329,6 +1330,22 @@ export async function runChatSession(
     }
   };
 
+  // A Cmd+V the terminal forwarded as a key: an image when there is one,
+  // otherwise the clipboard text, as an ordinary paste would insert it.
+  const pasteClipboard = async (): Promise<string | null> => {
+    try {
+      const marker = await images.fromClipboard();
+      if (marker) return `${marker} `;
+      const text = await readClipboardText();
+      if (text) return images.fromPastedText(sanitizeChatText(text)) ?? sanitizeChatText(text);
+      if (!closed) print("The clipboard is empty.");
+      return null;
+    } catch (error) {
+      if (!closed) print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`);
+      return null;
+    }
+  };
+
   const handleLine = (line: string) => {
     const parsed = parseChatInput(line);
     switch (parsed.kind) {
@@ -1449,6 +1466,7 @@ export async function runChatSession(
         onCycleRoom,
         onRoomTree: openRoomTree,
         onImagePaste: pasteImage,
+        onClipboardPaste: pasteClipboard,
         transformPaste: (text) => images.fromPastedText(text),
         onQuit: stop,
         onBottom: () => {
@@ -1515,6 +1533,7 @@ export async function runChatSession(
         onCycleRoom,
         onRoomTree: openRoomTree,
         onImagePaste: pasteImage,
+        onClipboardPaste: pasteClipboard,
         transformPaste: (text) => images.fromPastedText(text),
         onQuit: stop,
         // Scrollback belongs to the terminal in this mode.

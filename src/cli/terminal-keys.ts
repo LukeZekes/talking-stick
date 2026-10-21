@@ -32,6 +32,12 @@ export function isShiftEnter(sequence: string): boolean {
   return key !== null && !key.release && key.code === 13 && key.bits === 1;
 }
 
+/** Cmd+V (Super+V) that the terminal forwarded instead of pasting. */
+export function isSuperPaste(sequence: string): boolean {
+  const key = parse(sequence);
+  return key !== null && !key.release && key.code === 118 && key.bits === 8;
+}
+
 /**
  * The legacy bytes for an enhanced key report, "" for a combination chat has
  * no use for (Super/Hyper/Meta), or null when `sequence` is not such a report.
