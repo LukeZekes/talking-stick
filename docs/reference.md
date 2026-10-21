@@ -581,7 +581,9 @@ chat session, without recording an acknowledgement. Pins are hidden while browsi
 Inline chat inside Herdr follows the pane's scroll position (`pane.scroll_changed`): scrolling
 the terminal's own scrollback across a committed pending message suppresses its pin the same
 way. Only the operator's own movement counts, never new output or chat's repaint, and after a
-resize only rows written since then are tracked. Outside Herdr there is no scroll signal, so a
+resize only rows written since then are tracked. While the pane is scrolled up, no new pin is
+promoted; on returning to the bottom, only messages not scrolled past pin. Once Herdr trims
+scrollback at its limit, rows can no longer be placed and messages pin as usual. Outside Herdr there is no scroll signal, so a
 pending message pins once pushed off screen; typing alone never dismisses a pin.
 
 In Herdr, run `tt install herdr` once and restart chat, then **Ctrl-click** a pin to dismiss it.

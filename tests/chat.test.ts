@@ -2655,7 +2655,8 @@ test.each([true, false])("native Ctrl-click dismisses top pins without capturing
   expect(await sendChatLinkClick({ url, paneId: "w1:p42" })).toBe("unreachable");
 });
 
-test("scrolling natively past a pending message in Herdr stops it pinning without acknowledging it", async () => {
+test.each(["live", "away", "away-sweep"] as const)("native Herdr scroll suppresses pending pins (%s)", async mode => {
+  const scrollBeforePromotion = mode !== "live";
   const dir = fs.mkdtempSync("/tmp/tth-");
   const socketPath = path.join(dir, "herdr.sock");
   let herdr: net.Socket | undefined;
@@ -2678,7 +2679,7 @@ test("scrolling natively past a pending message in Herdr stops it pinning withou
   const screen = () => Array.from({ length: 28 }, (_, i) => vt.buffer.active.getLine(vt.buffer.active.baseY + i)?.translateToString(true) ?? "");
   const pending = () => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total;
   const scroll = (offset: number) => herdr!.write(`${JSON.stringify({ event: "pane.scroll_changed", data: { pane_id: "w1:p42",
-    scroll: { max_offset_from_bottom: vt.buffer.active.baseY, offset_from_bottom: offset, viewport_rows: 28 } } })}\n`);
+    scroll: { max_offset_from_bottom: 100 + vt.buffer.active.baseY, offset_from_bottom: offset, viewport_rows: 28 } } })}\n`);
   const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
     identity: observerIdentity(), context_path: root, input, output, terminal: true, inline: true,
     color: true, history: 0, show_turn_events: false, poll_ms: 5,
@@ -2687,10 +2688,33 @@ test("scrolling natively past a pending message in Herdr stops it pinning withou
     await until(() => bytes.includes("Type to message the room") && herdr !== undefined);
     service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "Scrolled-past target" });
     await until(() => bytes.includes("Scrolled-past target"));
+    if (scrollBeforePromotion) {
+      scroll(10); // The operator is already browsing older host scrollback.
+      await new Promise(resolve => setTimeout(resolve, 30));
+    }
     for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `scroll-flow-${i}` });
     await until(() => bytes.includes("scroll-flow-24"));
     await new Promise(resolve => setTimeout(resolve, 30)); await flush();
     const pinned = () => screen().slice(0, 5).some(line => line.includes("Scrolled-past target"));
+    if (scrollBeforePromotion) {
+      expect(pinned()).toBe(false);
+      if (mode === "away-sweep") {
+        // Scrolling across the committed original before returning: no pin at all.
+        const history = Array.from({ length: vt.buffer.active.baseY }, (_, i) => vt.buffer.active.getLine(i)?.translateToString(true) ?? "");
+        const row = history.findIndex(line => line.includes("Scrolled-past target"));
+        scroll(vt.buffer.active.baseY - row);
+        await new Promise(resolve => setTimeout(resolve, 30));
+        scroll(0);
+        await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+        expect(pinned()).toBe(false);
+        expect(pending()).toBe(1);
+        input.write("/ack all\r");
+        await until(() => pending() === 0);
+        return;
+      }
+      scroll(0);
+      await until(pinned);
+    }
     expect(pinned()).toBe(true);
     // Live-bottom snapshot, then a scroll that brings the committed original into view.
     scroll(0);

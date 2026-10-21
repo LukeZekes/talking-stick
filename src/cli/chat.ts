@@ -758,6 +758,8 @@ export async function runChatSession(
   // Rows committed to Herdr's scrollback while pins show, so a pending
   // message the operator scrolls past natively stops pinning.
   const nativeScrollLedger = new NativeScrollLedger();
+  // While the operator browses Herdr scrollback, nothing new is promoted.
+  let nativeAway = false;
   let inlineVisibleFloor = 0;
   const inlineReceiptRows = new Map<number, number>();
   const inlineHumanRows = new Map<number, number>();
@@ -796,7 +798,7 @@ export async function runChatSession(
       inlinePinHistory.observe(all, Math.max(0, all.length - (size.rows - footer.lines.length)));
       inlineHistoryInitialized = true;
     }
-    const frame = renderInlineTopPanel(input);
+    const frame = renderInlineTopPanel(nativeAway && attention ? { ...input, attention: { ...attention, messages: [] } } : input);
     const evicted = inlinePinHistory.evict(all, frame.history_top ?? 0);
     const history = evicted.map(entry => entry.text);
     nativeScrollLedger.commit(evicted.map(entry => transcript.eventSeqForRow(entry.row)));
@@ -1661,10 +1663,12 @@ export async function runChatSession(
       // Without the stream, pending messages simply pin when pushed off screen.
       nativeScroll = subscribePaneScroll({ socketPath: herdrSocket, paneId: options.herdr.pane_id, onScroll: scroll => {
         if (closed) return;
+        const away = scroll.offset_from_bottom > 0;
+        const awayChanged = away !== nativeAway;
+        nativeAway = away;
         const seqs = nativeScrollLedger.observe(scroll);
-        if (!seqs.length) return;
         transcript.markHumanMessagesTraversed(seqs);
-        if (attention.messages.some(event => seqs.includes(event.event_seq))) drawComposer();
+        if (attention.total > 0 && (awayChanged || attention.messages.some(event => seqs.includes(event.event_seq)))) drawComposer();
       } });
     }
     if (fullscreen) {

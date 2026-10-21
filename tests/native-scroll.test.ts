@@ -68,6 +68,19 @@ describe("native scroll ledger", () => {
     expect(scroll.observe(at(135, 34))).toEqual([]);
   });
 
+  it("marks nothing once Herdr trims scrollback at its cap, until reset", () => {
+    const scroll = ledger();
+    // Scrollback is full: new commits no longer grow S, so rows cannot be placed.
+    scroll.commit(Array(5).fill(null));
+    expect(scroll.observe(at(130, 25))).toEqual([]);
+    expect(scroll.observe(at(130, 12))).toEqual([]);
+    scroll.reset();
+    scroll.observe(at(130));
+    scroll.commit([4, null]);
+    scroll.observe(at(132));
+    expect(scroll.observe(at(132, 2))).toEqual([4]);
+  });
+
   it("forgets everything on reset", () => {
     const scroll = ledger();
     scroll.reset();
