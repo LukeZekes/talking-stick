@@ -70,9 +70,10 @@ into each harness keeps them in sync. The footer shows who holds the stick.
 | `/rooms` or Ctrl+T | The repository's rooms with live members; Enter opens one |
 | `/members` | Pick a member to message or remove (removal asks first) |
 | `/roles` | Assign roles, edit their definitions, and set harness defaults |
-| Ctrl+V, a dragged-in image, or `/attach <file>` | Attach an image; agents get its path and read it |
+| Cmd+V / Ctrl+V, a dragged-in image, or `/attach <file>` | Attach an image; agents get its path and read it |
 | Click a highlighted message or pin | Acknowledge it and clear its highlight; messages pin only after leaving the visible transcript |
-| `/theme tide` | Switch the palette: Lantern (warm default), Tide (teal), or Dusk (lavender) |
+| `/theme tide` | Save the palette: Lantern (warm default), Tide (teal), or Dusk (lavender) |
+| Shift+Enter or Alt+Enter | Insert a newline; the draft wraps as you type |
 | `/who`, `/help` | Members and stick holder; all commands |
 
 Each message header marks every recipient: `…` not delivered yet, `✓` delivered, `!` failed. That's

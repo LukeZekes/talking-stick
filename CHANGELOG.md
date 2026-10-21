@@ -11,35 +11,46 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
-- Human-directed messages appear once in the live pane: highlighted in the transcript while visible, pinned only after scrolling out. Room-wide questions get one status responder instead of duplicate answers from every agent.
-- Clicking a human-directed message now works on both its pin and its highlighted live transcript copy, including wrapped rows and after resize.
-- `tt chat`: the composer wraps whole words. A word that would cross the edge moves to the next row
-  and the draft reflows as you type or delete; a word wider than the row still breaks by character.
-  (#153)
+## [0.29.0] — 2026-10-21
 
-- `/theme` now saves the palette per human across restarts. Startup precedence is `--theme`, `TT_THEME`, saved choice, then Lantern.
-- Explicit human-message acknowledgement: pending messages above the inline composer or at the top in fullscreen, click-to-dismiss with automatic mouse reporting, and optional `/ack` commands. Bare `/ack` dismisses every visible pin and clears its highlight. Acknowledgements persist across restarts, separate from delivery receipts; old messages before activation do not become pins. (#146)
-- Human-directed messages have a subtle background; `/members` uses agent and selection colors; all menus have a blank separator above them, now a project rule. (#145, #147)
-- Command results use a shared gutter and themed info/done/error labels, distinct from authored messages. (#151)
+Full notes: [`docs/releases/0.29.0.md`](docs/releases/0.29.0.md).
 
-- `tt up` works in plain tmux. Outside Herdr, a tmux pane runs the same launch: sessions and windows
-  stand in for Herdr workspaces and tabs, agents start in fresh panes, and joins are verified by the
-  member's harness process running in the pane. Escape in chat reaches a verified Codex pane in
-  tmux too. (#135)
-- `tt chat`: Shift+Enter now inserts a new line in terminals with enhanced key reporting (Ghostty,
-  kitty, WezTerm, iTerm2 3.5+, foot). Chat requests the kitty keyboard protocol and modifyOtherKeys,
-  decodes Ctrl, Alt and Escape reports back to their usual keys, and restores the terminal on exit,
-  suspend and external edits. (#136)
-- `tt chat`: a Cmd+V that the terminal forwards as a key (a kitty Super+V report) pastes the
-  clipboard: its image as `[Image #N]`, otherwise its text. An ordinary terminal paste is unchanged.
-- `tt chat` help lists Shift+Enter first for a new line; Alt+Enter still works everywhere.
-- `tt install codex`: the SessionEnd and Interrupt hooks use a 3-second timeout, Codex's limit for
-  those events, so Codex's `/hooks` panel no longer warns about clamping them. Reinstall to update
-  existing hooks (`tt install codex`).
 ### Added
 
-- Selectable chat palettes: Lantern (warm), Tide (teal), and Dusk (lavender), via `--theme`, `TT_THEME`, or `/theme`. Agent colors remain consistent across themes.
-- Live `tt chat` composer highlighting and a shared Lantern house palette: amber accents, lavender commands, stable agent colors, and distinct references, paths and status signals. Exact member names and command names are emphasized, partial tokens stay muted, and unknown tokens are underlined. Completions use the same token colors, emphasize the typed prefix, and mark the selected row with a background in both inline and fullscreen chat. True-color terminals use the RGB palette; other color terminals use 256-color fallbacks. `NO_COLOR` keeps the display plain.
+- `tt up` can launch agents in plain tmux as well as Herdr. Joins are verified against the
+  member's foreground harness process, and chat can send Escape to a verified Codex pane. (#135)
+- Chat composer and completion highlighting share a house palette. Commands, exact mentions,
+  partial tokens, unknown names, references and paths have consistent emphasis without changing
+  the draft text or cursor geometry. RGB, 256-color and `NO_COLOR` output are supported. (#137)
+- Three chat palettes: Lantern (warm default), Tide (teal), and Dusk (lavender). `/theme` recolors
+  the visible pane and saves the choice per human. Startup precedence is `--theme`, `TT_THEME`,
+  saved preference, then Lantern; harness identity colors stay consistent. (#143)
+- Messages explicitly addressed to the operator keep a subtle highlight until acknowledged.
+  A message appears once in the live pane: in the transcript while visible, then as a pin after
+  scrolling out. Click the message or use `/ack`, `/ack #seq`, or `/ack all`. Acknowledgements
+  persist across restarts and are separate from delivery receipts; old backlog does not become
+  pins. Mouse reporting turns on while acknowledgements are pending; `--no-mouse` disables it. (#146, #147)
+
+### Changed
+
+- The chat composer wraps whole words and reflows while typing or deleting; words wider than
+  a row still break by character. Cursor motion and highlighting use the same geometry. (#153)
+- `/members` uses agent and selection colors. Every menu has a blank separator from the chat,
+  and command results have a shared info/done/error gutter distinct from messages. (#145, #151)
+- Room-wide questions have one status responder: the agent that last held or released the
+  stick. Other agents answer only to add or correct information (repository coordination rule).
+
+### Fixed
+
+- Shift+Enter inserts a newline when the terminal supports enhanced key reporting; Ctrl, Alt
+  and Escape retain their usual meanings, and terminal modes are restored on exit and editor
+  handoff. Alt+Enter remains available. (#136)
+- Cmd+V also pastes when forwarded as a kitty Super+V key report: clipboard images become
+  attachments, otherwise clipboard text is inserted. Ordinary terminal paste is unchanged. (#142)
+- Human-message clicks use the actual visible rows, including wrapped text, resize, incoming
+  output and editor resume. Dismissal clears the highlight, including the final pending message.
+- Codex SessionEnd and Interrupt hooks use the supported 3-second timeout; reinstall with
+  `tt install codex` to update existing hooks.
 
 ## [0.28.1] — 2026-10-20
 
@@ -836,6 +847,7 @@ Initial alpha. Core room protocol, SQLite-backed persistence, multi-process
 contention coverage, MCP smoke coverage, human guardian flow, harness
 installers, and the portable `talking-stick` skill.
 
+[0.29.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.29.0
 [0.28.1]: https://github.com/mostlydev/talking-stick/releases/tag/v0.28.1
 [0.28.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.28.0
 [0.27.0]: https://github.com/mostlydev/talking-stick/releases/tag/v0.27.0
