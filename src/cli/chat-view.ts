@@ -337,6 +337,7 @@ interface Layout {
 
 export class ChatTranscript {
   private traversedHumanMessages = new Set<number>();
+  private outputBuffered = false;
   private blocks: ChatBlock[] = [];
   private nextId = 1;
   private earlierId = 0;
@@ -350,6 +351,11 @@ export class ChatTranscript {
   private layoutCache: { key: string; layout: Layout } | null = null;
 
   constructor(private readonly maxBlocks = MAX_TRANSCRIPT_BLOCKS) {}
+
+  setOutputBuffered(buffered: boolean): void {
+    this.outputBuffered = buffered;
+    if (!buffered && this.anchor.follow) this.trimLiveBuffer();
+  }
 
   markHumanMessagesTraversed(seqs: Iterable<number>): void {
     for (const seq of seqs) this.traversedHumanMessages.add(seq);
@@ -483,6 +489,7 @@ export class ChatTranscript {
   }
 
   private trimLiveBuffer(): void {
+    if (this.outputBuffered) return;
     this.layoutCache = null;
     while (this.blocks.length > this.maxBlocks) {
       const evicted = this.blocks.shift()!;

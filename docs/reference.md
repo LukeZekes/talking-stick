@@ -582,8 +582,8 @@ Inline chat inside Herdr follows the pane's scroll position (`pane.scroll_change
 the terminal's own scrollback across a committed pending message suppresses its pin the same
 way. Only the operator's own movement counts, never new output or chat's repaint, and after a
 resize only rows written since then are tracked. While the pane is scrolled up, chat buffers
-updates without repainting the view you are reading. Returning to the bottom catches up and
-pins only messages not scrolled past. Herdr also returns to the bottom before forwarding a
+updates without repainting the view you are reading. Returning to the bottom writes the full
+buffered conversation into native history and pins only messages not scrolled past. Herdr also returns to the bottom before forwarding a
 key, so keyboard input resumes updates even if the scroll stream disconnected. Input does not
 acknowledge a message. Once Herdr trims scrollback at its limit, rows can no longer be placed
 and messages pin as usual. Outside Herdr there is no scroll signal, so a pending message pins

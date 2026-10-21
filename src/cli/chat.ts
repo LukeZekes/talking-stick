@@ -786,7 +786,6 @@ export async function runChatSession(
     mouseActive = active;
   };
   const drawTopViewport = () => {
-    if (nativeAway) { inlineNeedsRebuild = true; return; }
     const size = dimensions();
     const context = formatContext();
     const draft = editor?.draft ?? { line: "", cursor: 0 };
@@ -802,6 +801,7 @@ export async function runChatSession(
       inlinePinHistory.observe(all, Math.max(0, all.length - (size.rows - footer.lines.length)));
       inlineHistoryInitialized = true;
     }
+    if (nativeAway) { inlineNeedsRebuild = true; return; }
     const frame = renderInlineTopPanel(input);
     const evicted = inlinePinHistory.evict(all, frame.history_top ?? 0);
     const history = evicted.map(entry => entry.text);
@@ -816,6 +816,29 @@ export async function runChatSession(
     inlineHumanRows.clear();
     visibleAttention = new Set([...(frame.attention ?? []), ...(frame.human_messages ?? [])].map(hit => hit.event_seq));
     syncMouse();
+  };
+  const freezeInlineHistory = () => {
+    transcript.setOutputBuffered(true);
+    if (inlineHistoryInitialized) return;
+    // Capture what was already printed before buffering any new events.
+    // Initializing from the later catch-up tail would silently skip them.
+    const size = dimensions();
+    const all = transcript.historyRows(Math.max(1, size.columns - 1), formatContext());
+    const bodyHeight = Math.max(0, size.rows - (inlineFrame?.lines.length ?? 0));
+    inlinePinHistory.observe(all, Math.max(0, all.length - bodyHeight));
+    inlineHistoryInitialized = true;
+  };
+  const resumeInlineTail = () => {
+    const buffered = inlineNeedsRebuild;
+    inlineNeedsRebuild = false;
+    if (buffered && inlineHistoryInitialized) {
+      // Evict every row after the frozen frontier, even if the last pending
+      // message was acknowledged elsewhere while we were browsing.
+      drawTopViewport();
+      if (attention.total === 0) onResize();
+    } else if (attention.total > 0) drawComposer();
+    else onResize();
+    transcript.setOutputBuffered(false);
   };
   const drawComposer = () => {
     if (!inline || closed || externalEditorActive) return;
@@ -1655,8 +1678,7 @@ export async function runChatSession(
     // even if its scroll event lags or the stream died, without pretending
     // that any pending message was read or acknowledged.
     nativeAway = false;
-    inlineNeedsRebuild = false;
-    onResize();
+    resumeInlineTail();
   };
   process.on("SIGTERM", onSignal);
   process.on("SIGHUP", onSignal);
@@ -1684,14 +1706,12 @@ export async function runChatSession(
         if (closed) return;
         const away = scroll.offset_from_bottom > 0;
         const awayChanged = away !== nativeAway;
+        if (away && awayChanged) freezeInlineHistory();
         nativeAway = away;
         const seqs = nativeScrollLedger.observe(scroll);
         transcript.markHumanMessagesTraversed(seqs);
         if (!away && awayChanged && inlineNeedsRebuild) {
-          inlineNeedsRebuild = false;
-          // Normal streaming output was buffered in the transcript as well.
-          // If the last pin was acknowledged elsewhere, rebuild that tail too.
-          if (attention.total > 0) drawComposer(); else onResize();
+          resumeInlineTail();
         } else if (attention.total > 0 && (awayChanged || attention.messages.some(event => seqs.includes(event.event_seq)))) drawComposer();
       } });
     }

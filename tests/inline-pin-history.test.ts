@@ -96,3 +96,18 @@ test.each(["inline", "fullscreen"])("%s promotes only after the original leaves 
   expect(render(input).attention ?? []).toHaveLength(0);
   expect(input.attention.total).toBe(1); // Traversal changes presentation, never the stored acknowledgement.
 });
+
+test("buffered native output survives the live transcript limit until committed", async () => {
+  const { ChatTranscript } = await import("../src/cli/chat-view.js");
+  const transcript = new ChatTranscript(3);
+  const context = { self_agent_id: "human:op", name_of: (id: string) => id, color: false, show_turn_events: false };
+  const history = new InlinePinHistory();
+  transcript.setOutputBuffered(true);
+  for (let i = 0; i < 12; i++) transcript.appendNotice(`buffered-${i}`);
+  const rows = transcript.historyRows(80, context);
+  const committed = history.evicted(rows, rows.length - 3);
+  const tail = rows.slice(-3).map(row => row.text);
+  expect([...committed, ...tail]).toEqual(Array.from({ length: 12 }, (_, i) => `buffered-${i}`));
+  transcript.setOutputBuffered(false);
+  expect(transcript.size).toBe(3);
+});

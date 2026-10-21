@@ -2655,7 +2655,7 @@ test.each([true, false])("native Ctrl-click dismisses top pins without capturing
   expect(await sendChatLinkClick({ url, paneId: "w1:p42" })).toBe("unreachable");
 });
 
-test.each(["live", "away", "away-acked", "away-input", "away-disconnect"] as const)("native Herdr scroll preserves the viewport (%s)", async mode => {
+test.each(["live", "away", "away-acked", "away-input", "away-disconnect", "away-none", "away-arriving"] as const)("native Herdr scroll preserves the viewport (%s)", async mode => {
   const scrollBeforePromotion = mode !== "live";
   const dir = fs.mkdtempSync("/tmp/tth-");
   const socketPath = path.join(dir, "herdr.sock");
@@ -2690,8 +2690,13 @@ test.each(["live", "away", "away-acked", "away-input", "away-disconnect"] as con
     herdr: { pane_id: "w1:p42", socket_path: socketPath, runner: () => { throw new Error("no plugin"); } } });
   try {
     await until(() => bytes.includes("Type to message the room") && herdr !== undefined);
-    const target = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "Scrolled-past target" });
-    await until(() => bytes.includes("Scrolled-past target"));
+    const startsWithoutPin = mode === "away-none" || mode === "away-arriving";
+    const target = startsWithoutPin ? null : service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "Scrolled-past target" });
+    if (target) await until(() => bytes.includes("Scrolled-past target"));
+    const expectCompleteHistory = () => {
+      const lines = Array.from({ length: vt.buffer.active.length }, (_, i) => vt.buffer.active.getLine(i)?.translateToString(true) ?? "");
+      for (let i = 0; i < 40; i++) expect(lines.filter(line => new RegExp(`\\bscroll-flow-${i}\\b`).test(line)), `scroll-flow-${i}`).toHaveLength(1);
+    };
     const pinned = () => screen().slice(0, 5).some(line => line.includes("Scrolled-past target"));
     if (scrollBeforePromotion) {
       vt.scrollLines(-1);
@@ -2701,10 +2706,11 @@ test.each(["live", "away", "away-acked", "away-input", "away-disconnect"] as con
       const written = bytes.length;
       const viewed = nativeViewport();
       const viewportY = vt.buffer.active.viewportY;
-      for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `scroll-flow-${i}` });
+      if (mode === "away-arriving") service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "Scrolled-past target" });
+      for (let i = 0; i < 40; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `scroll-flow-${i}` });
       await new Promise(resolve => setTimeout(resolve, 100));
       if (mode === "away-acked") {
-        service.acknowledgeHumanMessage({ room_id: joined.room_id, agent_id: "human:op", event_seq: target.event_seq });
+        service.acknowledgeHumanMessage({ room_id: joined.room_id, agent_id: "human:op", event_seq: target!.event_seq });
         await new Promise(resolve => setTimeout(resolve, 30));
         service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: "Normal output while away" });
         await new Promise(resolve => setTimeout(resolve, 30));
@@ -2721,28 +2727,34 @@ test.each(["live", "away", "away-acked", "away-input", "away-disconnect"] as con
         expect(vt.buffer.active.viewportY).toBe(viewportY);
         vt.scrollToBottom();
         input.write("resume draft");
-        await until(() => bytes.includes("scroll-flow-24") && bytes.includes("resume draft"));
+        await until(() => bytes.includes("scroll-flow-39") && bytes.includes("resume draft"));
+        await flush();
+        expectCompleteHistory();
         expect(pending()).toBe(1);
-        input.write("\u0015/ack all\r");
-        await until(() => pending() === 0);
-        return;
+        if (mode === "away-disconnect") {
+          input.write("\u0015/ack all\r");
+          await until(() => pending() === 0);
+          return;
+        }
       }
       vt.scrollToBottom();
       scroll(0);
-      if (mode === "away-acked") {
-        await until(() => bytes.includes("Normal output while away"));
+      if (mode === "away-acked" || mode === "away-none") {
+        await until(() => bytes.includes(mode === "away-acked" ? "Normal output while away" : "scroll-flow-39"));
         await flush();
         expect(pinned()).toBe(false);
         expect(pending()).toBe(0);
+        expectCompleteHistory();
         return;
       }
-      await until(() => bytes.includes("scroll-flow-24") && pinned());
+      await until(() => bytes.includes("scroll-flow-39") && pinned());
     } else {
-      for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `scroll-flow-${i}` });
-      await until(() => bytes.includes("scroll-flow-24"));
+      for (let i = 0; i < 40; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `scroll-flow-${i}` });
+      await until(() => bytes.includes("scroll-flow-39"));
     }
     await new Promise(resolve => setTimeout(resolve, 30)); await flush();
     expect(pinned()).toBe(true);
+    expectCompleteHistory();
     // Live-bottom snapshot, then a scroll that brings the committed original into view.
     scroll(0);
     const history = Array.from({ length: vt.buffer.active.baseY }, (_, i) => vt.buffer.active.getLine(i)?.translateToString(true) ?? "");
@@ -2754,7 +2766,7 @@ test.each(["live", "away", "away-acked", "away-input", "away-disconnect"] as con
     scroll(0);
     await until(() => !pinned());
     expect(pending()).toBe(1);
-    input.write("/ack all\r");
+    input.write("\u0015/ack all\r");
     await until(() => pending() === 0);
   } finally {
     input.end(); await session; vt.dispose();

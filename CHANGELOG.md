@@ -24,7 +24,7 @@ changes will be called out under **Breaking changes**.
 ### Fixed
 
 - Inline chat in Herdr buffers incoming output while browsing native scrollback, preserving
-  the visible text and scroll position until returning to the bottom.
+  the visible text and scroll position, then appending the complete buffered history on return.
 - Pending operator messages no longer enable terminal-wide mouse capture automatically, which
   blocked native scrollback and text selection. Native Herdr Ctrl-click and `/ack` preserve
   default mouse behavior; plain click acknowledgement requires explicit `tt chat --mouse`.
