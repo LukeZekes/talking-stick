@@ -71,7 +71,7 @@ into each harness keeps them in sync. The footer shows who holds the stick.
 | `/members` | Pick a member to message or remove (removal asks first) |
 | `/roles` | Assign roles, edit their definitions, and set harness defaults |
 | Cmd+V / Ctrl+V, a dragged-in image, or `/attach <file>` | Attach an image; agents get its path and read it |
-| Click a highlighted message or pin | Acknowledge it and clear its highlight; messages pin only after leaving the visible transcript |
+| `/ack` (or click with `--mouse`) | Acknowledge visible highlighted messages; messages pin only after leaving the visible transcript |
 | `/theme tide` | Save the palette: Lantern (warm default), Tide (teal), or Dusk (lavender) |
 | Shift+Enter or Alt+Enter | Insert a newline; the draft wraps as you type |
 | `/who`, `/help` | Members and stick holder; all commands |

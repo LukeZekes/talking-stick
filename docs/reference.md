@@ -575,13 +575,14 @@ it appears as a pin above the composer in inline chat,
 at the top in fullscreen. Pins use the normal message header and content with a slight background, without a
 status preamble. The bounded area shows as many message rows as fit; the complete message remains
 in the transcript. A message appears only once in the live pane: in the transcript while visible, otherwise as a pin.
-Clicking either dismisses it. The optional `/ack`
+With `tt chat --mouse`, clicking either dismisses it. The `/ack`
 command dismisses all visible highlighted messages, `/ack #123`
 dismisses one message, and `/ack all` dismisses all pending messages. Acknowledgement also clears
-the message background. Mouse reporting is enabled while pins are pending, then restored when
-the last pin is dismissed; `--mouse` keeps it on and `--no-mouse` disables it. While reporting is
-on, inline native wheel scrolling is unavailable and selection uses Shift-drag (Option-drag in
-iTerm2).
+the message background. Pending messages never enable mouse capture automatically: default
+inline chat preserves native wheel scrolling and text selection. `--mouse` explicitly enables
+click acknowledgement in either layout; `--no-mouse` disables it and wins over `--mouse`.
+While reporting is on, inline native wheel scrolling is unavailable and selection uses
+Shift-drag (Option-drag in iTerm2).
 
 Acknowledgements are separate from delivery receipts and persist per room and local human
 across chat restarts. Displaying a message or replying does not acknowledge it. Broadcasts,
@@ -598,7 +599,8 @@ scroll the conversation; Ctrl+End or `/bottom` returns to live messages. Scrolli
 earlier saved entries. The live buffer retains up to 2,000 blocks; browsing older history can grow it
 until returning to the bottom. Mouse capture remains opt-in with `--fullscreen --mouse`, which
 enables pointer-based wheel scrolling but may prevent native selection. `--no-mouse` wins over
-`--mouse`. Mouse flags have no effect in the default normal-screen mode. Fullscreen exit restores the
+`--mouse`. In inline mode, `--mouse` enables click acknowledgement and captures native wheel
+and drag input. Fullscreen exit restores the
 previous terminal screen.
 
 `tt chat [path] --history N` initially loads up to N recent conversation entries (default 20, maximum
