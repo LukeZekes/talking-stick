@@ -13,6 +13,9 @@ changes will be called out under **Breaking changes**.
 
 - Human-directed messages appear once in the live pane: highlighted in the transcript while visible, pinned only after scrolling out. Room-wide questions get one status responder instead of duplicate answers from every agent.
 - Clicking a human-directed message now works on both its pin and its highlighted live transcript copy, including wrapped rows and after resize.
+- `tt chat`: the composer wraps whole words. A word that would cross the edge moves to the next row
+  and the draft reflows as you type or delete; a word wider than the row still breaks by character.
+  (#153)
 
 - `/theme` now saves the palette per human across restarts. Startup precedence is `--theme`, `TT_THEME`, saved choice, then Lantern.
 - Explicit human-message acknowledgement: pending messages above the inline composer or at the top in fullscreen, click-to-dismiss with automatic mouse reporting, and optional `/ack` commands. Bare `/ack` dismisses every visible pin and clears its highlight. Acknowledgements persist across restarts, separate from delivery receipts; old messages before activation do not become pins. (#146)

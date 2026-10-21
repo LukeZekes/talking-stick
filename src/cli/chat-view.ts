@@ -587,9 +587,21 @@ function composerGeometry(draft: ChatDraft, width: number, highlight?: DraftHigh
     activeStyle = "";
   };
 
-  for (const { segment } of graphemes.segment(draft.line)) {
-    const isBreak = segment === "\n" || segment === "\r\n";
+  const segments = [...graphemes.segment(draft.line)].map(({ segment }) => segment);
+  const isBreakSegment = (segment: string) => segment === "\n" || segment === "\r\n";
+  const isSpace = (segment: string) => segment === " " || segment === "\t";
+  for (const [index, segment] of segments.entries()) {
+    const isBreak = isBreakSegment(segment);
     const cellWidth = isBreak ? 0 : graphemeWidth(segment);
+    // Word wrap: a word that would cross the edge moves whole to the next row
+    // when it fits there; a word wider than a row still breaks by character.
+    if (!isBreak && !isSpace(segment) && index > 0 && isSpace(segments[index - 1]) && rowWidth > indent.length) {
+      let wordWidth = 0;
+      for (let next = index; next < segments.length && !isSpace(segments[next]) && !isBreakSegment(segments[next]); next++) {
+        wordWidth += graphemeWidth(segments[next]);
+      }
+      if (rowWidth + wordWidth > usable && indent.length + wordWidth <= usable) newRow();
+    }
     if (!isBreak && rowWidth + cellWidth > usable) {
       newRow();
     }
