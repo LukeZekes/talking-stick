@@ -1,4 +1,6 @@
 import stringWidth from "string-width";
+import { draftStyleSpans, type DraftHighlightOptions } from "./chat-draft-highlight.js";
+import { agentStyle, paintStyle, themeStyle, type ChatColorMode } from "./theme.js";
 import type { RoomEvent } from "../types.js";
 import {
   formatChatEvent,
@@ -61,9 +63,9 @@ export const CHAT_COMMANDS: ChatCommandInfo[] = [
 
 // Help is intentionally compact; detailed keyboard controls have their own
 // view so the command list remains readable at ordinary terminal heights.
-export function formatChatHelp(width: number, color: boolean, keys = false, inline = false): string {
+export function formatChatHelp(width: number, color: boolean, keys = false, inline = false, mode: ChatColorMode = "256"): string {
   const usable = Math.max(12, width);
-  const accent = (text: string) => color ? `\u001b[1;38;5;147m${text}\u001b[0m` : text;
+  const accent = (text: string) => paintStyle(color, `1;${themeStyle("accent", mode)}`, text);
   const muted = (text: string) => color ? `\u001b[2m${text}\u001b[0m` : text;
   const entries: [string, string][] = keys ? [
     ["Enter", "Send; in /go, open the selected room"],
@@ -543,21 +545,25 @@ export interface ComposerLayout {
 
 interface ComposerStop { offset: number; row: number; col: number }
 
-function composerGeometry(draft: ChatDraft, width: number): ComposerLayout & { stops: ComposerStop[] } {
+function composerGeometry(draft: ChatDraft, width: number, highlight?: DraftHighlightOptions): ComposerLayout & { stops: ComposerStop[] } {
   const usable = Math.max(CHAT_PROMPT.length + 2, width);
   const indent = " ".repeat(CHAT_PROMPT.length);
   const rows: string[] = [];
   const stops: ComposerStop[] = [];
-  let row = CHAT_PROMPT;
+  const spans = highlight ? draftStyleSpans(draft.line, highlight) : [];
+  let row = highlight ? paintStyle(true, `1;${themeStyle("accent", highlight.color_mode)}`, CHAT_PROMPT) : CHAT_PROMPT;
+  let activeStyle = "";
   let rowWidth = CHAT_PROMPT.length;
   let cursorRow = -1;
   let cursorCol = 0;
   let offset = 0;
 
   const newRow = () => {
+    if (activeStyle) row += "\u001b[0m";
     rows.push(row);
     row = indent;
     rowWidth = indent.length;
+    activeStyle = "";
   };
 
   for (const { segment } of graphemes.segment(draft.line)) {
@@ -574,6 +580,12 @@ function composerGeometry(draft: ChatDraft, width: number): ComposerLayout & { s
     if (isBreak) {
       newRow();
     } else {
+      const style = spans.find(span => offset >= span.start && offset < span.end)?.style ?? "";
+      if (style !== activeStyle) {
+        if (activeStyle) row += "\u001b[0m";
+        if (style) row += `\u001b[${style}m`;
+        activeStyle = style;
+      }
       row += segment;
       rowWidth += cellWidth;
     }
@@ -586,6 +598,7 @@ function composerGeometry(draft: ChatDraft, width: number): ComposerLayout & { s
     cursorRow = rows.length;
     cursorCol = rowWidth;
   }
+  if (activeStyle) row += "\u001b[0m";
   rows.push(row);
   return { rows, cursor_row: cursorRow, cursor_col: cursorCol, stops };
 }
@@ -601,8 +614,8 @@ export function moveChatCursorVertical(draft: ChatDraft, width: number, directio
   return { draft: { line: draft.line, cursor: closest?.offset ?? draft.cursor }, column };
 }
 
-export function layoutComposer(draft: ChatDraft, width: number, maxRows = MAX_COMPOSER_ROWS): ComposerLayout {
-  const { rows, cursor_row: cursorRow, cursor_col: cursorCol } = composerGeometry(draft, width);
+export function layoutComposer(draft: ChatDraft, width: number, maxRows = MAX_COMPOSER_ROWS, highlight?: DraftHighlightOptions): ComposerLayout {
+  const { rows, cursor_row: cursorRow, cursor_col: cursorCol } = composerGeometry(draft, width, highlight);
   if (rows.length <= maxRows) {
     return { rows, cursor_row: cursorRow, cursor_col: cursorCol };
   }
@@ -781,6 +794,45 @@ export interface ChatScreenInput {
   rows: number;
 }
 
+function draftHighlight(input: ChatScreenInput): DraftHighlightOptions | undefined {
+  if (!input.format.color) return undefined;
+  const members = input.status.members.filter(member => member.agent_id !== input.format.self_agent_id && member.process_liveness !== "gone");
+  const aliases = members.flatMap(member => [member.agent_id, member.display_name ?? "", input.format.name_of(member.agent_id), member.agent_id.split(":")[0]]
+    .filter(Boolean).map(name => ({ name: name.toLowerCase(), id: member.agent_id })));
+  return {
+    commands: [...CHAT_COMMANDS.map(command => command.name), "exit", "q", "dm", "msg", "all", "room", "int"],
+    color_mode: input.format.color_mode,
+    mention: selector => {
+      if (selector === "everyone" || selector === "all") return { state: "resolved" };
+      const exact = aliases.find(alias => alias.name === selector);
+      if (exact) return { state: "resolved", id: exact.id };
+      return { state: aliases.some(alias => alias.name.startsWith(selector)) || !selector ? "partial" : "unknown" };
+    }
+  };
+}
+
+function completionRow(input: ChatScreenInput, entry: ChatCompletion, active: boolean, width: number, highlight: DraftHighlightOptions | undefined): string {
+  if (!input.format.color) return truncateStyled(`${active ? "›" : " "} ${entry.label}  ${entry.description}`, width);
+  const mode = input.format.color_mode;
+  const selector = entry.label.replace(/^!?@/, "");
+  const resolution = highlight!.mention(selector.toLowerCase());
+  const labelStyle = entry.label.startsWith("/") ? themeStyle("command", mode)
+    : entry.label.startsWith("#") ? themeStyle("path", mode)
+    : resolution.id ? agentStyle(resolution.id, mode) : themeStyle("mention", mode);
+  const typed = /\S*$/.exec(input.draft.line.slice(0, input.draft.cursor))?.[0] ?? "";
+  const prefix = entry.label.startsWith("#") ? `#${typed.replace(/^#/, "")}` : typed;
+  const matchLength = prefix && entry.label.toLowerCase().startsWith(prefix.toLowerCase()) ? prefix.length : 0;
+  const label = paintStyle(true, `1;${labelStyle}`, entry.label.slice(0, matchLength)) +
+    paintStyle(true, labelStyle, entry.label.slice(matchLength));
+  const marker = paintStyle(true, `1;${themeStyle("accent", mode)}`, active ? "›" : " ");
+  let row = truncateStyled(`${marker} ${label}  ${paintStyle(true, themeStyle("muted", mode), entry.description)}`, width);
+  if (active) {
+    const selection = `\u001b[${themeStyle("selection", mode, true)};${themeStyle("selectionText", mode)}m`;
+    row = selection + row.replace(/\u001b\[0m/g, `\u001b[0m${selection}`) + " ".repeat(Math.max(0, width - textWidth(row))) + "\u001b[0m";
+  }
+  return row;
+}
+
 export interface ChatMemberHit { agent_id: string; row: number; start: number; end: number }
 
 export interface ChatFrame {
@@ -810,7 +862,8 @@ export function renderInlinePanel(input: ChatScreenInput): ChatFrame {
   const menuCapacity = panel ? Math.min(panel.length, Math.max(0, height - 4)) : Math.min(MAX_MENU_ROWS, Math.max(0, height - 4));
   const topRows = menuCapacity + 1;
   const composerCapacity = Math.max(1, Math.min(MAX_COMPOSER_ROWS, height - topRows - 2));
-  const composer = layoutComposer(input.draft, width, composerCapacity);
+  const highlight = draftHighlight(input);
+  const composer = layoutComposer(input.draft, width, composerCapacity, highlight);
   const selected = Math.max(0, Math.min(input.completion_index ?? 0, matches.length - 1));
   const first = Math.max(0, selected - menuCapacity + 1);
   const visible = matches.slice(first, first + menuCapacity);
@@ -821,7 +874,7 @@ export function renderInlinePanel(input: ChatScreenInput): ChatFrame {
     const entry = matches[index];
     if (!entry) return "";
     const active = index === selected;
-    return truncateStyled(`${active ? "›" : " "} ${entry.label}  ${dim(input.format, entry.description)}`, width);
+    return completionRow(input, entry, active, width, highlight);
   });
   const rule = dim(input.format, "─".repeat(width));
   const title = input.room_path ? roomTitle(input, Math.max(1, width - 4)) : "";
@@ -906,6 +959,7 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
   const width = Math.max(1, input.columns - 1);
   const height = Math.max(1, input.rows);
   const context = input.format;
+  const highlight = draftHighlight(input);
 
   if (width < 4 || height < 4) {
     return {
@@ -918,7 +972,8 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
   const composer = layoutComposer(
     input.draft,
     width,
-    Math.min(MAX_COMPOSER_ROWS, height - 3 - roomHeaderRows(input))
+    Math.min(MAX_COMPOSER_ROWS, height - 3 - roomHeaderRows(input)),
+    highlight
   );
   const transcriptHeight = chatTranscriptHeight(input);
   const menuCapacity = Math.min(MAX_MENU_ROWS, Math.max(0, transcriptHeight - (transcriptHeight > 1 ? 1 : 0)));
@@ -929,8 +984,7 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
     ? input.panel.slice(-Math.max(1, transcriptHeight - 1)).map((line) => truncateStyled(line, width))
     : completions.slice(first, first + menuCapacity).map((entry, index) => {
       const active = first + index === selected;
-      const label = active && context.color ? `\u001b[1m${entry.label}\u001b[0m` : entry.label;
-      return truncateStyled(`${active ? "›" : " "} ${label}  ${dim(context, entry.description)}`, width);
+      return completionRow(input, entry, active, width, highlight);
     });
 
   const rule = dim(context, "─".repeat(width));
@@ -975,7 +1029,7 @@ function renderFooter(input: ChatScreenInput, width: number, onMember?: (agent_i
       transcript.unread > 0
         ? `↓ ${transcript.unread} new · ctrl+end`
         : "scrolled · ctrl+end";
-    suffix = context.color ? `\u001b[1;33m${label}\u001b[0m` : label;
+    suffix = paintStyle(context.color, `1;${themeStyle("warn", context.color_mode)}`, label);
   } else if ((input.completions?.length ?? 0) > 0) {
     suffix = dim(context, /^\/go(?:\s|$)/i.test(input.draft.line)
       ? "↑↓ choose · Enter open · Tab fill"

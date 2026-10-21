@@ -7,6 +7,7 @@ import { planChatInterrupts } from "./chat-interrupt.js";
 import { interruptCodexThread } from "./codex-interrupt.js";
 import { interruptCodexHerdr } from "./codex-herdr-interrupt.js";
 import { ChatImages } from "./chat-images.js";
+import { paintStyle, terminalColorMode, themeStyle } from "./theme.js";
 import { ChatInputController, type ChatModalKey } from "./chat-input.js";
 import { createRolesEditor, renderRolesEditor, rolesEditorKey, rolesEditorDraft, rolesEditorDirty, refreshRolesEditor, type RolesEditorState } from "./roles-editor.js";
 import { applyRoleChanges, liveAgents, parseRoleList, parseRoleSubject, roomRoleBlock } from "./role-commands.js";
@@ -668,8 +669,8 @@ export async function runChatSession(
   const deliveryIcon = (event: RoomEvent, agent: string) => {
     const state = deliveryStates.get(event.event_seq)?.get(agent);
     if (!state || !terminal) return undefined;
-    if (state === "delivered") return options.color ? "\u001b[32m✓\u001b[0m" : "✓";
-    if (state === "unreachable") return options.color ? "\u001b[31m!\u001b[0m" : "!";
+    if (state === "delivered") return paintStyle(options.color, themeStyle("ok", terminalColorMode()), "✓");
+    if (state === "unreachable") return paintStyle(options.color, themeStyle("error", terminalColorMode()), "!");
     return options.color ? "\u001b[2m…\u001b[0m" : "…";
   };
   // Events whose header shows delivery icons, kept so a receipt can repaint it.
@@ -683,6 +684,7 @@ export async function runChatSession(
     self_agent_id: selfId,
     name_of: nameOf,
     color: options.color,
+    color_mode: terminalColorMode(),
     show_turn_events: showTurnEvents,
     now: new Date(),
     history_before: historyBefore,
@@ -1013,6 +1015,7 @@ export async function runChatSession(
         self_agent_id: selfId,
         name_of: nameOf,
         color: options.color,
+        color_mode: terminalColorMode(),
         show_turn_events: showTurnEvents
       },
       agentId
@@ -1237,7 +1240,7 @@ export async function runChatSession(
         print(`Stick events ${showTurnEvents ? "shown" : "hidden"}.`);
         return;
       case "help":
-        print(formatChatHelp(dimensions().columns - 1, options.color, args.trim() === "keys", inline));
+        print(formatChatHelp(dimensions().columns - 1, options.color, args.trim() === "keys", inline, terminalColorMode()));
         return;
       default:
         print(`! Unknown command /${name}. Try /help.`);
