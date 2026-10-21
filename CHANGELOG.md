@@ -37,8 +37,6 @@ Full notes: [`docs/releases/0.29.0.md`](docs/releases/0.29.0.md).
   a row still break by character. Cursor motion and highlighting use the same geometry. (#153)
 - `/members` uses agent and selection colors. Every menu has a blank separator from the chat,
   and command results have a shared info/done/error gutter distinct from messages. (#145, #151)
-- Room-wide questions have one status responder: the agent that last held or released the
-  stick. Other agents answer only to add or correct information (repository coordination rule).
 
 ### Fixed
 
