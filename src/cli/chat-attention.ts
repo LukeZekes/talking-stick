@@ -36,3 +36,19 @@ export function renderAttention(attention: HumanAttention | undefined, width: nu
   if (maximum > 1 && lines.length) lines.push("");
   return { lines, hits };
 }
+
+/** Only promote messages whose original is outside the visible transcript.
+ * Adding pins can push another original out; grow the set until layout settles.
+ */
+export function resolveAttentionFrame<T>(attention: HumanAttention | undefined,
+  render: (pins: HumanAttention | undefined) => { frame: T; visible: Iterable<number> }): T {
+  if (!attention?.messages.length) return render(attention).frame;
+  const pinned = new Set<number>();
+  for (;;) {
+    const result = render({ ...attention, messages: attention.messages.filter(event => pinned.has(event.event_seq)) });
+    const visible = new Set(result.visible);
+    const missing = attention.messages.filter(event => !visible.has(event.event_seq) && !pinned.has(event.event_seq));
+    if (!missing.length) return result.frame;
+    for (const event of missing) pinned.add(event.event_seq);
+  }
+}

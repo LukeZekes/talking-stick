@@ -1,6 +1,6 @@
 import { isHumanAttentionMessage } from "../human-attention.js";
 import { formatChatNotice, type ChatNoticeKind } from "./chat-notice.js";
-import { renderAttention, type HumanAttention } from "./chat-attention.js";
+import { resolveAttentionFrame, renderAttention, type HumanAttention } from "./chat-attention.js";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -763,14 +763,19 @@ export async function runChatSession(
   const drawComposer = () => {
     if (!inline || closed || externalEditorActive) return;
     const draft = editor?.draft ?? { line: "", cursor: 0 };
-    const frame = renderInlinePanel({
-      room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), attention, transcript, format: formatContext(),
-      status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
-        interrupt_statuses: interruptStatuses() },
-      draft, hint: currentHint(),
-      completions: editor?.completionVisible ? completionsFor(draft) : [],
-      completion_index: editor?.completionIndex ?? 0,
-      ...dimensions()
+    const frame = resolveAttentionFrame(attention, pins => {
+      const frame = renderInlinePanel({
+        room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), attention: pins, transcript, format: formatContext(),
+        status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
+          interrupt_statuses: interruptStatuses() },
+        draft, hint: currentHint(),
+        completions: editor?.completionVisible ? completionsFor(draft) : [],
+        completion_index: editor?.completionIndex ?? 0,
+        ...dimensions()
+      });
+      const floor = Math.max(inlineVisibleFloor,
+        inlineOutputRows + Math.max(inlinePanelRows, frame.lines.length) - dimensions().rows);
+      return { frame, visible: [...inlineHumanRows].filter(([row]) => row >= floor && row < inlineOutputRows).map(([, seq]) => seq) };
     });
     // A modal may scroll the normal screen as it grows. Keep its bottom
     // anchored when it shrinks; subsequent transcript output reclaims the gap.
@@ -786,11 +791,12 @@ export async function runChatSession(
     eraseComposer();
     output.write(frame.lines.join("\r\n"));
     inlineFrame = frame;
-    visibleAttention = new Set(frame.attention?.map(hit => hit.event_seq));
+    visibleAttention = new Set([...(frame.attention ?? []), ...(frame.human_messages ?? [])].map(hit => hit.event_seq));
     inlineFrameColumns = dimensions();
     inlineVisibleFloor = Math.max(inlineVisibleFloor, inlineOutputRows + frame.lines.length - dimensions().rows);
     for (const [seq, row] of inlineReceiptRows) if (row < inlineVisibleFloor) inlineReceiptRows.delete(seq);
     for (const row of inlineHumanRows.keys()) if (row < inlineVisibleFloor) inlineHumanRows.delete(row);
+    for (const seq of inlineHumanRows.values()) visibleAttention.add(seq);
     const up = frame.lines.length - 1 - frame.cursor.row;
     output.write(`\r${up > 0 ? `\u001b[${up}A` : ""}${frame.cursor.col > 0 ? `\u001b[${frame.cursor.col}C` : ""}\u001b[?2026l`);
     syncMouse();
@@ -834,7 +840,7 @@ export async function runChatSession(
           completion_index: editor?.completionIndex ?? 0,
           ...dimensions()
         });
-        visibleAttention = new Set(frame.attention?.map(hit => hit.event_seq));
+        visibleAttention = new Set([...(frame.attention ?? []), ...(frame.human_messages ?? [])].map(hit => hit.event_seq));
         output.write(diffChatFrame(previousFrame, frame));
         previousFrame = frame;
       } catch (error) {
@@ -947,11 +953,15 @@ export async function runChatSession(
       inlinePanelRows = 0;
       editor?.resize(dimensions().columns - 1);
       const draft = editor?.draft ?? { line: "", cursor: 0 };
-      const panel = renderInlinePanel({ room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), attention, transcript, format: formatContext(),
+      const panel = resolveAttentionFrame(attention, pins => {
+        const frame = renderInlinePanel({ room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), attention: pins, transcript, format: formatContext(),
         status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
           interrupt_statuses: interruptStatuses() },
         draft, hint: currentHint(), completions: editor?.completionVisible ? completionsFor(draft) : [],
         completion_index: editor?.completionIndex ?? 0, ...dimensions() });
+        const height = Math.max(0, dimensions().rows - frame.lines.length);
+        return { frame, visible: transcript.humanMessageRows(height, Math.max(1, dimensions().columns - 1), formatContext()).map(hit => hit.event_seq) };
+      });
       const tailHeight = Math.max(0, dimensions().rows - panel.lines.length);
       const tail = transcript.viewport(tailHeight, Math.max(1, dimensions().columns - 1), formatContext());
       output.write("\u001b[?2026h\u001b[H\u001b[J");
@@ -1425,13 +1435,13 @@ export async function runChatSession(
       event.to_agent_id === selfId &&
       event.from_agent_id !== selfId;
     const headerRow = inlineOutputRows;
-    if (inline) writeInline(forMe ? `${line}\u0007` : line);
-    else print(forMe && terminal ? `${line}\u0007` : line);
-    if (inline && deliveryStates.has(event.event_seq)) inlineReceiptRows.set(event.event_seq, headerRow);
     if (inline && isHumanAttentionMessage(event, selfId) && !humanAcknowledged.has(event.event_seq)) {
       const rows = line.split(/\r?\n/).flatMap(text => wrapStyledLine(text, Math.max(1, dimensions().columns - 1)));
       for (let offset = 0; offset < rows.length; offset++) inlineHumanRows.set(headerRow + offset, event.event_seq);
     }
+    if (inline) writeInline(forMe ? `${line}\u0007` : line);
+    else print(forMe && terminal ? `${line}\u0007` : line);
+    if (inline && deliveryStates.has(event.event_seq)) inlineReceiptRows.set(event.event_seq, headerRow);
     lastPrinted = isMessage ? "message" : "system";
   };
 

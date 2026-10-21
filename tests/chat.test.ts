@@ -2425,7 +2425,7 @@ test.each([true, false])("human pins stay visible and click acknowledges only th
   let bytes = "";
   output.on("data", chunk => { bytes += chunk.toString(); vt.write(chunk.toString()); });
   const flush = () => new Promise<void>(resolve => vt.write("\u001b[0m", resolve));
-  const screen = () => Array.from({ length: 28 }, (_, i) => vt.buffer.active.getLine(vt.buffer.active.baseY + i)?.translateToString(true) ?? "");
+  const screen = () => Array.from({ length: output.rows }, (_, i) => vt.buffer.active.getLine(vt.buffer.active.baseY + i)?.translateToString(true) ?? "");
   const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
     identity: observerIdentity(), context_path: root, input, output, terminal: true, inline,
     color: true, history: 0, show_turn_events: false, poll_ms: 5 });
@@ -2436,13 +2436,14 @@ test.each([true, false])("human pins stay visible and click acknowledges only th
     await until(() => bytes.includes("\u001b[?1000h"));
     await new Promise(resolve => setTimeout(resolve, 30)); await flush();
     const matches = screen().map((line, index) => line.includes("first pinned request") ? index : -1).filter(index => index >= 0);
-    const y = inline ? matches.at(-1)! : matches[0];
-    expect(y).toBeGreaterThanOrEqual(0);
+    expect(matches).toHaveLength(1);
     const composerRow = screen().findIndex(line => line.startsWith("> "));
     for (let i = 0; i < 12; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `scroll-pin-${i}` });
     await until(() => bytes.includes("scroll-pin-11"));
     await new Promise(resolve => setTimeout(resolve, 30)); await flush();
-    expect(screen()[y]).toContain("first pinned request");
+    const promoted = screen().map((line, index) => line.includes("first pinned request") ? index : -1).filter(index => index >= 0);
+    expect(promoted).toHaveLength(1);
+    const y = promoted[0];
     expect(screen().findIndex(line => line.startsWith("> "))).toBe(composerRow);
     input.write(`\u001b[<0;5;${y + 1}M`);
     await until(() => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total === 1);
@@ -2535,18 +2536,14 @@ test.each([true, false])("bare /ack dismisses all visible pins and clears the fi
     expect(bytes).toContain("\u001b[?1000h"); // Clicks work without --mouse.
     expect(backgroundDefault()).toBe(false);
     input.write("/ack\r");
-    await until(() => pending().total === 2); // The bounded panel showed three pins.
-    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
-    expect(backgroundDefault()).toBe(false); // Last message is still pending.
-    input.write("/ack\r");
-    await until(() => pending().total === 0);
+    await until(() => pending().total === 0); // All five originals are visible once, without duplicate pins.
     await new Promise(resolve => setTimeout(resolve, 30)); await flush();
     expect(backgroundDefault()).toBe(true);
     expect(bytes).toContain("\u001b[?1000l");
   } finally { input.end(); await session; vt.dispose(); }
 });
 
-test.each([[true, false, true], [false, false, true], [true, true, true], [false, true, true], [true, false, false], [true, true, false]])("clicking either highlighted copy works after layout changes (inline=%s, reflow=%s, cursorReply=%s)", async (inline, reflow, cursorReply) => {
+test.each([[true, false, true], [false, false, true], [true, true, true], [false, true, true], [true, false, false], [true, true, false]])("one visible highlighted copy remains clickable after layout changes (inline=%s, reflow=%s, cursorReply=%s)", async (inline, reflow, cursorReply) => {
   const { root, service } = setupService();
   const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
   const input = Object.assign(new PassThrough(), { setRawMode() {} });
@@ -2575,9 +2572,16 @@ test.each([[true, false, true], [false, false, true], [true, true, true], [false
       await new Promise(resolve => setTimeout(resolve, 30)); await flush();
     }
     const target = reflow ? "界" : "click either copy";
+    expect(screen().filter(line => line.includes(target))).toHaveLength(1);
+    for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `promotion-${i}` });
+    await until(() => bytes.includes("promotion-24"));
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    expect(screen().filter(line => line.includes("click either copy"))).toHaveLength(1);
+    vt.resize(100, 100); output.columns = 100; output.rows = 100; output.emit("resize");
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
     const copies = screen().map((line, index) => line.includes(target) ? index : -1).filter(index => index >= 0);
-    expect(copies).toHaveLength(2);
-    const y = inline ? copies[0] : copies[1]; // The normal transcript, outside the pin.
+    expect(copies).toHaveLength(1);
+    const y = copies[0];
     input.write(`\u001b[<0;5;${y + 1}M`);
     await until(() => pending() === 0);
     if (reflow) { await flush(); expect(screen().join("\n")).toContain("draft second"); }

@@ -17,6 +17,10 @@ Use Node `>=22`, as declared in `package.json`. For quick manual verification, r
 
 This repo uses strict TypeScript with ESM (`"type": "module"` and `moduleResolution: "NodeNext"`). Match the existing style: 2-space indentation, double quotes, semicolons, and explicit `.js` extensions in local imports from TypeScript files. Keep files focused and name them by responsibility, for example `path-resolution.ts` or `session-store.ts`. Prefer small helpers over deeply nested logic, and keep exported types near the modules that own them.
 
+## Room Replies
+
+- On a room-wide question, only the agent that last held or released the stick answers. Other agents reply only to add or correct information.
+
 ## Chat UI Rules
 
 - Every menu and completion list must have a blank terminal row separating it from the chat stream. Keep the separator in the shared layout, including on narrow terminals.

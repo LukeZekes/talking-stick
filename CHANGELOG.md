@@ -11,6 +11,7 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+- Human-directed messages appear once in the live pane: highlighted in the transcript while visible, pinned only after scrolling out. Room-wide questions get one status responder instead of duplicate answers from every agent.
 - Clicking a human-directed message now works on both its pin and its highlighted live transcript copy, including wrapped rows and after resize.
 
 - `/theme` now saves the palette per human across restarts. Startup precedence is `--theme`, `TT_THEME`, saved choice, then Lantern.

@@ -1,5 +1,5 @@
 import { isHumanAttentionMessage } from "../human-attention.js";
-import { renderAttention, type HumanAttention, type AttentionHit } from "./chat-attention.js";
+import { resolveAttentionFrame, renderAttention, type HumanAttention, type AttentionHit } from "./chat-attention.js";
 import stringWidth from "string-width";
 import { draftStyleSpans, type DraftHighlightOptions } from "./chat-draft-highlight.js";
 import { agentStyle, paintStyle, themeStyle, type ChatColorMode } from "./theme.js";
@@ -988,6 +988,13 @@ function roomHeader(path: string, width: number, context: ChatFormatContext): st
 // over its last rows), rule, composer, rule, status. Every row stays one cell short of the terminal
 // width so the terminal never auto-wraps a full row.
 export function renderChatScreen(input: ChatScreenInput): ChatFrame {
+  return resolveAttentionFrame(input.attention, attention => {
+    const frame = renderChatScreenFrame({ ...input, attention });
+    return { frame, visible: (frame.human_messages ?? []).map(hit => hit.event_seq) };
+  });
+}
+
+function renderChatScreenFrame(input: ChatScreenInput): ChatFrame {
   const width = Math.max(1, input.columns - 1);
   const height = Math.max(1, input.rows);
   const context = input.format;

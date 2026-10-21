@@ -570,11 +570,13 @@ Member choices use their agent colors; command results use a separate `│` gutt
 info, done, or error styling rather than an authored-message layout.
 
 Messages explicitly addressed to your human identity have a subtle background. New messages
-from other senders stay pinned until you acknowledge them: above the composer in inline chat,
+from other senders keep a faint highlight until acknowledged. Once an original leaves the visible transcript,
+it appears as a pin above the composer in inline chat,
 at the top in fullscreen. Pins use the normal message header and content with a slight background, without a
 status preamble. The bounded area shows as many message rows as fit; the complete message remains
-in the transcript. Clicking a pin or its highlighted copy in the live transcript dismisses it. The optional `/ack`
-command dismisses all visible pins, `/ack #123`
+in the transcript. A message appears only once in the live pane: in the transcript while visible, otherwise as a pin.
+Clicking either dismisses it. The optional `/ack`
+command dismisses all visible highlighted messages, `/ack #123`
 dismisses one message, and `/ack all` dismisses all pending messages. Acknowledgement also clears
 the message background. Mouse reporting is enabled while pins are pending, then restored when
 the last pin is dismissed; `--mouse` keeps it on and `--no-mouse` disables it. While reporting is
