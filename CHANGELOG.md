@@ -23,6 +23,8 @@ changes will be called out under **Breaking changes**.
 
 ### Fixed
 
+- Earlier pinned messages share a continuous drawer background, including spacing, with one
+  subtle “Earlier” label. Authored messages keep their normal formatting.
 - Inline chat in Herdr buffers incoming output while browsing native scrollback, preserving
   the visible text and scroll position, then appending the complete buffered history on return.
 - Pending operator messages no longer enable terminal-wide mouse capture automatically, which

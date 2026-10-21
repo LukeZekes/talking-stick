@@ -574,7 +574,8 @@ their original position while visible. Only after newer output pushes them above
 transcript do they pin at the top. The composer stays at the bottom in both layouts. Pins
 retain the normal header and content, without a status preamble. Messages shown in the pinned
 area are omitted from the live transcript so there is only one visible copy; the complete
-original remains in saved history.
+original remains in saved history. The drawer uses one continuous background and a muted
+“Earlier” label to distinguish it from the live timeline.
 
 In fullscreen mode, manually scrolling through a pending message suppresses its pin for this
 chat session, without recording an acknowledgement. Pins are hidden while browsing history.
