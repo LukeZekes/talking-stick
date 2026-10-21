@@ -52,7 +52,7 @@ export function herdrPluginManifest(argv: readonly string[]): string {
 export function readHerdrPluginState(runner: HerdrRunner): HerdrPluginState {
   let plugins: unknown[];
   try {
-    const result = runHerdrJson(runner, ["plugin", "list", "--json"]);
+    const result = runHerdrJson(runner, ["plugin", "list", "--json"], { timeoutMs: 2_000 });
     plugins = Array.isArray(result.plugins) ? result.plugins : [];
   } catch {
     return "unavailable";

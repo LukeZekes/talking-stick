@@ -569,20 +569,22 @@ Menus and completion lists have a blank row separating them from the transcript.
 Member choices use their agent colors; command results use a separate `│` gutter with
 info, done, or error styling rather than an authored-message layout.
 
-Messages explicitly addressed to your human identity have a subtle background. New messages
-from other senders keep a faint highlight until acknowledged. Once an original leaves the visible transcript,
-it appears as a pin above the composer in inline chat,
-at the top in fullscreen. Pins use the normal message header and content with a slight background, without a
-status preamble. The bounded area shows as many message rows as fit; the complete message remains
-in the transcript. A message appears only once in the live pane: in the transcript while visible, otherwise as a pin.
-With `tt chat --mouse`, clicking either dismisses it. The `/ack`
-command dismisses all visible highlighted messages, `/ack #123`
-dismisses one message, and `/ack all` dismisses all pending messages. Acknowledgement also clears
-the message background. Pending messages never enable mouse capture automatically: default
-inline chat preserves native wheel scrolling and text selection. `--mouse` explicitly enables
-click acknowledgement in either layout; `--no-mouse` disables it and wins over `--mouse`.
-While reporting is on, inline native wheel scrolling is unavailable and selection uses
-Shift-drag (Option-drag in iTerm2).
+Messages explicitly addressed to your human identity have a subtle background and stay pinned
+at the top of the pane until acknowledged. The transcript scrolls underneath and the composer
+stays at the bottom, in both layouts. Pins retain the normal header and content, without a
+status preamble. Messages shown in the pinned area are omitted from the live transcript so
+there is only one visible copy; the complete original remains in saved history.
+
+In Herdr, run `tt install herdr` once and restart chat, then **Ctrl-click** a pin to dismiss it.
+The native link handler reaches only the live console in the clicked pane; expired links do
+nothing. This path never enables terminal mouse capture, so default inline scrolling and
+selection keep working. Outside Herdr, or without its plugin, use `/ack`.
+
+`/ack` dismisses all visible highlighted messages, `/ack #123` dismisses one, and `/ack all`
+dismisses every pending message. Acknowledgement clears the pin and its highlight. Explicit
+`--mouse` remains available for plain click acknowledgement; it captures wheel and drag input
+as well, so inline selection uses Shift-drag (Option-drag in iTerm2). `--no-mouse` wins over
+`--mouse` and does not disable Herdr's native Ctrl-click path.
 
 Acknowledgements are separate from delivery receipts and persist per room and local human
 across chat restarts. Displaying a message or replying does not acknowledge it. Broadcasts,

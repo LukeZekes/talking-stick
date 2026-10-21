@@ -2590,3 +2590,64 @@ test.each([[true, false, true], [false, false, true], [true, true, true], [false
     if (reflow) { await flush(); expect(screen().join("\n")).toContain("draft second"); }
   } finally { input.end(); await session; vt.dispose(); }
 });
+
+test.each([true, false])("native Ctrl-click dismisses top pins without capturing scrolling or selection (inline=%s)", async inline => {
+  const { sendChatLinkClick } = await import("../src/cli/chat-links.js");
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
+  const input = Object.assign(new PassThrough(), { setRawMode() {} });
+  const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+  const vt = new Terminal({ cols: 100, rows: 28, allowProposedApi: true });
+  vt.onData(data => input.write(data));
+  let bytes = "";
+  output.on("data", chunk => { bytes += chunk.toString(); vt.write(chunk.toString()); });
+  const flush = () => new Promise<void>(resolve => vt.write("\u001b[0m", resolve));
+  const screen = () => Array.from({ length: 28 }, (_, i) => vt.buffer.active.getLine(vt.buffer.active.baseY + i)?.translateToString(true) ?? "");
+  const pending = () => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total;
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline,
+    color: true, history: 0, show_turn_events: false, poll_ms: 5,
+    herdr: { pane_id: "w1:p42", runner: () => JSON.stringify({ id: "test", result: { type: "plugin_list", plugins: [{ plugin_id: "talking-stick.chat", enabled: true }] } }) } });
+  let url = "";
+  try {
+    await until(() => bytes.includes("Type to message the room"));
+    service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "Native acknowledgement target" });
+    await until(() => bytes.includes("https://talking-stick.invalid/ack/"));
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    url = /\u001b\]8;;(https:\/\/talking-stick\.invalid\/ack\/[a-f0-9]{32}\/[1-9][0-9]*)\u001b\\/.exec(bytes)![1];
+    const pinRow = screen().findIndex(line => line.includes("Native acknowledgement target"));
+    expect(pinRow).toBeLessThan(5);
+    expect(screen().filter(line => line.includes("Native acknowledgement target"))).toHaveLength(1);
+    expect(await sendChatLinkClick({ url, paneId: "w1:another-pane" })).toBe("ignored");
+    expect(pending()).toBe(1);
+    input.write("draft stays put");
+    for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `native-flow-${i}` });
+    await until(() => bytes.includes("native-flow-24"));
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    expect(screen()[pinRow]).toContain("Native acknowledgement target");
+    expect(screen().join("\n")).toContain("draft stays put");
+    expect(vt.modes.mouseTrackingMode).toBe("none");
+    expect(bytes).not.toContain("\u001b[?1000h");
+    if (inline) {
+      expect(vt.buffer.active.type).toBe("normal");
+      const history = Array.from({ length: vt.buffer.active.baseY }, (_, i) => vt.buffer.active.getLine(i)?.translateToString(true) ?? "");
+      expect(history.filter(line => line.includes("native-flow-0") && !line.includes("native-flow-01"))).toHaveLength(1);
+      expect(history.filter(line => line.includes("Native acknowledgement target"))).toHaveLength(1);
+    }
+    expect(await sendChatLinkClick({ url, paneId: "w1:p42" })).toBe("acked");
+    await until(() => pending() === 0);
+    expect(await sendChatLinkClick({ url, paneId: "w1:p42" })).toBe("ignored");
+    if (inline) {
+      for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `between-pins-${i}` });
+      await until(() => bytes.includes("between-pins-24"));
+      service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "Second native pin" });
+      await until(() => pending() === 1 && bytes.includes("Second native pin"));
+      await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+      const history = Array.from({ length: vt.buffer.active.baseY }, (_, i) => vt.buffer.active.getLine(i)?.translateToString(true) ?? "");
+      expect(history.filter(line => line.includes("between-pins-0"))).toHaveLength(1);
+      input.write("\u0015/ack all\r");
+      await until(() => pending() === 0);
+    }
+  } finally { input.end(); await session; vt.dispose(); }
+  expect(await sendChatLinkClick({ url, paneId: "w1:p42" })).toBe("unreachable");
+});

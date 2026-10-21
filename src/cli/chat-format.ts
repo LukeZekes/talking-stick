@@ -28,6 +28,8 @@ export interface ChatFormatContext {
   dim_history?: boolean;
   // A single-cell delivery icon for one recipient of a message, if tracked.
   delivery_icon?: (event: RoomEvent, agentId: AgentId) => string | undefined;
+  pin_link?: (eventSeq: number) => string;
+  excluded_events?: ReadonlySet<number>;
   human_acknowledged?: (event: RoomEvent) => boolean;
   tracks_delivery?: (event: RoomEvent) => boolean;
 }
