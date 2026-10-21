@@ -42,7 +42,7 @@ tt health [path] [--verbose|--all]                        # concise safety/actio
 tt status [path] [--verbose|--all]                        # alias for health
 tt events [path] [--all] [--after N] [--limit N] [--wait|--follow] [--event TYPE[,TYPE]] [--target self|any|agent]
 tt chat [path] [--history N] [--events] [--fullscreen] [--mouse|--no-mouse]   # operator console
-tt up [--agents claude,codex,grok,opencode,antigravity] [--path DIR] [--in ROOM] [--new-tab|--new-workspace] [--print] [--forget] [--timeout 120s] # experimental Herdr launcher
+tt up [--agents claude,codex,grok,opencode,antigravity] [--path DIR] [--in ROOM] [--new-tab|--new-workspace] [--print] [--forget] [--timeout 120s] # experimental Herdr/tmux launcher
 tt msg send <recipient|room> <body...> [--interrupt] [--stdin] [--attach IMAGE]... [--path DIR]
 tt msg recv [--wait|--follow] [--from agent] [--after N] [--target self|any|agent] [--path DIR]
 tt ack <delivery-token> [--json]                          # acknowledge a native delivery envelope
@@ -130,6 +130,14 @@ experimental launchers; `--new-tab` or `--new-workspace` opens a separate tab or
 - Codex starts with `--no-daemon` so its tools and hooks keep the new pane's process identity for
   join verification. Escape in chat interrupts an active Codex turn in that pane through Herdr after
   matching its session and process. Grok stays unconfirmed when Herdr omits its session identity.
+- Plain tmux works too: outside Herdr, `tt up` run in a tmux pane drives tmux instead. A Herdr
+  workspace becomes a tmux session and a tab becomes a window; `--print` shows the same steps.
+  Agents are started by typing their command line into a fresh pane, which tt labels with the
+  `@tt_agent` pane option. tmux cannot detect agents, so a join is verified by the member's harness
+  process (and its start time) being a foreground process of that pane's terminal. tmux has no
+  busy/idle signal, so Escape in chat goes to a verified Codex pane without checking whether a turn
+  is active. Showing a new session needs an attached client; otherwise select it yourself
+  (`tmux switch-client -t <session>`). Requires tmux 3.1 or later.
 
 ### Rooms and paths
 
@@ -539,6 +547,46 @@ Codex green, and the operator yellow. Directed messages remain visible to the ro
 member changes the recipient, not privacy. Colors require an interactive terminal and are disabled
 when `NO_COLOR` is set to a nonempty value. If an existing console was opened before a local
 rebuild, quit and reopen `tt chat` to load the new display.
+
+The Lantern house palette uses warm amber accents, lavender slash commands, and stable agent
+identity colors. Highlighting updates while you type: exact command/member names are emphasized,
+partial names are muted, and unknown names are underlined. This indicates token recognition,
+not delivery or permission to act. Aliases that address several live members use the broadcast
+color rather than the first member's identity color. `@everyone` and `@all` use that color too;
+`!@name` also emphasizes the interrupt marker. Email addresses and backtick code do not look like
+recipient selections. The completion menu shares these colors, bolds the matched prefix, and
+paints the selected row. Accepting a completion with Tab leaves its recognized token highlighted.
+Color never changes the draft text, cursor placement or wrapping. `COLORTERM=truecolor` (or
+`24bit`) selects RGB colors; otherwise the palette uses 256-color fallbacks. Choose Lantern (warm amber, the default), Tide (cool teal), or Dusk (muted lavender)
+with `tt chat --theme tide` or `TT_THEME=tide tt chat`. Startup precedence is `--theme`, then `TT_THEME`, then your saved choice, then Lantern. In chat, `/theme` shows the current choice and `/theme dusk` changes it immediately
+and saves the choice for your next chat, including across room switches. `/theme` also shows
+whether the current choice came from a flag, environment, saved preference, or the default. Agent identity hues stay the same in every
+palette. Switching repaints the visible transcript and composer immediately. Older native
+scrollback outside the visible viewport keeps its existing colors.
+`NO_COLOR` disables color in all themes.
+
+Menus and completion lists have a blank row separating them from the transcript.
+Member choices use their agent colors; command results use a separate `│` gutter with
+info, done, or error styling rather than an authored-message layout.
+
+Messages explicitly addressed to your human identity have a subtle background. New messages
+from other senders keep a faint highlight until acknowledged. Once an original leaves the visible transcript,
+it appears as a pin above the composer in inline chat,
+at the top in fullscreen. Pins use the normal message header and content with a slight background, without a
+status preamble. The bounded area shows as many message rows as fit; the complete message remains
+in the transcript. A message appears only once in the live pane: in the transcript while visible, otherwise as a pin.
+Clicking either dismisses it. The optional `/ack`
+command dismisses all visible highlighted messages, `/ack #123`
+dismisses one message, and `/ack all` dismisses all pending messages. Acknowledgement also clears
+the message background. Mouse reporting is enabled while pins are pending, then restored when
+the last pin is dismissed; `--mouse` keeps it on and `--no-mouse` disables it. While reporting is
+on, inline native wheel scrolling is unavailable and selection uses Shift-drag (Option-drag in
+iTerm2).
+
+Acknowledgements are separate from delivery receipts and persist per room and local human
+across chat restarts. Displaying a message or replying does not acknowledge it. Broadcasts,
+visitor replies, messages to other humans and your own messages do not become pins. Only
+messages sent after this feature was activated become pins; the old backlog stays in history.
 
 Resizing the window reflows the live panel in place, rebuilding only the visible tail and keeping
 native scrollback. Narrowing a terminal can leave repeated recent lines at the scrollback boundary,

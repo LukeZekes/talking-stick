@@ -1,7 +1,8 @@
 import { resolveDataDir } from "../config.js";
-import { createSystemHerdrRunner, readHerdrContext, type HerdrRunner } from "../herdr.js";
+import type { HerdrRunner } from "../herdr.js";
 import { createSystemStartTimeReader, type StartTimeReader } from "../launch-identity.js";
 import { acquireLaunchLock, readLaunchRecord, launchRecordPath } from "../launch-record.js";
+import { openPaneSession } from "../pane-backend.js";
 import fs from "node:fs";
 import { chatTerminalCapable, handleChatCommand } from "./chat.js";
 import { resolveContextPath } from "../path-resolution.js";
@@ -66,7 +67,13 @@ export async function handleUpCommand(
   // Lock and record follow the room, not the cwd, so two worktrees launching
   // into one room serialize. A room opened below keeps this same path.
   const roomKey = resolvedRoom?.canonical_path ?? resolved.room_path;
-  const runner = options.runner ?? createSystemHerdrRunner(env);
+  // tmux reports agents by matching panes against this room's members.
+  let membersRoomId: string | null = resolvedRoom?.room_id ?? null;
+  const panes = openPaneSession(env, {
+    runner: options.runner,
+    readMembers: () => roomWithMembers(runtime, parsed, membersRoomId)?.members ?? []
+  });
+  const runner = panes.runner;
   const readStartTime = options.readStartTime ?? createSystemStartTimeReader();
   const dataDir = resolveDataDir({ env });
 
@@ -78,11 +85,13 @@ export async function handleUpCommand(
     const forget = hasOption(parsed, "forget");
     const record = forget ? null : readLaunchRecord(dataDir, roomKey);
     const planFor = (roomId: string | null) => {
+      membersRoomId = roomId;
       const plan = planWorkspaceLaunch({
         agents,
         context_path: contextPath,
         topology,
-        herdr: readHerdrContext(env),
+        herdr: panes.context,
+        backend: panes.backend,
         runner,
         room: roomWithMembers(runtime, parsed, roomId),
         pin_room_id: roomId,
@@ -188,7 +197,9 @@ export function renderPlan(plan: WorkspaceLaunchPlan): string {
     lines.push("", "Nothing to launch: every requested agent and the chat console are already in this room.");
   }
   if (plan.steps.length > 0) {
-    lines.push("", "Steps (nothing has been run):");
+    lines.push("", plan.backend === "tmux"
+      ? "Steps (nothing has been run; tt performs each Herdr verb with tmux):"
+      : "Steps (nothing has been run):");
     plan.steps.forEach((step, index) => {
       lines.push(`  ${index + 1}. ${step.description}`, `     ${step.argv.map(shellQuote).join(" ")}`);
     });

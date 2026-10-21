@@ -11,6 +11,18 @@ changes will be called out under **Breaking changes**.
 
 ## Unreleased
 
+- Human-directed messages appear once in the live pane: highlighted in the transcript while visible, pinned only after scrolling out. Room-wide questions get one status responder instead of duplicate answers from every agent.
+- Clicking a human-directed message now works on both its pin and its highlighted live transcript copy, including wrapped rows and after resize.
+
+- `/theme` now saves the palette per human across restarts. Startup precedence is `--theme`, `TT_THEME`, saved choice, then Lantern.
+- Explicit human-message acknowledgement: pending messages above the inline composer or at the top in fullscreen, click-to-dismiss with automatic mouse reporting, and optional `/ack` commands. Bare `/ack` dismisses every visible pin and clears its highlight. Acknowledgements persist across restarts, separate from delivery receipts; old messages before activation do not become pins. (#146)
+- Human-directed messages have a subtle background; `/members` uses agent and selection colors; all menus have a blank separator above them, now a project rule. (#145, #147)
+- Command results use a shared gutter and themed info/done/error labels, distinct from authored messages. (#151)
+
+- `tt up` works in plain tmux. Outside Herdr, a tmux pane runs the same launch: sessions and windows
+  stand in for Herdr workspaces and tabs, agents start in fresh panes, and joins are verified by the
+  member's harness process running in the pane. Escape in chat reaches a verified Codex pane in
+  tmux too. (#135)
 - `tt chat`: Shift+Enter now inserts a new line in terminals with enhanced key reporting (Ghostty,
   kitty, WezTerm, iTerm2 3.5+, foot). Chat requests the kitty keyboard protocol and modifyOtherKeys,
   decodes Ctrl, Alt and Escape reports back to their usual keys, and restores the terminal on exit,
@@ -21,6 +33,10 @@ changes will be called out under **Breaking changes**.
 - `tt install codex`: the SessionEnd and Interrupt hooks use a 3-second timeout, Codex's limit for
   those events, so Codex's `/hooks` panel no longer warns about clamping them. Reinstall to update
   existing hooks (`tt install codex`).
+### Added
+
+- Selectable chat palettes: Lantern (warm), Tide (teal), and Dusk (lavender), via `--theme`, `TT_THEME`, or `/theme`. Agent colors remain consistent across themes.
+- Live `tt chat` composer highlighting and a shared Lantern house palette: amber accents, lavender commands, stable agent colors, and distinct references, paths and status signals. Exact member names and command names are emphasized, partial tokens stay muted, and unknown tokens are underlined. Completions use the same token colors, emphasize the typed prefix, and mark the selected row with a background in both inline and fullscreen chat. True-color terminals use the RGB palette; other color terminals use 256-color fallbacks. `NO_COLOR` keeps the display plain.
 
 ## [0.28.1] — 2026-10-20
 

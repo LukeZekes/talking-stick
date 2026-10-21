@@ -26,3 +26,13 @@ describe("member actions", () => {
     expect(renderMemberMenu(menu, 3)).toEqual(["Room members", "› four", "↑↓ choose · Enter select · Esc cancel"]);
   });
 });
+
+test("member choices and selection use the shared palette without changing their text", () => {
+  const menu = createMemberMenu(["codex:aa", "claude:bb"]);
+  const plain = renderMemberMenu(menu, 5, id => id.split(":")[0]);
+  const colored = renderMemberMenu(menu, 5, id => id.split(":")[0], { color: true });
+  expect(colored.map(line => line.replace(/\u001b\[[0-9;]*m/g, ""))).toEqual(plain);
+  expect(colored[1]).toContain("38;5;78");
+  expect(colored[1]).toContain("48;5;237");
+  expect(colored[2]).toContain("38;5;209");
+});

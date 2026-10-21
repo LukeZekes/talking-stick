@@ -34,7 +34,7 @@ export class FakeHerdr {
   omitDestinationIds = false;
   failProcessInfo = false;
   failSendKeys = false;
-  agentStatus = "idle";
+  agentStatus: string | null = "idle";
   private splits = 0;
   private nextPane = 2;
   private nextPid = 5000;

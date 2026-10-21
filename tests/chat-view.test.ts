@@ -68,11 +68,11 @@ test("inline room bar sits directly above the prompt with separation from chat",
     status: { members: [], owner: null, owner_since: null, reserved_for: null, now: new Date() },
     draft: { line: "", cursor: 0 }, hint: null, columns: 80, rows: 24
   });
-  expect(frame.lines).toHaveLength(7);
-  expect(frame.lines.slice(0, 3)).toEqual(["", "", ""]);
-  expect(frame.lines[3]).toContain("─ Room · /workspace ─");
-  expect(frame.lines[4]).toBe("> ");
-  expect(frame.cursor.row).toBe(4);
+  expect(frame.lines).toHaveLength(8);
+  expect(frame.lines.slice(0, 4)).toEqual(["", "", "", ""]);
+  expect(frame.lines[4]).toContain("─ Room · /workspace ─");
+  expect(frame.lines[5]).toBe("> ");
+  expect(frame.cursor.row).toBe(5);
 });
 
 let seq = 0;
@@ -141,7 +141,7 @@ describe("transcript scrolling", () => {
     transcript.appendEvent({ ...stickEvent("claim"), event_type: "join", created_at: new Date(2026, 8, 15, 13, 1).toISOString() });
     const rows = transcript.viewport(30, 100, { ...context, color: true,
       now: new Date(2026, 8, 15, 14), history_before: new Date(2026, 8, 15, 13, 1).toISOString() });
-    expect(rows.find((row) => row.includes("older body"))).toContain("\u001b[2;90m");
+    expect(rows.find((row) => row.includes("older body"))).toContain("\u001b[2;38;5;244m");
     expect(rows.join("\n")).toContain("New conversation · Today");
   });
 
@@ -553,4 +553,23 @@ test("member hit testing uses terminal coordinates and excludes adjacent cells",
   expect(chatMemberAt(frame, 13, 24)).toBeUndefined();
   expect(chatMemberAt(frame, 5, 23)).toBeUndefined();
   expect(chatMemberAt(null, 5, 24)).toBeUndefined();
+});
+
+
+test.each([renderInlinePanel, renderChatScreen])("every visible menu has a blank row before its first choice", render => {
+  const frame = render({ room_path: "/workspace", transcript: new ChatTranscript(), format: context,
+    status: { members: [], owner: null, owner_since: null, reserved_for: null, now: new Date() },
+    draft: { line: "", cursor: 0 }, hint: null, columns: 80, rows: 24,
+    panel: ["UNIQUE MENU TITLE", "› choice", "Esc close"] });
+  const top = frame.lines.findIndex(line => line.includes("UNIQUE MENU TITLE"));
+  expect(top).toBeGreaterThan(0);
+  expect(frame.lines[top - 1]).toBe("");
+});
+
+
+test("a short fullscreen pane never draws a menu without its separator", () => {
+  const frame = renderChatScreen({ room_path: "/workspace", transcript: new ChatTranscript(), format: context,
+    status: { members: [], owner: null, owner_since: null, reserved_for: null, now: new Date() },
+    draft: { line: "", cursor: 0 }, hint: null, columns: 80, rows: 6, panel: ["MENU CHOICE"] });
+  expect(frame.lines.some(line => line.includes("MENU CHOICE"))).toBe(false);
 });

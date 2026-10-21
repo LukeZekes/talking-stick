@@ -11,6 +11,7 @@ export interface ChatInputOptions {
   onChange: () => void;
   onSubmit: (line: string) => void;
   onScroll: (kind: "lines" | "pages", amount: number) => void;
+  onClick?: (column: number, row: number) => void;
   onRightClick?: (column: number, row: number) => void;
   onWheel?: (row: number, direction: number) => void;
   onBottom: () => void;
@@ -479,6 +480,7 @@ export class ChatInputController {
           if (mouse) {
             if (mouse[4] === "M") {
               const button = Number(mouse[1]);
+              if ((button & 195) === 0 && (button & 32) === 0) this.options.onClick?.(Number(mouse[2]), Number(mouse[3]));
               if ((button & 195) === 2) this.options.onRightClick?.(Number(mouse[2]), Number(mouse[3]));
               if ((button & 195) === 64 || (button & 195) === 65) {
                 const direction = button & 1 ? 1 : -1;

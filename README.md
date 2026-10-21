@@ -37,8 +37,8 @@ right. Start every pane in the same repository. By default the whole repository 
 |---|---|
 | `cd ~/myrepo && claude`<br>`cd ~/myrepo && codex`<br>`cd ~/myrepo && grok` | `cd ~/myrepo && tt chat` |
 
-Two agents are enough to start. In [Herdr](https://herdr.dev), `tt up` builds this layout for you
-(see [Herdr](#herdr)).
+Two agents are enough to start. In [Herdr](https://herdr.dev) or tmux, `tt up` builds this layout
+for you (see [Herdr and tmux](#herdr-and-tmux)).
 
 ### 3. Point each agent at the skill, and nothing else
 
@@ -71,6 +71,8 @@ into each harness keeps them in sync. The footer shows who holds the stick.
 | `/members` | Pick a member to message or remove (removal asks first) |
 | `/roles` | Assign roles, edit their definitions, and set harness defaults |
 | Ctrl+V, a dragged-in image, or `/attach <file>` | Attach an image; agents get its path and read it |
+| Click a highlighted message or pin | Acknowledge it and clear its highlight; messages pin only after leaving the visible transcript |
+| `/theme tide` | Switch the palette: Lantern (warm default), Tide (teal), or Dusk (lavender) |
 | `/who`, `/help` | Members and stick holder; all commands |
 
 Each message header marks every recipient: `…` not delivered yet, `✓` delivered, `!` failed. That's
@@ -152,7 +154,7 @@ tt assign <agent>        hand off to someone specific
 tt take                  claim when the holder is gone or stuck
 tt msg send / tt notes   message members, or leave durable notes
 tt chat                  operator console
-tt up                    open agents and a console in Herdr panes (experimental)
+tt up                    open agents and a console in Herdr or tmux panes (experimental)
 tt room                  list, declare, adopt, or remove a repository's rooms
 tt room list --all       every room on this host with live members
 tt room brief <room>     what a room is doing, without joining it
@@ -167,9 +169,9 @@ Full flags and semantics: [command reference](docs/reference.md#command-referenc
 `tt room create packages/api`, for example one per package in a monorepo. An agent belongs to one
 room per repository at a time. See [Rooms and paths](docs/reference.md#rooms-and-paths).
 
-### Herdr
+### Herdr and tmux
 
-Inside Herdr, `tt up` turns the current pane into the console and opens a column of agents beside
+Inside Herdr, or a tmux pane, `tt up` turns the current pane into the console and opens a column of agents beside
 it: Claude, Codex, and Antigravity by default, when installed. `--agents claude,codex` picks agents,
 `--print` previews, and `--new-tab` or `--new-workspace` opens a separate tab or workspace. Each
 agent gets the skill prompt, and `tt up` checks that it joined the right room. Reruns don't

@@ -1,3 +1,6 @@
+import { isHumanAttentionMessage } from "../human-attention.js";
+import { formatChatNotice, type ChatNoticeKind } from "./chat-notice.js";
+import { resolveAttentionFrame, renderAttention, type HumanAttention } from "./chat-attention.js";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -7,6 +10,7 @@ import { planChatInterrupts } from "./chat-interrupt.js";
 import { interruptCodexThread } from "./codex-interrupt.js";
 import { interruptCodexHerdr } from "./codex-herdr-interrupt.js";
 import { ChatImages } from "./chat-images.js";
+import { chatThemeName, paintStyle, setChatTheme, terminalColorMode, themeStyle } from "./theme.js";
 import { ChatInputController, type ChatModalKey } from "./chat-input.js";
 import { createRolesEditor, renderRolesEditor, rolesEditorKey, rolesEditorDraft, rolesEditorDirty, refreshRolesEditor, type RolesEditorState } from "./roles-editor.js";
 import { applyRoleChanges, liveAgents, parseRoleList, parseRoleSubject, roomRoleBlock } from "./role-commands.js";
@@ -113,6 +117,7 @@ const CONVERSATION_EVENTS: EventType[] = [
 export interface ChatConsoleState {
   /** Images attached in this console; their markers survive room switches. */
   images?: ChatImages;
+  theme_source?: string;
   /** Coordination root whose rooms the strip lists. */
   anchor: string;
   /** Rooms this console has joined; it stays a member until chat exits. */
@@ -149,6 +154,7 @@ export interface ChatSessionOptions {
   history: number;
   show_turn_events: boolean;
   poll_ms?: number;
+  theme_source?: string;
   mouse?: boolean;
   // Inline mode prints into the terminal's normal screen instead of taking it
   // over, so the terminal (or multiplexer) keeps scrollback, selection, and
@@ -194,8 +200,14 @@ export async function handleChatCommand(
   runtime: Runtime,
   parsed: ParsedCommand
 ): Promise<void> {
+  if (parsed.options.get("theme") === true) throw new Error("--theme needs lantern, tide or dusk.");
   const agentId = getStringOption(parsed, "agent");
   const identity = createChatIdentity(agentId);
+  const savedTheme = runtime.commands.getHumanChatTheme(identity.agent_id);
+  const explicitTheme = getStringOption(parsed, "theme");
+  const theme = explicitTheme ?? process.env.TT_THEME ?? savedTheme ?? "lantern";
+  const themeSource = explicitTheme !== undefined ? "--theme" : process.env.TT_THEME !== undefined ? "TT_THEME" : savedTheme ? "saved" : "default";
+  setChatTheme(theme);
   const terminal = chatTerminalCapable(process.stdin, process.stdout, process.env);
 
   // `tt chat #api` names a room; a plain positional is still a path.
@@ -214,9 +226,10 @@ export async function handleChatCommand(
     output: process.stdout,
     terminal,
     color: terminal && !process.env.NO_COLOR,
+    theme_source: themeSource,
     history: parseOptionalInteger(parsed, "history") ?? DEFAULT_HISTORY,
     show_turn_events: hasOption(parsed, "events"),
-    mouse: hasOption(parsed, "mouse") && !hasOption(parsed, "no-mouse"),
+    mouse: hasOption(parsed, "no-mouse") ? false : hasOption(parsed, "mouse") ? true : undefined,
     inline: chatInlineEnabled(parsed)
   });
 }
@@ -226,6 +239,7 @@ export async function handleChatCommand(
 export async function runChatConsole(options: Omit<ChatSessionOptions, "console">): Promise<void> {
   const consoleState: ChatConsoleState = {
     images: new ChatImages({ dataDir: resolveDataDir() }),
+    theme_source: options.theme_source,
     anchor: "",
     visited: new Set(),
     last_seen: new Map(),
@@ -276,7 +290,13 @@ export async function runChatSession(
     room_id: options.room_id
   });
   const roomId = joined.room_id;
+  let attention: HumanAttention = selfId.startsWith("human:")
+    ? runtime.commands.getHumanAttention({ room_id: roomId, human_id: selfId }) : { messages: [], total: 0 };
+  let humanAcknowledged = new Set(attention.acknowledged ?? []);
+  let visibleAttention = new Set<number>();
+  let mouseActive = false;
   const consoleState = options.console;
+  let themeSource = consoleState?.theme_source ?? options.theme_source ?? "session";
   consoleState?.visited.add(roomId);
   consoleState?.subscribed.delete(roomId);
   // The repository of the first room this console opened bounds its strip.
@@ -340,8 +360,12 @@ export async function runChatSession(
         consoleState.last_seen.get(room.room_id) ?? 0, consoleState.start_seq);
       const directed = runtime.commands.getDirectedMessages({ room_id: room.room_id, agent_id: selfId, after_event_seq: after });
       for (const event of directed) {
-        const body = (event.payload as { body?: unknown } | null)?.body;
-        print(`#${sanitizeChatText(roomNames.get(room.room_id) ?? "room")} › ${sanitizeChatText(nameOf(event.from_agent_id ?? "system"))} → you: ${sanitizeChatText(typeof body === "string" ? body : "")}`);
+        if (!terminal) {
+          print(`#${sanitizeChatText(roomNames.get(room.room_id) ?? "room")} › ${sanitizeChatText(nameOf(event.from_agent_id ?? "system"))} → you: ${sanitizeChatText(String(event.payload?.body ?? ""))}`, "message");
+        } else {
+          const rendered = formatChatEvent(event, formatContext());
+          if (rendered) print(`#${sanitizeChatText(roomNames.get(room.room_id) ?? "room")} › ${rendered}`, "message");
+        }
       }
       if (directed.length) consoleState.directed_seen.set(room.room_id, directed[directed.length - 1].event_seq);
     }
@@ -463,8 +487,9 @@ export async function runChatSession(
   let externalEditorActive = false;
   const deferredInline: string[] = [];
   const roleOptions = { contextPath: joined.canonical_path };
-  const rolesPanelLines = () => roomTree ? roomTree.render(Math.max(3, dimensions().rows - 6), resolvedTreeRoom(), Boolean(formatContext().color)) : memberMenu ? renderMemberMenu(memberMenu, Math.max(3, dimensions().rows - 6), nameOf) : rolesPanel
-    ? renderRolesEditor(rolesPanel, formatContext(), Math.max(1, dimensions().rows - 6), Math.max(1, dimensions().columns - 1))
+  const panelHeight = () => Math.max(3, dimensions().rows - 7 - renderAttention(attention, dimensions().columns - 1, dimensions().rows, formatContext()).lines.length);
+  const rolesPanelLines = () => roomTree ? roomTree.render(panelHeight(), resolvedTreeRoom(), Boolean(formatContext().color)) : memberMenu ? renderMemberMenu(memberMenu, panelHeight(), nameOf, formatContext()) : rolesPanel
+    ? renderRolesEditor(rolesPanel, formatContext(), panelHeight(), Math.max(1, dimensions().columns - 1))
     : undefined;
   const closeRolesPanel = () => {
     rolesPanel = null;
@@ -516,6 +541,7 @@ export async function runChatSession(
           if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
           if (inline) eraseComposer();
           output.write("\u001b[?2026l\u001b[?2004l\u001b[?1000l\u001b[?1006l\u001b[?25h" + ENHANCED_KEYS_OFF + (fullscreen ? "\u001b[?1049l" : ""));
+          mouseActive = false;
           editor?.suspend();
         },
         resume: () => {
@@ -523,6 +549,7 @@ export async function runChatSession(
           if (closed) return;
           output.write((fullscreen ? "\u001b[?1049h" : "") + "\u001b[?2004h" + ENHANCED_KEYS_ON + (fullscreen && options.mouse ? "\u001b[?1000h\u001b[?1006h" : ""));
           previousFrame = null;
+          syncMouse();
           editor?.resume();
           if (inline) {
             // The editor may have moved the cursor anywhere on the normal screen.
@@ -530,6 +557,8 @@ export async function runChatSession(
             inlineReceiptRows.clear();
             output.write("\r\n");
             for (const line of deferredInline.splice(0)) writeInline(line);
+            // Re-establish absolute viewport anchors after an editor moved the cursor.
+            onResize();
           }
           redraw();
         }
@@ -590,7 +619,7 @@ export async function runChatSession(
       roleBusy = true;
       rolesPanel = { ...state, notice: "Applying…" };
       void applyRoleDraft(runtime, identity, roomId, rolesEditorDraft(state), { ...roleOptions, base: rolesBase })
-        .then(result => { if (!closed) { openRolesPanel({ tab: state.tab, row: state.row, col: state.col }); if (rolesPanel) rolesPanel.notice = result.summary; print(sanitizeChatText(result.summary)); } })
+        .then(result => { if (!closed) { openRolesPanel({ tab: state.tab, row: state.row, col: state.col }); if (rolesPanel) rolesPanel.notice = result.summary; print(sanitizeChatText(result.summary), "ok"); } })
         .catch(error => { rolesPanel = { ...state, notice: `! ${error instanceof Error ? error.message : String(error)}` }; })
         .finally(() => { roleBusy = false; redraw(); });
       return;
@@ -670,8 +699,8 @@ export async function runChatSession(
   const deliveryIcon = (event: RoomEvent, agent: string) => {
     const state = deliveryStates.get(event.event_seq)?.get(agent);
     if (!state || !terminal) return undefined;
-    if (state === "delivered") return options.color ? "\u001b[32m✓\u001b[0m" : "✓";
-    if (state === "unreachable") return options.color ? "\u001b[31m!\u001b[0m" : "!";
+    if (state === "delivered") return paintStyle(options.color, themeStyle("ok", terminalColorMode()), "✓");
+    if (state === "unreachable") return paintStyle(options.color, themeStyle("error", terminalColorMode()), "!");
     return options.color ? "\u001b[2m…\u001b[0m" : "…";
   };
   // Events whose header shows delivery icons, kept so a receipt can repaint it.
@@ -685,10 +714,12 @@ export async function runChatSession(
     self_agent_id: selfId,
     name_of: nameOf,
     color: options.color,
+    color_mode: terminalColorMode(),
     show_turn_events: showTurnEvents,
     now: new Date(),
     history_before: historyBefore,
     delivery_icon: deliveryIcon,
+    human_acknowledged: (event: RoomEvent) => humanAcknowledged.has(event.event_seq),
     tracks_delivery: (event: RoomEvent) => terminal && (deliveryStates.get(event.event_seq)?.size ?? 0) > 0
   });
   const completionsFor = (draft: { line: string; cursor: number }) => getChatCompletions(draft,
@@ -711,6 +742,7 @@ export async function runChatSession(
   let inlineOutputRows = 0;
   let inlineVisibleFloor = 0;
   const inlineReceiptRows = new Map<number, number>();
+  const inlineHumanRows = new Map<number, number>();
   // Erase with the geometry the panel was drawn at: after a resize the current
   // width would compute the wrong row count and strand a stale copy.
   const eraseComposer = () => {
@@ -722,17 +754,28 @@ export async function runChatSession(
     output.write(`\r${up > 0 ? `\u001b[${up}A` : ""}\u001b[J`);
     inlineFrame = null;
   };
+  const syncMouse = () => {
+    const active = Boolean(options.mouse) || (options.mouse !== false && attention.total > 0);
+    if (active === mouseActive || !terminal || externalEditorActive) return;
+    output.write(active ? "\u001b[?1000h\u001b[?1006h" : "\u001b[?1000l\u001b[?1006l");
+    mouseActive = active;
+  };
   const drawComposer = () => {
     if (!inline || closed || externalEditorActive) return;
     const draft = editor?.draft ?? { line: "", cursor: 0 };
-    const frame = renderInlinePanel({
-      room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), transcript, format: formatContext(),
-      status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
-        interrupt_statuses: interruptStatuses() },
-      draft, hint: currentHint(),
-      completions: editor?.completionVisible ? completionsFor(draft) : [],
-      completion_index: editor?.completionIndex ?? 0,
-      ...dimensions()
+    const frame = resolveAttentionFrame(attention, pins => {
+      const frame = renderInlinePanel({
+        room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), attention: pins, transcript, format: formatContext(),
+        status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
+          interrupt_statuses: interruptStatuses() },
+        draft, hint: currentHint(),
+        completions: editor?.completionVisible ? completionsFor(draft) : [],
+        completion_index: editor?.completionIndex ?? 0,
+        ...dimensions()
+      });
+      const floor = Math.max(inlineVisibleFloor,
+        inlineOutputRows + Math.max(inlinePanelRows, frame.lines.length) - dimensions().rows);
+      return { frame, visible: [...inlineHumanRows].filter(([row]) => row >= floor && row < inlineOutputRows).map(([, seq]) => seq) };
     });
     // A modal may scroll the normal screen as it grows. Keep its bottom
     // anchored when it shrinks; subsequent transcript output reclaims the gap.
@@ -741,17 +784,22 @@ export async function runChatSession(
     if (padding) {
       frame.lines.unshift(...Array<string>(padding).fill(""));
       frame.cursor.row += padding;
+      for (const hit of frame.attention ?? []) hit.row += padding;
     }
     if (inlineFrame && JSON.stringify(inlineFrame) === JSON.stringify(frame)) return;
     output.write("\u001b[?2026h");
     eraseComposer();
     output.write(frame.lines.join("\r\n"));
     inlineFrame = frame;
+    visibleAttention = new Set([...(frame.attention ?? []), ...(frame.human_messages ?? [])].map(hit => hit.event_seq));
     inlineFrameColumns = dimensions();
     inlineVisibleFloor = Math.max(inlineVisibleFloor, inlineOutputRows + frame.lines.length - dimensions().rows);
     for (const [seq, row] of inlineReceiptRows) if (row < inlineVisibleFloor) inlineReceiptRows.delete(seq);
+    for (const row of inlineHumanRows.keys()) if (row < inlineVisibleFloor) inlineHumanRows.delete(row);
+    for (const seq of inlineHumanRows.values()) visibleAttention.add(seq);
     const up = frame.lines.length - 1 - frame.cursor.row;
     output.write(`\r${up > 0 ? `\u001b[${up}A` : ""}${frame.cursor.col > 0 ? `\u001b[${frame.cursor.col}C` : ""}\u001b[?2026l`);
+    syncMouse();
   };
   // Inline output must not land on top of the composer: erase it, print the
   // line, then redraw the draft underneath.
@@ -772,9 +820,10 @@ export async function runChatSession(
       frameTimer = null;
       if (closed || !screenActive || externalEditorActive) return;
       try {
+        syncMouse();
         const frame = renderChatScreen({
           room_path: joined.canonical_path,
-          room_strip: roomStrip, panel: rolesPanelLines(),
+          room_strip: roomStrip, panel: rolesPanelLines(), attention,
           transcript,
           format: formatContext(),
           status: {
@@ -791,6 +840,7 @@ export async function runChatSession(
           completion_index: editor?.completionIndex ?? 0,
           ...dimensions()
         });
+        visibleAttention = new Set([...(frame.attention ?? []), ...(frame.human_messages ?? [])].map(hit => hit.event_seq));
         output.write(diffChatFrame(previousFrame, frame));
         previousFrame = frame;
       } catch (error) {
@@ -799,7 +849,8 @@ export async function runChatSession(
       }
     }, 16);
   };
-  const print = (text: string): number | null => {
+  const print = (text: string, kind?: ChatNoticeKind | "message"): number | null => {
+    if (terminal && kind !== "message") text = formatChatNotice(text, options.color, terminalColorMode(), kind);
     if (inline) {
       transcript.appendNotice(text);
       writeInline(text);
@@ -867,7 +918,7 @@ export async function runChatSession(
     editor?.close();
     if (inlineActive) {
       eraseComposer();
-      output.write("\u001b[?2026l\u001b[?2004l" + ENHANCED_KEYS_OFF);
+      output.write("\u001b[?2026l\u001b[?2004l\u001b[?1000l\u001b[?1006l" + ENHANCED_KEYS_OFF);
       inlineActive = false;
     }
     if (!screenActive) return;
@@ -890,6 +941,7 @@ export async function runChatSession(
     // Reflow invalidates physical row anchors; never overwrite a different
     // message using coordinates recorded at the old width.
     inlineReceiptRows.clear();
+    inlineHumanRows.clear();
     inlineOutputRows = 0;
     inlineVisibleFloor = 0;
     // Reflow can move rows both before and after the editor cursor. Rebuild
@@ -901,16 +953,23 @@ export async function runChatSession(
       inlinePanelRows = 0;
       editor?.resize(dimensions().columns - 1);
       const draft = editor?.draft ?? { line: "", cursor: 0 };
-      const panel = renderInlinePanel({ room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), transcript, format: formatContext(),
+      const panel = resolveAttentionFrame(attention, pins => {
+        const frame = renderInlinePanel({ room_path: joined.canonical_path, room_strip: roomStrip, panel: rolesPanelLines(), attention: pins, transcript, format: formatContext(),
         status: { members, owner, owner_since: ownerSince, reserved_for: reservedFor, now: new Date(),
           interrupt_statuses: interruptStatuses() },
         draft, hint: currentHint(), completions: editor?.completionVisible ? completionsFor(draft) : [],
         completion_index: editor?.completionIndex ?? 0, ...dimensions() });
+        const height = Math.max(0, dimensions().rows - frame.lines.length);
+        return { frame, visible: transcript.humanMessageRows(height, Math.max(1, dimensions().columns - 1), formatContext()).map(hit => hit.event_seq) };
+      });
       const tailHeight = Math.max(0, dimensions().rows - panel.lines.length);
       const tail = transcript.viewport(tailHeight, Math.max(1, dimensions().columns - 1), formatContext());
       output.write("\u001b[?2026h\u001b[H\u001b[J");
       if (tail.length) output.write(tail.join("\r\n") + "\r\n");
       inlineOutputRows = tail.length;
+      for (const hit of transcript.humanMessageRows(tailHeight, Math.max(1, dimensions().columns - 1), formatContext())) {
+        inlineHumanRows.set(hit.row, hit.event_seq);
+      }
       for (const [seq, row] of transcript.receiptRows(tailHeight, Math.max(1, dimensions().columns - 1), formatContext())) {
         inlineReceiptRows.set(seq, row);
       }
@@ -1015,6 +1074,7 @@ export async function runChatSession(
         self_agent_id: selfId,
         name_of: nameOf,
         color: options.color,
+        color_mode: terminalColorMode(),
         show_turn_events: showTurnEvents
       },
       agentId
@@ -1085,6 +1145,45 @@ export async function runChatSession(
     .catch(() => { if (!closed) print("! Message delivery could not be confirmed."); });
   };
 
+  const refreshAttention = () => {
+    if (!selfId.startsWith("human:")) return;
+    const next = runtime.commands.getHumanAttention({ room_id: roomId, human_id: selfId });
+    const changed = next.total !== attention.total || next.messages.map(event => event.event_seq).join(",") !== attention.messages.map(event => event.event_seq).join(",");
+    const acknowledgementsChanged = next.acknowledged.join(",") !== [...humanAcknowledged].join(",");
+    attention = next;
+    humanAcknowledged = new Set(next.acknowledged);
+    if (changed || acknowledgementsChanged) {
+      transcript.invalidate();
+      if (inline) onResize(); else redraw();
+      syncMouse();
+    }
+  };
+  const acknowledge = (selector = "") => {
+    const parsed = selector.trim().replace(/^#/, "");
+    if (parsed && parsed !== "all" && !/^\d+$/.test(parsed)) { print("Use /ack, /ack #message, or /ack all."); return; }
+    const targets = parsed === "all" ? attention.messages : parsed ? [{ event_seq: Number(parsed) }]
+      : attention.messages.filter(event => visibleAttention.has(event.event_seq));
+    // A compact, short-pane header represents the oldest pending message.
+    if (!parsed && !targets.length && attention.total) targets.push(...attention.messages.slice(0, 1));
+    try {
+      for (const target of targets) runtime.commands.acknowledgeHumanMessage(identity, { room_id: roomId, event_seq: target.event_seq });
+      // Fetch again so another console's acknowledgements are reflected too.
+      refreshAttention();
+      if (parsed === "all" && attention.messages.length) acknowledge("all");
+    } catch (error) { print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`); }
+  };
+  const onClick = (column: number, row: number) => {
+    if (options.mouse === false || column < 1 || column >= dimensions().columns || row < 1 || row > dimensions().rows || rolesPanel || roomTree || memberMenu) return;
+    if (!mouseActive) return;
+    const frame = inline ? inlineFrame : previousFrame;
+    const offset = inline && frame ? dimensions().rows - frame.lines.length : 0;
+    const hit = frame?.attention?.find(hit => hit.row + offset === row - 1);
+    if (hit) { acknowledge(String(hit.event_seq)); return; }
+    const message = inline
+      ? row - 1 < offset ? inlineHumanRows.get(inlineOutputRows - offset + row - 1) : undefined
+      : frame?.human_messages?.find(hit => hit.row === row - 1)?.event_seq;
+    if (message !== undefined) acknowledge(String(message));
+  };
   const runCommand = (name: string, args = "") => {
     switch (name) {
       case "quit":
@@ -1230,7 +1329,31 @@ export async function runChatSession(
           throw error;
         }
         refreshMembers();
-        print(`Removed ${sanitizeChatText(target.agent_id)} from the room.${ownershipNote} The harness was not stopped.`);
+        print(`Removed ${sanitizeChatText(target.agent_id)} from the room.${ownershipNote} The harness was not stopped.`, "ok");
+        return;
+      }
+      case "ack":
+        acknowledge(args);
+        return;
+      case "theme": {
+        try {
+          if (args.trim()) {
+            const previous = chatThemeName();
+            setChatTheme(args);
+            try { runtime.commands.setHumanChatTheme(identity, { room_id: roomId, theme: chatThemeName() }); }
+            catch (error) { setChatTheme(previous); throw error; }
+            themeSource = "saved";
+            if (consoleState) consoleState.theme_source = themeSource;
+          }
+          transcript.invalidate();
+          previousFrame = null;
+          print(`Theme: ${chatThemeName()} (${themeSource}). Choose /theme lantern, /theme tide or /theme dusk.`, "ok");
+          // Inline output already written to the normal screen is outside the
+          // composer diff. Rebuild its visible tail, as for terminal reflow.
+          if (inline) onResize();
+        } catch (error) {
+          print(`! ${error instanceof Error ? error.message : String(error)}`);
+        }
         return;
       }
       case "events":
@@ -1239,7 +1362,7 @@ export async function runChatSession(
         print(`Stick events ${showTurnEvents ? "shown" : "hidden"}.`);
         return;
       case "help":
-        print(formatChatHelp(dimensions().columns - 1, options.color, args.trim() === "keys", inline));
+        print(formatChatHelp(dimensions().columns - 1, options.color, args.trim() === "keys", inline, terminalColorMode()));
         return;
       default:
         print(`! Unknown command /${name}. Try /help.`);
@@ -1312,6 +1435,10 @@ export async function runChatSession(
       event.to_agent_id === selfId &&
       event.from_agent_id !== selfId;
     const headerRow = inlineOutputRows;
+    if (inline && isHumanAttentionMessage(event, selfId) && !humanAcknowledged.has(event.event_seq)) {
+      const rows = line.split(/\r?\n/).flatMap(text => wrapStyledLine(text, Math.max(1, dimensions().columns - 1)));
+      for (let offset = 0; offset < rows.length; offset++) inlineHumanRows.set(headerRow + offset, event.event_seq);
+    }
     if (inline) writeInline(forMe ? `${line}\u0007` : line);
     else print(forMe && terminal ? `${line}\u0007` : line);
     if (inline && deliveryStates.has(event.event_seq)) inlineReceiptRows.set(event.event_seq, headerRow);
@@ -1480,6 +1607,7 @@ export async function runChatSession(
           if (height === 0) return;
           scrollHistory(amount * (kind === "pages" ? Math.max(1, height - 1) : 1));
         },
+        onClick,
         onRightClick: (column, row) => {
           if (!options.mouse || rolesPanel || memberMenu) return;
           const target = chatMemberAt(previousFrame, column, row);
@@ -1535,6 +1663,7 @@ export async function runChatSession(
         onImagePaste: pasteImage,
         onClipboardPaste: pasteClipboard,
         transformPaste: (text) => images.fromPastedText(text),
+        onClick,
         onQuit: stop,
         // Scrollback belongs to the terminal in this mode.
         onBottom: () => {},
@@ -1599,7 +1728,9 @@ export async function runChatSession(
       printEvent(event, true);
     }
 
+    refreshAttention();
     redraw();
+    if (inline && attention.total) onResize();
 
     let cursor = head;
     viewedSeq = head;
@@ -1660,7 +1791,10 @@ export async function runChatSession(
           lastWakeRelay = Date.now();
           await runtime.commands.flushWakes(roomId).catch(() => { /* pending wakes stay durable */ });
         }
-        if (!closed) checkReceipts();
+        if (!closed) {
+          checkReceipts();
+          if (result.events.some(event => event.event_type === "message_sent") || statusStale) refreshAttention();
+        }
         const interruptChanged = (interruptIndicators.size > 0 || interruptHint !== null) &&
           interruptSignature() !== lastInterruptSignature;
         if ((stateChanged || statusStale || interruptChanged) && !closed) {

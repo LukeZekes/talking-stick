@@ -4,18 +4,18 @@
 // sanitized: this module only adds SGR codes and never changes the text, so
 // copying from the terminal returns the original message.
 
+import { agentStyle, themeStyle, type ChatColorMode } from "./theme.js";
+
 export type Paint = (code: string, text: string) => string;
 
 export interface HighlightOptions {
   paint: Paint;
   // 256-color index for an agent id or @name mention.
-  agent_color: (name: string) => number;
+  agent_color?: (name: string) => number;
+  agent_style?: (name: string) => string;
+  color_mode?: ChatColorMode;
 }
 
-const CODE = "38;5;180";
-const PATH = "38;5;116";
-const URL_STYLE = "4;38;5;75";
-const REF = "38;5;179";
 const MUTED = "2";
 
 const HARNESS_PREFIX = "(?:claude|codex|grok|gemini|antigravity|opencode|human)";
@@ -48,7 +48,7 @@ export function highlightChatBody(body: string, options: HighlightOptions): stri
           fence = null;
           return options.paint(MUTED, line);
         }
-        return line.length > 0 ? options.paint(CODE, line) : line;
+        return line.length > 0 ? options.paint(themeStyle("code", options.color_mode), line) : line;
       }
       if (fenceMatch) {
         fence = fenceMatch[2];
@@ -87,18 +87,20 @@ function highlightInline(text: string, options: HighlightOptions): string {
   return text.replace(TOKEN, (match, ...args) => {
     const groups = args[args.length - 1] as Record<string, string | undefined>;
     if (groups.code) {
-      return `${paint(MUTED, "`")}${paint(CODE, match.slice(1, -1))}${paint(MUTED, "`")}`;
+      return `${paint(MUTED, "`")}${paint(themeStyle("code", options.color_mode), match.slice(1, -1))}${paint(MUTED, "`")}`;
     }
-    if (groups.url) return paint(URL_STYLE, match);
+    if (groups.url) return paint(`4;${themeStyle("url", options.color_mode)}`, match);
     if (groups.bold) {
       const marker = match.slice(0, 2);
       return `${paint(MUTED, marker)}${paint("1", match.slice(2, -2))}${paint(MUTED, marker)}`;
     }
     if (groups.agent) {
-      return paint(`38;5;${options.agent_color(match.replace(/^@/, ""))}`, match);
+      const name = match.replace(/^@/, "");
+      return paint(options.agent_style?.(name) ?? (options.agent_color
+        ? `38;5;${options.agent_color(name)}` : agentStyle(name, options.color_mode)), match);
     }
-    if (groups.ref) return paint(REF, match);
-    if (groups.path) return paint(PATH, match);
+    if (groups.ref) return paint(themeStyle("ref", options.color_mode), match);
+    if (groups.path) return paint(themeStyle("path", options.color_mode), match);
     return match;
   });
 }

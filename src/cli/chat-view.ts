@@ -1,4 +1,8 @@
+import { isHumanAttentionMessage } from "../human-attention.js";
+import { resolveAttentionFrame, renderAttention, type HumanAttention, type AttentionHit } from "./chat-attention.js";
 import stringWidth from "string-width";
+import { draftStyleSpans, type DraftHighlightOptions } from "./chat-draft-highlight.js";
+import { agentStyle, paintStyle, themeStyle, type ChatColorMode } from "./theme.js";
 import type { RoomEvent } from "../types.js";
 import {
   formatChatEvent,
@@ -7,6 +11,7 @@ import {
   isChatConversationActivity,
   formatChatStatus,
   sanitizeChatText,
+  resolveChatRecipient,
   type ChatFormatContext,
   type ChatStatusInput
 } from "./chat-format.js";
@@ -56,14 +61,16 @@ export const CHAT_COMMANDS: ChatCommandInfo[] = [
     usage: "/bottom",
     description: "jump to the latest messages"
   },
+  { name: "ack", usage: "/ack [#message|all]", description: "acknowledge and dismiss visible pinned messages (or one message/all pending)" },
+  { name: "theme", usage: "/theme [lantern|tide|dusk]", description: "show or change the chat palette" },
   { name: "help", usage: "/help", description: "list commands and keys" }
 ];
 
 // Help is intentionally compact; detailed keyboard controls have their own
 // view so the command list remains readable at ordinary terminal heights.
-export function formatChatHelp(width: number, color: boolean, keys = false, inline = false): string {
+export function formatChatHelp(width: number, color: boolean, keys = false, inline = false, mode: ChatColorMode = "256"): string {
   const usable = Math.max(12, width);
-  const accent = (text: string) => color ? `\u001b[1;38;5;147m${text}\u001b[0m` : text;
+  const accent = (text: string) => paintStyle(color, `1;${themeStyle("accent", mode)}`, text);
   const muted = (text: string) => color ? `\u001b[2m${text}\u001b[0m` : text;
   const entries: [string, string][] = keys ? [
     ["Enter", "Send; in /go, open the selected room"],
@@ -288,6 +295,7 @@ interface Layout {
   starts: Map<number, number>;
   order: number[];
   receipts: Map<number, number>;
+  human_messages: AttentionHit[];
 }
 
 export class ChatTranscript {
@@ -462,6 +470,14 @@ export class ChatTranscript {
       .map(([seq, row]) => [seq, padding + row - top]));
   }
 
+  humanMessageRows(height: number, width: number, context: ChatFormatContext): AttentionHit[] {
+    const layout = this.layout(width, context);
+    const top = this.topRow(layout, Math.max(0, layout.rows.length - height));
+    const padding = Math.max(0, height - Math.min(height, layout.rows.length - top));
+    return layout.human_messages.filter(hit => hit.row >= top && hit.row < top + height)
+      .map(hit => ({ ...hit, row: padding + hit.row - top }));
+  }
+
   private layout(width: number, context: ChatFormatContext): Layout {
     const key = `${width}|${this.epoch}|${context.show_turn_events}|${context.color}|${context.now?.toDateString()}|${context.history_before}`;
     if (this.layoutCache?.key === key) return this.layoutCache.layout;
@@ -470,6 +486,7 @@ export class ChatTranscript {
     const starts = new Map<number, number>();
     const order: number[] = [];
     const receipts = new Map<number, number>();
+    const humanMessages: AttentionHit[] = [];
     let previous: "message" | "other" | null = null;
     let previousEvent: RoomEvent | undefined;
     let section: string | undefined;
@@ -496,11 +513,17 @@ export class ChatTranscript {
       if (block.kind === "event" && context.tracks_delivery?.(block.event)) {
         receipts.set(block.event.event_seq, rows.length);
       }
+      if (block.kind === "event" && isHumanAttentionMessage(block.event, context.self_agent_id) &&
+          !context.human_acknowledged?.(block.event)) {
+        for (let offset = 0; offset < lines.length; offset++) {
+          humanMessages.push({ event_seq: block.event.event_seq, row: rows.length + offset });
+        }
+      }
       rows.push(...lines);
       previous = isMessage ? "message" : "other";
     }
 
-    const layout = { rows, starts, order, receipts };
+    const layout = { rows, starts, order, receipts, human_messages: humanMessages };
     this.layoutCache = { key, layout };
     return layout;
   }
@@ -543,21 +566,25 @@ export interface ComposerLayout {
 
 interface ComposerStop { offset: number; row: number; col: number }
 
-function composerGeometry(draft: ChatDraft, width: number): ComposerLayout & { stops: ComposerStop[] } {
+function composerGeometry(draft: ChatDraft, width: number, highlight?: DraftHighlightOptions): ComposerLayout & { stops: ComposerStop[] } {
   const usable = Math.max(CHAT_PROMPT.length + 2, width);
   const indent = " ".repeat(CHAT_PROMPT.length);
   const rows: string[] = [];
   const stops: ComposerStop[] = [];
-  let row = CHAT_PROMPT;
+  const spans = highlight ? draftStyleSpans(draft.line, highlight) : [];
+  let row = highlight ? paintStyle(true, `1;${themeStyle("accent", highlight.color_mode)}`, CHAT_PROMPT) : CHAT_PROMPT;
+  let activeStyle = "";
   let rowWidth = CHAT_PROMPT.length;
   let cursorRow = -1;
   let cursorCol = 0;
   let offset = 0;
 
   const newRow = () => {
+    if (activeStyle) row += "\u001b[0m";
     rows.push(row);
     row = indent;
     rowWidth = indent.length;
+    activeStyle = "";
   };
 
   for (const { segment } of graphemes.segment(draft.line)) {
@@ -574,6 +601,12 @@ function composerGeometry(draft: ChatDraft, width: number): ComposerLayout & { s
     if (isBreak) {
       newRow();
     } else {
+      const style = spans.find(span => offset >= span.start && offset < span.end)?.style ?? "";
+      if (style !== activeStyle) {
+        if (activeStyle) row += "\u001b[0m";
+        if (style) row += `\u001b[${style}m`;
+        activeStyle = style;
+      }
       row += segment;
       rowWidth += cellWidth;
     }
@@ -586,6 +619,7 @@ function composerGeometry(draft: ChatDraft, width: number): ComposerLayout & { s
     cursorRow = rows.length;
     cursorCol = rowWidth;
   }
+  if (activeStyle) row += "\u001b[0m";
   rows.push(row);
   return { rows, cursor_row: cursorRow, cursor_col: cursorCol, stops };
 }
@@ -601,8 +635,8 @@ export function moveChatCursorVertical(draft: ChatDraft, width: number, directio
   return { draft: { line: draft.line, cursor: closest?.offset ?? draft.cursor }, column };
 }
 
-export function layoutComposer(draft: ChatDraft, width: number, maxRows = MAX_COMPOSER_ROWS): ComposerLayout {
-  const { rows, cursor_row: cursorRow, cursor_col: cursorCol } = composerGeometry(draft, width);
+export function layoutComposer(draft: ChatDraft, width: number, maxRows = MAX_COMPOSER_ROWS, highlight?: DraftHighlightOptions): ComposerLayout {
+  const { rows, cursor_row: cursorRow, cursor_col: cursorCol } = composerGeometry(draft, width, highlight);
   if (rows.length <= maxRows) {
     return { rows, cursor_row: cursorRow, cursor_col: cursorCol };
   }
@@ -769,6 +803,7 @@ export interface ChatScreenInput {
    * place of the suggestion menu above the room bar.
    */
   panel?: string[];
+  attention?: HumanAttention;
   transcript: ChatTranscript;
   format: ChatFormatContext;
   status: Omit<ChatStatusInput, "columns">;
@@ -781,9 +816,55 @@ export interface ChatScreenInput {
   rows: number;
 }
 
+function draftHighlight(input: ChatScreenInput): DraftHighlightOptions | undefined {
+  if (!input.format.color) return undefined;
+  const members = input.status.members.filter(member => member.agent_id !== input.format.self_agent_id && member.process_liveness !== "gone");
+  const aliases = members.flatMap(member => [member.agent_id, member.display_name ?? "", input.format.name_of(member.agent_id), member.agent_id.split(":")[0]]
+    .filter(Boolean).map(name => ({ name: name.toLowerCase(), id: member.agent_id })));
+  return {
+    commands: [...CHAT_COMMANDS.map(command => command.name), "exit", "q", "dm", "msg", "all", "room", "int"],
+    color_mode: input.format.color_mode,
+    mention: selector => {
+      if (selector === "everyone" || selector === "all") return { state: "group" };
+      const exact = aliases.find(alias => alias.name === selector);
+      if (exact) {
+        const recipients = resolveChatRecipient(selector, members, input.format.self_agent_id);
+        if ("error" in recipients) return { state: "unknown" };
+        return recipients.agent_ids.length === 1
+          ? { state: "resolved", id: recipients.agent_ids[0] } : { state: "group" };
+      }
+      return { state: aliases.some(alias => alias.name.startsWith(selector)) || !selector ? "partial" : "unknown" };
+    }
+  };
+}
+
+function completionRow(input: ChatScreenInput, entry: ChatCompletion, active: boolean, width: number, highlight: DraftHighlightOptions | undefined): string {
+  if (!input.format.color) return truncateStyled(`${active ? "›" : " "} ${entry.label}  ${entry.description}`, width);
+  const mode = input.format.color_mode;
+  const selector = entry.label.replace(/^!?@/, "");
+  const resolution = highlight!.mention(selector.toLowerCase());
+  const labelStyle = entry.label.startsWith("/") ? themeStyle("command", mode)
+    : entry.label.startsWith("#") ? themeStyle("path", mode)
+    : resolution.id ? agentStyle(resolution.id, mode) : themeStyle("mention", mode);
+  const typed = /\S*$/.exec(input.draft.line.slice(0, input.draft.cursor))?.[0] ?? "";
+  const prefix = entry.label.startsWith("#") ? `#${typed.replace(/^#/, "")}` : typed;
+  const matchLength = prefix && entry.label.toLowerCase().startsWith(prefix.toLowerCase()) ? prefix.length : 0;
+  const label = paintStyle(true, `1;${labelStyle}`, entry.label.slice(0, matchLength)) +
+    paintStyle(true, labelStyle, entry.label.slice(matchLength));
+  const marker = paintStyle(true, `1;${themeStyle("accent", mode)}`, active ? "›" : " ");
+  let row = truncateStyled(`${marker} ${label}  ${paintStyle(true, themeStyle("muted", mode), entry.description)}`, width);
+  if (active) {
+    const selection = `\u001b[${themeStyle("selection", mode, true)};${themeStyle("selectionText", mode)}m`;
+    row = selection + row.replace(/\u001b\[0m/g, `\u001b[0m${selection}`) + " ".repeat(Math.max(0, width - textWidth(row))) + "\u001b[0m";
+  }
+  return row;
+}
+
 export interface ChatMemberHit { agent_id: string; row: number; start: number; end: number }
 
 export interface ChatFrame {
+  human_messages?: AttentionHit[];
+  attention?: AttentionHit[];
   members?: ChatMemberHit[];
   lines: string[];
   cursor: { row: number; col: number };
@@ -799,39 +880,43 @@ export function chatMemberAt(frame: ChatFrame | null, column: number, row: numbe
 export function renderInlinePanel(input: ChatScreenInput): ChatFrame {
   const width = Math.max(1, input.columns - 1);
   const height = Math.max(1, input.rows - 1);
-  if (width < 4 || height < 4) {
-    return { lines: [truncateStyled(CHAT_PROMPT + input.draft.line.replace(/\n/g, " "), width)], cursor: { row: 0, col: 0 } };
+  const attention = renderAttention(input.attention, width, input.rows, input.format);
+  if (width < 4 || height < 5) {
+    const lines = [...(width >= 4 ? attention.lines.slice(0, 1) : []), truncateStyled(CHAT_PROMPT + input.draft.line.replace(/\n/g, " "), width)];
+    return { lines, cursor: { row: lines.length - 1, col: 0 } };
   }
   const matches = input.completions ?? [];
   const panel = input.panel ?? null;
   // In the normal terminal screen the menu occupies real terminal rows.
   // Reserve its maximum height even when closed, so suggestions never move
   // the room bar and prompt or scroll the console while someone types.
-  const menuCapacity = panel ? Math.min(panel.length, Math.max(0, height - 4)) : Math.min(MAX_MENU_ROWS, Math.max(0, height - 4));
-  const topRows = menuCapacity + 1;
+  const menuCapacity = panel ? Math.min(panel.length, Math.max(0, height - 5 - attention.lines.length)) : Math.min(MAX_MENU_ROWS, Math.max(0, height - 5 - attention.lines.length));
+  const topRows = attention.lines.length + menuCapacity + 2;
   const composerCapacity = Math.max(1, Math.min(MAX_COMPOSER_ROWS, height - topRows - 2));
-  const composer = layoutComposer(input.draft, width, composerCapacity);
+  const highlight = draftHighlight(input);
+  const composer = layoutComposer(input.draft, width, composerCapacity, highlight);
   const selected = Math.max(0, Math.min(input.completion_index ?? 0, matches.length - 1));
   const first = Math.max(0, selected - menuCapacity + 1);
   const visible = matches.slice(first, first + menuCapacity);
   const emptyRows = menuCapacity - visible.length;
-  const menu = panel ? panel.slice(-menuCapacity).map((line) => truncateStyled(line, width)) : Array.from({ length: menuCapacity }, (_, row) => {
+  const menu = panel ? (menuCapacity ? panel.slice(-menuCapacity).map((line) => truncateStyled(line, width)) : []) : Array.from({ length: menuCapacity }, (_, row) => {
     if (row < emptyRows) return "";
     const index = first + row - emptyRows;
     const entry = matches[index];
     if (!entry) return "";
     const active = index === selected;
-    return truncateStyled(`${active ? "›" : " "} ${entry.label}  ${dim(input.format, entry.description)}`, width);
+    return completionRow(input, entry, active, width, highlight);
   });
   const rule = dim(input.format, "─".repeat(width));
   const title = input.room_path ? roomTitle(input, Math.max(1, width - 4)) : "";
   const roomBar = title
     ? truncateStyled(`${dim(input.format, "─ ")}${title}${dim(input.format, " " + "─".repeat(Math.max(0, width - textWidth(title) - 3)))}`, width)
     : rule;
-  const top = [...menu, roomBar];
+  const top = [...attention.lines, "", ...menu, roomBar];
   const lines = [...top, ...composer.rows, rule, renderFooter(input, width)];
   return {
     lines,
+    attention: attention.hits,
     cursor: { row: topRows + composer.cursor_row, col: Math.min(width - 1, composer.cursor_col) }
   };
 }
@@ -903,9 +988,17 @@ function roomHeader(path: string, width: number, context: ChatFormatContext): st
 // over its last rows), rule, composer, rule, status. Every row stays one cell short of the terminal
 // width so the terminal never auto-wraps a full row.
 export function renderChatScreen(input: ChatScreenInput): ChatFrame {
+  return resolveAttentionFrame(input.attention, attention => {
+    const frame = renderChatScreenFrame({ ...input, attention });
+    return { frame, visible: (frame.human_messages ?? []).map(hit => hit.event_seq) };
+  });
+}
+
+function renderChatScreenFrame(input: ChatScreenInput): ChatFrame {
   const width = Math.max(1, input.columns - 1);
   const height = Math.max(1, input.rows);
   const context = input.format;
+  const highlight = draftHighlight(input);
 
   if (width < 4 || height < 4) {
     return {
@@ -918,19 +1011,20 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
   const composer = layoutComposer(
     input.draft,
     width,
-    Math.min(MAX_COMPOSER_ROWS, height - 3 - roomHeaderRows(input))
+    Math.min(MAX_COMPOSER_ROWS, height - 3 - roomHeaderRows(input)),
+    highlight
   );
-  const transcriptHeight = chatTranscriptHeight(input);
+  const attention = renderAttention(input.attention, width, height, context);
+  const transcriptHeight = Math.max(0, chatTranscriptHeight(input) - attention.lines.length);
   const menuCapacity = Math.min(MAX_MENU_ROWS, Math.max(0, transcriptHeight - (transcriptHeight > 1 ? 1 : 0)));
   const completions = input.completions ?? getChatCompletions(input.draft, []);
   const selected = Math.max(0, Math.min(input.completion_index ?? 0, completions.length - 1));
   const first = Math.max(0, selected - menuCapacity + 1);
   const menuRows = input.panel
-    ? input.panel.slice(-Math.max(1, transcriptHeight - 1)).map((line) => truncateStyled(line, width))
+    ? (transcriptHeight > 1 ? input.panel.slice(-(transcriptHeight - 1)).map((line) => truncateStyled(line, width)) : [])
     : completions.slice(first, first + menuCapacity).map((entry, index) => {
       const active = first + index === selected;
-      const label = active && context.color ? `\u001b[1m${entry.label}\u001b[0m` : entry.label;
-      return truncateStyled(`${active ? "›" : " "} ${label}  ${dim(context, entry.description)}`, width);
+      return completionRow(input, entry, active, width, highlight);
     });
 
   const rule = dim(context, "─".repeat(width));
@@ -951,7 +1045,7 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
     transcript.splice(transcript.length - overlay.length, overlay.length, ...overlay);
   }
   const header = roomHeaderRows(input) ? [roomTitle({ ...input, format: context }, width)] : [];
-  const lines = [...header, ...transcript, ...fixed]
+  const lines = [...header, ...attention.lines, ...transcript, ...fixed]
     .slice(-height)
     .map((line) => truncateStyled(line, width));
   const composerTop = lines.length - composer.rows.length - 2;
@@ -959,6 +1053,10 @@ export function renderChatScreen(input: ChatScreenInput): ChatFrame {
   return {
     lines,
     members: memberHits,
+    attention: attention.hits.map(hit => ({ ...hit, row: hit.row + header.length })),
+    human_messages: input.transcript.humanMessageRows(transcriptHeight, width, context)
+      .filter(hit => hit.row < transcriptHeight - (menuRows.length ? menuRows.length + 1 : 0))
+      .map(hit => ({ ...hit, row: hit.row + header.length + attention.lines.length })),
     cursor: {
       row: Math.min(height - 1, Math.max(0, composerTop + composer.cursor_row)),
       col: Math.min(width, composer.cursor_col)
@@ -975,7 +1073,7 @@ function renderFooter(input: ChatScreenInput, width: number, onMember?: (agent_i
       transcript.unread > 0
         ? `↓ ${transcript.unread} new · ctrl+end`
         : "scrolled · ctrl+end";
-    suffix = context.color ? `\u001b[1;33m${label}\u001b[0m` : label;
+    suffix = paintStyle(context.color, `1;${themeStyle("warn", context.color_mode)}`, label);
   } else if ((input.completions?.length ?? 0) > 0) {
     suffix = dim(context, /^\/go(?:\s|$)/i.test(input.draft.line)
       ? "↑↓ choose · Enter open · Tab fill"

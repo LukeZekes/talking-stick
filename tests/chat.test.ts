@@ -26,6 +26,7 @@ import {
 } from "../src/cli/chat-format.js";
 import { chatInlineEnabled, chatTerminalCapable, createChatIdentity, runChatConsole, runChatSession, uniqueRoomNames } from "../src/cli/chat.js";
 import { formatRoomStrip } from "../src/cli/chat-format.js";
+import { chatThemeName, setChatTheme } from "../src/cli/theme.js";
 import { parseCommand } from "../src/cli/parser.js";
 
 const cleanups: Array<() => void> = [];
@@ -218,7 +219,7 @@ describe("chat rendering", () => {
     const context = { self_agent_id: "human:op", name_of: () => "codex", color: true, show_turn_events: false, now };
     const text = formatChatEvent(event({ event_type: "message_sent", from_agent_id: "codex:aa", created_at: yesterday,
       payload: { body: "old message", delivery_hint: "normal" } }), context)!;
-    expect(text).toBe("\u001b[2;90mcodex  Yesterday at 09:05\u001b[0m\n\u001b[2;90m  old message\u001b[0m");
+    expect(text).toBe("\u001b[2;38;5;244mcodex  Yesterday at 09:05\u001b[0m\n\u001b[2;38;5;244m  old message\u001b[0m");
     expect(chatDayLabel(new Date(2026, 8, 13).toISOString(), now)).toBe("2026-09-13");
     expect(formatChatTime(now.toISOString(), now)).toBe("10:00");
     expect(formatChatTime("invalid", now)).toBe("--:--");
@@ -1678,7 +1679,7 @@ test("inline incoming messages erase from the actual draft cursor and restore pa
     await until(() => out.includes("incoming-during-edit"));
     // The reserved suggestion rows are above the room bar. Move back only
     // to that fixed panel start, never into the transcript.
-    expect(out.startsWith("\r\u001b[4A\u001b[J")).toBe(true);
+    expect(out.startsWith("\r\u001b[5A\u001b[J")).toBe(true);
     expect(out).toContain("first");
     expect(out).toContain("second");
   } finally {
@@ -2303,4 +2304,286 @@ fi
     if (previous === undefined) delete process.env.VISUAL; else process.env.VISUAL = previous;
     input.end(); await session;
   }
+});
+
+
+test("/theme switches palettes locally and rejects unknown names without sending a message", async () => {
+  const { root, service } = setupService();
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let text = "";
+  output.on("data", chunk => { text += chunk.toString(); });
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: false, color: false,
+    history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => text.includes("Talking Stick chat"));
+    input.write("/theme tide\n");
+    await until(() => text.includes("Theme: tide"));
+    expect(chatThemeName()).toBe("tide");
+    input.write("/theme missing\n");
+    await until(() => text.includes('Unknown theme "missing"'));
+    expect(chatThemeName()).toBe("tide");
+    input.write("/theme dusk\n/theme\n");
+    await until(() => text.includes("Theme: dusk"));
+    expect(chatThemeName()).toBe("dusk");
+    const room = service.listRooms({}).rooms.find(room => room.canonical_path === root)!;
+    expect(service.getRoomEvents({ room_id: room.room_id, include_all: true })
+      .filter(event => event.event_type === "message_sent")).toHaveLength(0);
+  } finally { input.write("/quit\n"); await session; setChatTheme("lantern"); }
+});
+
+test.each([true, false])("/theme repaints existing visible content and keeps the composer anchored (inline=%s)", async (inline) => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:paint", context_path: root });
+  for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:paint", room_id: joined.room_id,
+    body: `visible-theme-${i} #137` });
+  const input = Object.assign(new PassThrough(), { setRawMode() {} });
+  const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+  const vt = new Terminal({ cols: 100, rows: 28, allowProposedApi: true, scrollback: 1000 });
+  vt.onData(data => input.write(data));
+  let bytes = "";
+  output.on("data", chunk => { bytes += chunk.toString(); vt.write(chunk.toString()); });
+  const flush = () => new Promise<void>(resolve => vt.write("\u001b[0m", resolve));
+  const rows = () => Array.from({ length: 28 }, (_, i) =>
+    vt.buffer.active.getLine(vt.buffer.active.baseY + i)?.translateToString(true) ?? "");
+  const referenceColor = () => {
+    const y = rows().findIndex(row => row.includes("visible-theme-24 #137"));
+    expect(y).toBeGreaterThanOrEqual(0);
+    const line = vt.buffer.active.getLine(vt.buffer.active.baseY + y)!;
+    return line.getCell(line.translateToString(true).indexOf("#137"))!.getFgColor();
+  };
+  const previousColorTerm = process.env.COLORTERM;
+  process.env.COLORTERM = "";
+  setChatTheme("lantern");
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline,
+    color: true, history: 20, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => bytes.includes("visible-theme-24"));
+    await flush();
+    expect(referenceColor()).toBe(110);
+    const composerRow = rows().findIndex(row => row.startsWith("> "));
+    const oldest = vt.buffer.active.getLine(0)?.translateToString(true);
+    for (const [name, color] of [["dusk", 147], ["tide", 110], ["lantern", 110]] as const) {
+      bytes = "";
+      input.write(`/theme ${name}\r`);
+      await until(() => bytes.includes(`Theme: ${name}`));
+      await new Promise(resolve => setTimeout(resolve, 30));
+      await flush();
+      expect(referenceColor()).toBe(color);
+      expect(rows().findIndex(row => row.startsWith("> "))).toBe(composerRow);
+      expect(rows().filter(row => row.includes("visible-theme-24"))).toHaveLength(1);
+      expect(bytes).not.toContain("\u001b[3J");
+      if (inline) expect(vt.buffer.active.getLine(0)?.translateToString(true)).toBe(oldest);
+    }
+  } finally {
+    input.end(); await session; vt.dispose(); setChatTheme("lantern");
+    if (previousColorTerm === undefined) delete process.env.COLORTERM; else process.env.COLORTERM = previousColorTerm;
+  }
+});
+
+test("human acknowledgement is explicit, durable across console sessions and scoped to the recipient", async () => {
+  const { root, service } = setupService();
+  const first = "human:op:chat:aaaaaaaa";
+  const second = "human:op:chat:bbbbbbbb";
+  const other = "human:other:chat:cccccccc";
+  const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
+  for (const id of [first, second, other]) service.joinPath({ agent_id: id, context_path: root,
+    process_metadata: { session_kind: "human_chat" } });
+  const direct = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: first, body: "needs attention" });
+  const broadcast = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: "ordinary broadcast" });
+  service.sendMessage({ agent_id: first, room_id: joined.room_id, to_agent_id: second, body: "own console" });
+  service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: other, body: "other user" });
+  const read = () => service.getHumanAttention({ room_id: joined.room_id, human_id: second });
+  expect(read().messages.map(event => event.event_seq)).toEqual([direct.event_seq]);
+  await service.waitForEvents({ room_id: joined.room_id, agent_id: first, target_agent_id: "self", after_event_seq: direct.event_seq - 1, max_wait_ms: 1 });
+  expect(read().total).toBe(1); // Delivery is not a human acknowledgement.
+  expect(() => service.acknowledgeHumanMessage({ room_id: joined.room_id, agent_id: other, event_seq: direct.event_seq })).toThrow();
+  expect(() => service.acknowledgeHumanMessage({ room_id: joined.room_id, agent_id: second, event_seq: broadcast.event_seq })).toThrow();
+  service.acknowledgeHumanMessage({ room_id: joined.room_id, agent_id: second, event_seq: direct.event_seq });
+  service.acknowledgeHumanMessage({ room_id: joined.room_id, agent_id: second, event_seq: direct.event_seq });
+  expect(read().total).toBe(0);
+  expect(service.getHumanAttention({ room_id: joined.room_id, human_id: first }).total).toBe(0);
+  const reopened = new TalkingStickService({ dbPath: path.join(root, ".state", "rooms.sqlite") });
+  try { expect(reopened.getHumanAttention({ room_id: joined.room_id, human_id: first }).total).toBe(0); }
+  finally { reopened.close(); }
+  expect(service.getRoomEvents({ room_id: joined.room_id, include_all: true }).some(event => event.event_seq === direct.event_seq)).toBe(true);
+  // The migration's activation high-water excludes the pre-feature backlog.
+  service.db.prepare("UPDATE human_attention_start SET event_seq = ?").run(service.globalEventSeq());
+  const later = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: second, body: "new attention" });
+  expect(read().messages.map(event => event.event_seq)).toEqual([later.event_seq]);
+});
+
+test.each([true, false])("human pins stay visible and click acknowledges only the chosen message (inline=%s)", async inline => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
+  const input = Object.assign(new PassThrough(), { setRawMode() {} });
+  const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+  const vt = new Terminal({ cols: 100, rows: 28, allowProposedApi: true });
+  vt.onData(data => input.write(data));
+  let bytes = "";
+  output.on("data", chunk => { bytes += chunk.toString(); vt.write(chunk.toString()); });
+  const flush = () => new Promise<void>(resolve => vt.write("\u001b[0m", resolve));
+  const screen = () => Array.from({ length: output.rows }, (_, i) => vt.buffer.active.getLine(vt.buffer.active.baseY + i)?.translateToString(true) ?? "");
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline,
+    color: true, history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => bytes.includes("Type to message the room"));
+    const first = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "first pinned request" });
+    const second = service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "second pinned request" });
+    await until(() => bytes.includes("\u001b[?1000h"));
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    const matches = screen().map((line, index) => line.includes("first pinned request") ? index : -1).filter(index => index >= 0);
+    expect(matches).toHaveLength(1);
+    const composerRow = screen().findIndex(line => line.startsWith("> "));
+    for (let i = 0; i < 12; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `scroll-pin-${i}` });
+    await until(() => bytes.includes("scroll-pin-11"));
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    const promoted = screen().map((line, index) => line.includes("first pinned request") ? index : -1).filter(index => index >= 0);
+    expect(promoted).toHaveLength(1);
+    const y = promoted[0];
+    expect(screen().findIndex(line => line.startsWith("> "))).toBe(composerRow);
+    input.write(`\u001b[<0;5;${y + 1}M`);
+    await until(() => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total === 1);
+    expect(service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).messages[0].event_seq).toBe(second.event_seq);
+    input.write("/ack all\r");
+    await until(() => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total === 0);
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    expect(screen().join("\n")).not.toContain("awaiting acknowledgement");
+    expect(service.getRoomEvents({ room_id: joined.room_id, include_all: true }).some(event => event.event_seq === second.event_seq)).toBe(true);
+  } finally { input.end(); await session; vt.dispose(); }
+});
+
+
+test("default inline pins keep native mouse behavior and --no-mouse prevents click acknowledgement", async () => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
+  const input = Object.assign(new PassThrough(), { setRawMode() {} });
+  const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+  let bytes = "";
+  output.on("data", chunk => { bytes += chunk.toString(); });
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline: true,
+    mouse: false, color: false, history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => bytes.includes("Type to message the room"));
+    service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "keyboard acknowledgement" });
+    await until(() => bytes.includes("keyboard acknowledgement"));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(bytes).not.toContain("\u001b[?1000h");
+    input.write("/ack\r");
+    await until(() => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total === 0);
+  } finally { input.end(); await session; }
+});
+
+test("upgrading to human attention starts at the migration high-water instead of old messages", () => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
+  service.joinPath({ agent_id: "human:op", context_path: root, process_metadata: { session_kind: "human_chat" } });
+  service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "pre-feature backlog" });
+  service.db.exec("DROP TABLE human_message_acknowledgements; DROP TABLE human_attention_start; DELETE FROM schema_migrations WHERE id = 25");
+  const upgraded = new TalkingStickService({ dbPath: path.join(root, ".state", "rooms.sqlite") });
+  try {
+    expect(upgraded.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total).toBe(0);
+    upgraded.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "after activation" });
+    expect(upgraded.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).messages[0].payload?.body).toBe("after activation");
+  } finally { upgraded.close(); }
+});
+
+test("theme choices persist for the same human across sessions and database reopens", () => {
+  const { root, service } = setupService();
+  const first = "human:theme:chat:aaaaaaaa";
+  const second = "human:theme:chat:bbbbbbbb";
+  const joined = service.joinPath({ agent_id: first, context_path: root, process_metadata: { session_kind: "human_chat" } });
+  service.setHumanChatTheme({ room_id: joined.room_id, agent_id: first, theme: "dusk" });
+  const reopened = new TalkingStickService({ dbPath: path.join(root, ".state", "rooms.sqlite") });
+  try {
+    expect(reopened.getHumanChatTheme(second)).toBe("dusk");
+    expect(reopened.getHumanChatTheme("human:another")).toBeUndefined();
+    expect(() => reopened.setHumanChatTheme({ room_id: joined.room_id, agent_id: "codex:intruder", theme: "tide" })).toThrow();
+    expect(reopened.getHumanChatTheme(first)).toBe("dusk");
+  } finally { reopened.close(); }
+});
+
+test.each([true, false])("bare /ack dismisses all visible pins and clears the final transcript background (inline=%s)", async inline => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
+  const input = Object.assign(new PassThrough(), { setRawMode() {} });
+  const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+  const vt = new Terminal({ cols: 100, rows: 28, allowProposedApi: true });
+  vt.onData(data => input.write(data));
+  let bytes = "";
+  output.on("data", chunk => { bytes += chunk.toString(); vt.write(chunk.toString()); });
+  const flush = () => new Promise<void>(resolve => vt.write("\u001b[0m", resolve));
+  const pending = () => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" });
+  const backgroundDefault = () => {
+    const lines = Array.from({ length: 28 }, (_, i) => vt.buffer.active.getLine(vt.buffer.active.baseY + i));
+    const line = lines.reverse().find(line => line?.translateToString(true).includes("last attention message"))!;
+    expect(line).toBeDefined();
+    return line.getCell(line.translateToString(true).indexOf("last attention message"))!.isBgDefault();
+  };
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline,
+    color: true, history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => bytes.includes("Type to message the room"));
+    for (let i = 0; i < 5; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id,
+      to_agent_id: "human:op", body: i === 4 ? "last attention message" : `attention-${i}` });
+    await until(() => bytes.includes("\u001b[?1000h"));
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    expect(bytes).toContain("\u001b[?1000h"); // Clicks work without --mouse.
+    expect(backgroundDefault()).toBe(false);
+    input.write("/ack\r");
+    await until(() => pending().total === 0); // All five originals are visible once, without duplicate pins.
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    expect(backgroundDefault()).toBe(true);
+    expect(bytes).toContain("\u001b[?1000l");
+  } finally { input.end(); await session; vt.dispose(); }
+});
+
+test.each([[true, false, true], [false, false, true], [true, true, true], [false, true, true], [true, false, false], [true, true, false]])("one visible highlighted copy remains clickable after layout changes (inline=%s, reflow=%s, cursorReply=%s)", async (inline, reflow, cursorReply) => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:attention", context_path: root });
+  const input = Object.assign(new PassThrough(), { setRawMode() {} });
+  const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+  const vt = new Terminal({ cols: 100, rows: 28, allowProposedApi: true });
+  if (cursorReply) vt.onData(data => input.write(data));
+  else vt.write("\u001b[6;1H");
+  let bytes = "";
+  output.on("data", chunk => { bytes += chunk.toString(); vt.write(chunk.toString()); });
+  const flush = () => new Promise<void>(resolve => vt.write("\u001b[0m", resolve));
+  const screen = () => Array.from({ length: output.rows }, (_, i) => vt.buffer.active.getLine(vt.buffer.active.baseY + i)?.translateToString(true) ?? "");
+  const pending = () => service.getHumanAttention({ room_id: joined.room_id, human_id: "human:op" }).total;
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: true, inline,
+    color: true, history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => bytes.includes("Type to message the room"));
+    service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, to_agent_id: "human:op", body: "click either copy\nWrapped text with 👩🏽‍💻 and 界 plus enough words to cross a narrow row." });
+    await until(() => bytes.includes("\u001b[?1000h"));
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    if (reflow) {
+      input.write("\u001b[200~draft first\ndraft second\u001b[201~");
+      vt.resize(50, 30); output.columns = 50; output.rows = 30; output.emit("resize");
+      service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: "layout changed" });
+      await until(() => bytes.includes("layout changed"));
+      await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    }
+    const target = reflow ? "界" : "click either copy";
+    expect(screen().filter(line => line.includes(target))).toHaveLength(1);
+    for (let i = 0; i < 25; i++) service.sendMessage({ agent_id: "codex:attention", room_id: joined.room_id, body: `promotion-${i}` });
+    await until(() => bytes.includes("promotion-24"));
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    expect(screen().filter(line => line.includes("click either copy"))).toHaveLength(1);
+    vt.resize(100, 100); output.columns = 100; output.rows = 100; output.emit("resize");
+    await new Promise(resolve => setTimeout(resolve, 30)); await flush();
+    const copies = screen().map((line, index) => line.includes(target) ? index : -1).filter(index => index >= 0);
+    expect(copies).toHaveLength(1);
+    const y = copies[0];
+    input.write(`\u001b[<0;5;${y + 1}M`);
+    await until(() => pending() === 0);
+    if (reflow) { await flush(); expect(screen().join("\n")).toContain("draft second"); }
+  } finally { input.end(); await session; vt.dispose(); }
 });

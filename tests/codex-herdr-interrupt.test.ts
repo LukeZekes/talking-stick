@@ -21,6 +21,11 @@ describe("Codex Herdr interrupt", () => {
     expect(interruptCodexHerdr(member, herdr.runner, readStartTime)).toBe("idle");
     expect(herdr.calls.some((call) => call[1] === "send-keys")).toBe(false);
 
+    // tmux reports no busy/idle status; the proven pane still gets Escape.
+    herdr.calls.length = 0;
+    herdr.agentStatus = null;
+    expect(interruptCodexHerdr(member, herdr.runner, readStartTime)).toBe("sent");
+
     herdr.agentStatus = "working";
     herdr.failSendKeys = true;
     expect(interruptCodexHerdr(member, herdr.runner, readStartTime)).toBe("unconfirmed");

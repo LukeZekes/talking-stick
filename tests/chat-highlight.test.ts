@@ -11,7 +11,7 @@ const highlight = (body: string) => highlightChatBody(body, options);
 describe("highlightChatBody", () => {
   it("styles inline code, bold, urls, refs, and agent mentions", () => {
     expect(highlight("fix `setRoomRoles` **now**, see #22871 and https://x.dev/a.")).toBe(
-      "fix {2|`}{38;5;180|setRoomRoles}{2|`} {2|**}{1|now}{2|**}, see {38;5;179|#22871} and {4;38;5;75|https://x.dev/a}."
+      "fix {2|`}{38;5;180|setRoomRoles}{2|`} {2|**}{1|now}{2|**}, see {38;5;110|#22871} and {4;38;5;75|https://x.dev/a}."
     );
     expect(highlight("ping @codex and codex:fb4bbf13")).toBe(
       "ping {38;5;78|@codex} and {38;5;78|codex:fb4bbf13}"
