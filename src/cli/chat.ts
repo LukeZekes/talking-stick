@@ -74,6 +74,7 @@ import {
   type ParsedCommand
 } from "./parser.js";
 import type { Runtime } from "./runtime.js";
+import { ENHANCED_KEYS_OFF, ENHANCED_KEYS_ON } from "./terminal-keys.js";
 
 const DEFAULT_HISTORY = 20;
 const HISTORY_SCAN_EVENTS = 500;
@@ -513,13 +514,13 @@ export async function runChatSession(
           externalEditorActive = true;
           if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
           if (inline) eraseComposer();
-          output.write("\u001b[?2026l\u001b[?2004l\u001b[?1000l\u001b[?1006l\u001b[?25h" + (fullscreen ? "\u001b[?1049l" : ""));
+          output.write("\u001b[?2026l\u001b[?2004l\u001b[?1000l\u001b[?1006l\u001b[?25h" + ENHANCED_KEYS_OFF + (fullscreen ? "\u001b[?1049l" : ""));
           editor?.suspend();
         },
         resume: () => {
           externalEditorActive = false;
           if (closed) return;
-          output.write((fullscreen ? "\u001b[?1049h" : "") + "\u001b[?2004h" + (fullscreen && options.mouse ? "\u001b[?1000h\u001b[?1006h" : ""));
+          output.write((fullscreen ? "\u001b[?1049h" : "") + "\u001b[?2004h" + ENHANCED_KEYS_ON + (fullscreen && options.mouse ? "\u001b[?1000h\u001b[?1006h" : ""));
           previousFrame = null;
           editor?.resume();
           if (inline) {
@@ -865,13 +866,13 @@ export async function runChatSession(
     editor?.close();
     if (inlineActive) {
       eraseComposer();
-      output.write("\u001b[?2026l\u001b[?2004l");
+      output.write("\u001b[?2026l\u001b[?2004l" + ENHANCED_KEYS_OFF);
       inlineActive = false;
     }
     if (!screenActive) return;
     screenActive = false;
     output.write(
-      "\u001b[?2026l\u001b[?1000l\u001b[?1006l\u001b[?2004l\u001b[?1049l\u001b[?25h"
+      "\u001b[?2026l\u001b[?1000l\u001b[?1006l\u001b[?2004l" + ENHANCED_KEYS_OFF + "\u001b[?1049l\u001b[?25h"
     );
   };
   const stop = () => {
@@ -1430,7 +1431,7 @@ export async function runChatSession(
     if (fullscreen) {
       screenActive = true;
       output.write(
-        "\u001b[?1049h\u001b[?2004h" +
+        "\u001b[?1049h\u001b[?2004h" + ENHANCED_KEYS_ON +
           (options.mouse === true ? "\u001b[?1000h\u001b[?1006h" : "")
       );
       editor = new ChatInputController({
@@ -1494,7 +1495,7 @@ export async function runChatSession(
       const row = await queryCursorRow(options.input, output);
       const rows = dimensions().rows;
       if (row !== null && row < rows) output.write("\n".repeat(rows - row));
-      output.write("\u001b[?2004h");
+      output.write("\u001b[?2004h" + ENHANCED_KEYS_ON);
       editor = new ChatInputController({
         input: options.input,
         columns: dimensions().columns - 1,

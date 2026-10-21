@@ -3,6 +3,7 @@ import { PassThrough, Writable, type Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { sanitizeChatText } from "./chat-format.js";
 import { moveChatCursorVertical, type ChatDraft } from "./chat-view.js";
+import { legacyKey } from "./terminal-keys.js";
 
 export interface ChatInputOptions {
   input: Readable;
@@ -234,6 +235,13 @@ export class ChatInputController {
         }, 50);
         return;
       }
+      const enhanced = /^\u001b\[[\d:;]*[u~]/.exec(rest)?.[0];
+      const legacy = enhanced === undefined ? null
+        : enhanced === "\u001b[13;2u" || enhanced === "\u001b[27;2;13~" ? "\r" : legacyKey(enhanced);
+      if (enhanced !== undefined && legacy !== null) {
+        rest = legacy + rest.slice(enhanced.length);
+        continue;
+      }
       const match = keys.find(([sequence]) => rest.startsWith(sequence));
       if (match) {
         rest = rest.slice(match[0].length);
@@ -346,19 +354,21 @@ export class ChatInputController {
           // A typed draft wins over the suggestion list: one Esc clears `@c`.
           // Two presses buffered together must still act as two presses.
           const presses = this.pending.length;
-          for (let press = 0; press < presses; press++) {
-            if (this.draft.line.length > 0) this.clear();
-            else if (this.completionVisible) {
-              this.completionDismissed = true;
-              this.options.onChange();
-            } else this.requestEmptyEscape();
-          }
+          for (let press = 0; press < presses; press++) this.pressEscape();
         }
         this.pending = "";
       }, 50);
     }
     this.options.onChange();
   };
+
+  private pressEscape(): void {
+    if (this.draft.line.length > 0) this.clear();
+    else if (this.completionVisible) {
+      this.completionDismissed = true;
+      this.options.onChange();
+    } else this.requestEmptyEscape();
+  }
 
   private writeKeys(text: string): void {
     this.completionDismissed = false;
@@ -460,6 +470,7 @@ export class ChatInputController {
           }
           const sequence = match[0];
           this.pending = this.pending.slice(sequence.length);
+          let legacy: string | null;
           const mouse = /^\u001b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(sequence);
           if (mouse) {
             if (mouse[4] === "M") {
@@ -473,6 +484,12 @@ export class ChatInputController {
             }
           } else if (sequence === "\u001b[13;2u" || sequence === "\u001b[27;2;13~") {
             this.insertNewline();
+          } else if (sequence === "\u001b[27u") {
+            // An enhanced Escape report is complete; no timeout is needed.
+            this.pressEscape();
+          } else if ((legacy = legacyKey(sequence)) !== null) {
+            // An enhanced report of an ordinary key: decode it as typed.
+            this.pending = legacy + this.pending;
           } else if (sequence === "\u001b[A" || sequence === "\u001b[B") {
             this.moveVertical(sequence.endsWith("A") ? -1 : 1, sequence);
           } else if (sequence === "\u001b[5~" || sequence === "\u001b[6~") {
