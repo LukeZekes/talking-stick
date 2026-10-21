@@ -1,4 +1,4 @@
-// Lantern: warm signals on the terminal's own surface. Semantic tokens keep
+// House palettes use the terminal's own surface. Semantic tokens keep
 // typing, completions and the transcript speaking the same visual language.
 export type ChatColorMode = "truecolor" | "256";
 export const CHAT_THEME = {
@@ -20,6 +20,37 @@ export const CHAT_THEME = {
   fallback: [81, 214, 170, 114, 39, 203, 229, 147]
 } as const;
 export type ChatThemeToken = keyof typeof CHAT_THEME.colors;
+export type ChatThemeName = "lantern" | "tide" | "dusk";
+type ThemeColors = { [K in ChatThemeToken]: readonly [string, number] };
+export const CHAT_THEMES: Record<ChatThemeName, { name: string; colors: ThemeColors }> = {
+  lantern: CHAT_THEME,
+  tide: { name: "Tide", colors: {
+    ...CHAT_THEME.colors,
+    accent: ["80cbc4", 116], command: ["98bfff", 111], mention: ["d2b7ee", 183],
+    ref: ["a3bfcd", 110], code: ["dfc49a", 180], path: ["99c6ad", 115],
+    url: ["85c8e0", 117], muted: ["8e9ca6", 246],
+    selection: ["293e48", 238], selectionText: ["dcf0ed", 195]
+  } },
+  dusk: { name: "Dusk", colors: {
+    ...CHAT_THEME.colors,
+    accent: ["c8b0e8", 183], command: ["e3b0c8", 182], mention: ["9ccfcb", 116],
+    ref: ["b6badb", 147], code: ["d6c391", 180], path: ["a9c6ac", 151],
+    url: ["9fbfe0", 110], muted: ["9b95aa", 246],
+    selection: ["3b344b", 238], selectionText: ["eee4f5", 255]
+  } }
+};
+
+// A chat console is the only renderer in its CLI process. Identity hues stay
+// fixed while semantic colors change; switching never changes text geometry.
+let currentTheme: ChatThemeName = "lantern";
+export function chatThemeName(): ChatThemeName { return currentTheme; }
+export function setChatTheme(name: string): void {
+  const key = name.trim().toLowerCase();
+  if (!Object.hasOwn(CHAT_THEMES, key)) {
+    throw new Error(`Unknown theme "${name}". Choose lantern, tide or dusk.`);
+  }
+  currentTheme = key as ChatThemeName;
+}
 
 export function terminalColorMode(env: NodeJS.ProcessEnv = process.env): ChatColorMode {
   return /^(truecolor|24bit)$/i.test(env.COLORTERM ?? "") ? "truecolor" : "256";
@@ -33,7 +64,7 @@ function colorCode(color: readonly [string, number], mode: ChatColorMode, backgr
 }
 
 export function themeStyle(token: ChatThemeToken, mode: ChatColorMode = "256", background = false): string {
-  return colorCode(CHAT_THEME.colors[token], mode, background);
+  return colorCode(CHAT_THEMES[currentTheme].colors[token], mode, background);
 }
 
 export function agentColorIndex(id: string): number {

@@ -7,7 +7,7 @@ import { planChatInterrupts } from "./chat-interrupt.js";
 import { interruptCodexThread } from "./codex-interrupt.js";
 import { interruptCodexHerdr } from "./codex-herdr-interrupt.js";
 import { ChatImages } from "./chat-images.js";
-import { paintStyle, terminalColorMode, themeStyle } from "./theme.js";
+import { chatThemeName, paintStyle, setChatTheme, terminalColorMode, themeStyle } from "./theme.js";
 import { ChatInputController, type ChatModalKey } from "./chat-input.js";
 import { createRolesEditor, renderRolesEditor, rolesEditorKey, rolesEditorDraft, rolesEditorDirty, refreshRolesEditor, type RolesEditorState } from "./roles-editor.js";
 import { applyRoleChanges, liveAgents, parseRoleList, parseRoleSubject, roomRoleBlock } from "./role-commands.js";
@@ -193,6 +193,9 @@ export async function handleChatCommand(
   runtime: Runtime,
   parsed: ParsedCommand
 ): Promise<void> {
+  if (parsed.options.get("theme") === true) throw new Error("--theme needs lantern, tide or dusk.");
+  const theme = getStringOption(parsed, "theme") ?? process.env.TT_THEME ?? "lantern";
+  setChatTheme(theme);
   const agentId = getStringOption(parsed, "agent");
   const identity = createChatIdentity(agentId);
   const terminal = chatTerminalCapable(process.stdin, process.stdout, process.env);
@@ -1232,6 +1235,17 @@ export async function runChatSession(
         }
         refreshMembers();
         print(`Removed ${sanitizeChatText(target.agent_id)} from the room.${ownershipNote} The harness was not stopped.`);
+        return;
+      }
+      case "theme": {
+        try {
+          if (args.trim()) setChatTheme(args);
+          transcript.invalidate();
+          previousFrame = null;
+          print(`Theme: ${chatThemeName()}. Choose /theme lantern, /theme tide or /theme dusk.`);
+        } catch (error) {
+          print(`! ${error instanceof Error ? error.message : String(error)}`);
+        }
         return;
       }
       case "events":

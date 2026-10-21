@@ -59,6 +59,7 @@ export const CHAT_COMMANDS: ChatCommandInfo[] = [
     usage: "/bottom",
     description: "jump to the latest messages"
   },
+  { name: "theme", usage: "/theme [lantern|tide|dusk]", description: "show or change the chat palette" },
   { name: "help", usage: "/help", description: "list commands and keys" }
 ];
 

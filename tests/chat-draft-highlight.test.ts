@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { draftStyleSpans } from "../src/cli/chat-draft-highlight.js";
 import { ChatTranscript, getChatCompletions, layoutComposer, renderChatScreen, renderInlinePanel, textWidth } from "../src/cli/chat-view.js";
-import { agentStyle, terminalColorMode, themeStyle, type ChatColorMode } from "../src/cli/theme.js";
+import { CHAT_THEMES, chatThemeName, setChatTheme, agentStyle, terminalColorMode, themeStyle, type ChatColorMode } from "../src/cli/theme.js";
 import type { RoomMember } from "../src/types.js";
 import { parseChatInput, resolveChatRecipient } from "../src/cli/chat-format.js";
 
@@ -110,5 +110,33 @@ describe("house theme in both chat layouts", () => {
       expect(composer).toContain(`1;${themeStyle("mention")}m@${selector}`);
       expect(composer).not.toContain(`1;${agentStyle(members[0].agent_id)}m@${selector}`);
     }
+  });
+});
+
+
+describe("selectable chat palettes", () => {
+  test("themes change semantic colors while preserving identity and geometry", () => {
+    const identity = agentStyle("codex:aa", "truecolor");
+    const draft = { line: "/rooms\n@codex 👩🏽‍💻界é", cursor: 20 };
+    const plain = layoutComposer(draft, 12, 5);
+    const accents = new Set<string>();
+    try {
+      for (const name of Object.keys(CHAT_THEMES)) {
+        setChatTheme(name);
+        accents.add(themeStyle("accent", "truecolor"));
+        expect(agentStyle("codex:aa", "truecolor")).toBe(identity);
+        for (const color_mode of ["256", "truecolor"] as const) {
+          const painted = layoutComposer(draft, 12, 5, { ...options, color_mode });
+          expect(painted.rows.map(strip)).toEqual(plain.rows);
+          expect([painted.cursor_row, painted.cursor_col]).toEqual([plain.cursor_row, plain.cursor_col]);
+          expect(painted.rows.join("")).toContain(themeStyle("command", color_mode));
+        }
+      }
+      expect(accents.size).toBe(3);
+      setChatTheme(" TiDe ");
+      expect(chatThemeName()).toBe("tide");
+      expect(() => setChatTheme("__proto__")).toThrow("Unknown theme");
+      expect(chatThemeName()).toBe("tide");
+    } finally { setChatTheme("lantern"); }
   });
 });

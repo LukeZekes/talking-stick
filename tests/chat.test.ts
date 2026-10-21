@@ -26,6 +26,7 @@ import {
 } from "../src/cli/chat-format.js";
 import { chatInlineEnabled, chatTerminalCapable, createChatIdentity, runChatConsole, runChatSession, uniqueRoomNames } from "../src/cli/chat.js";
 import { formatRoomStrip } from "../src/cli/chat-format.js";
+import { chatThemeName, setChatTheme } from "../src/cli/theme.js";
 import { parseCommand } from "../src/cli/parser.js";
 
 const cleanups: Array<() => void> = [];
@@ -2303,4 +2304,31 @@ fi
     if (previous === undefined) delete process.env.VISUAL; else process.env.VISUAL = previous;
     input.end(); await session;
   }
+});
+
+
+test("/theme switches palettes locally and rejects unknown names without sending a message", async () => {
+  const { root, service } = setupService();
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let text = "";
+  output.on("data", chunk => { text += chunk.toString(); });
+  const session = runChatSession({ runtime: { commands: new TalkingStickCommands(service), close() {} },
+    identity: observerIdentity(), context_path: root, input, output, terminal: false, color: false,
+    history: 0, show_turn_events: false, poll_ms: 5 });
+  try {
+    await until(() => text.includes("Talking Stick chat"));
+    input.write("/theme tide\n");
+    await until(() => text.includes("Theme: tide"));
+    expect(chatThemeName()).toBe("tide");
+    input.write("/theme missing\n");
+    await until(() => text.includes('Unknown theme "missing"'));
+    expect(chatThemeName()).toBe("tide");
+    input.write("/theme dusk\n/theme\n");
+    await until(() => text.includes("Theme: dusk"));
+    expect(chatThemeName()).toBe("dusk");
+    const room = service.listRooms({}).rooms.find(room => room.canonical_path === root)!;
+    expect(service.getRoomEvents({ room_id: room.room_id, include_all: true })
+      .filter(event => event.event_type === "message_sent")).toHaveLength(0);
+  } finally { input.write("/quit\n"); await session; setChatTheme("lantern"); }
 });
