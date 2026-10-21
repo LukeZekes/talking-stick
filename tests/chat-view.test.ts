@@ -10,6 +10,7 @@ import {
   diffChatFrame,
   graphemeWidth,
   layoutComposer,
+  moveChatCursorVertical,
   matchChatCommands,
   renderChatScreen,
   renderInlinePanel,
@@ -238,6 +239,19 @@ describe("composer", () => {
 
     const middle = layoutComposer({ line: "hello world", cursor: 2 }, 8);
     expect([middle.cursor_row, middle.cursor_col]).toEqual([0, 4]);
+  });
+
+  test("wraps whole words and reflows as the draft changes", () => {
+    const layout = layoutComposer({ line: "the quick brown", cursor: 4 }, 10);
+    expect(layout.rows).toEqual(["> the ", "  quick ", "  brown"]);
+    expect([layout.cursor_row, layout.cursor_col]).toEqual([1, 2]);
+    // Deleting a word pulls the next one back onto the row it now fits.
+    expect(layoutComposer({ line: "the brown", cursor: 9 }, 10).rows).toEqual(["> the ", "  brown"]);
+    expect(layoutComposer({ line: "a brown", cursor: 7 }, 10).rows).toEqual(["> a brown"]);
+    // A word wider than a row breaks by character from where it starts.
+    expect(layoutComposer({ line: "a abcdefghijkl", cursor: 0 }, 10).rows).toEqual(["> a abcdef", "  ghijkl"]);
+    // Up/Down moves between wrapped rows by word-wrapped stops.
+    expect(moveChatCursorVertical({ line: "the quick brown", cursor: 10 }, 10, -1)?.draft.cursor).toBe(4);
   });
 
   test("measures wide characters and moves a cursor at a full row end down", () => {
