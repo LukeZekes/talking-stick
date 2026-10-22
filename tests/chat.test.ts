@@ -2231,6 +2231,8 @@ test.each([true, false])("host navigator searches without joining, opens another
   try {
     await until(() => out.includes("Type to message the room"));
     input.write("\u0014");
+    await until(() => out.includes("Folders · Tab rooms"));
+    input.write("\t");
     await until(() => out.includes("Rooms · Active"));
     input.write("/target");
     await until(() => out.includes("Filter › target"));
@@ -2264,8 +2266,8 @@ test.each([true, false])("room tree opens a directory and creates its room only 
   try {
     await until(() => out.includes("Room"));
     input.write("\u0014");
-    await until(() => out.includes("Rooms ·"));
-    input.write("\t\u001b[Bn");
+    await until(() => out.includes("Folders ·"));
+    input.write("\u001b[Bn");
     await until(() => out.includes("Create a room boundary?"));
     expect(fs.existsSync(path.join(child, ".talking-stick", "room.toml"))).toBe(false);
     input.write("n");

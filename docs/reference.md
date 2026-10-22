@@ -461,7 +461,7 @@ it. Scrolling, selection, and copying stay with the terminal.
 | `/clear` | Clear the pane and remember a resume marker for this human in this room |
 | Ctrl+V, `/attach <file>` | Attach an image: Ctrl+V reads the clipboard (macOS `osascript`; Linux `wl-paste` or `xclip`), and a pasted or dragged-in image path does the same. The draft shows `[Image #N]`; delete the marker to drop the image. See [Images](#images) |
 | `/roles` | Edit roles: arrows select, Space toggles, Tab switches room assignments / harness defaults, Enter applies, Esc closes (confirms a draft). `e` edits a role, `n` adds one, `i` edits project instructions, `p` previews, `v` lists notifications, `?` shows all keys. `/roles set <agent|harness> <roles|none|clear>` and `/roles default <harness> <roles|none|clear>` work as text |
-| `/rooms [room]`, Ctrl+T | Browse rooms across this host, or open an exact room ID/name/path. `/` filters, `s` sorts, `a` toggles Active / All open, Tab switches to folders. See [Room navigator](#room-navigator). Without a terminal, prints active host rooms |
+| `/rooms [room]`, Ctrl+T | Open Folders, or open an exact room ID/name/path. Tab switches to the active room-only tree: `/` filters, `s` sorts, `a` toggles Active / All open. See [Room navigator](#room-navigator). Without a terminal, prints active host rooms |
 | `/go` (↑↓ choose, Enter open; Tab fills) or Alt+←/→ | Switch to another open room, including one with no agents; Ctrl+PgUp/PgDn is a fallback when the terminal captures Alt+Arrow. Drafts and memberships are kept until chat exits. `/go <dir>` (relative to the active repository's checkout) opens a directory's room even if nobody has joined it yet, e.g. a committed declaration; `#name` never falls back to a directory |
 | `/bottom` or Ctrl+End | Fullscreen: return to latest messages. Default mode: use the terminal's scroll-to-bottom shortcut |
 | `/quit`, `/exit`, or Ctrl+D on an empty draft | Exit and remove this console's membership |
@@ -906,17 +906,30 @@ In Herdr, choose **Send right-clicks to pane** from its pane menu, or run `herdr
 
 ### Room navigator
 
-`/rooms` or **Ctrl+T** opens a list from the shared host room database, without scanning
-the filesystem. The default **Active** view includes open rooms with a live agent or console;
+`/rooms` or **Ctrl+T** opens **Folders**. Press Tab for **Rooms**, a tree made from the shared
+host database's room paths and necessary ancestor folders, without scanning the filesystem.
+Shared prefixes appear once and single-child chains are compressed, preserving every known
+room boundary. Unrelated top-level branches do not add a synthetic filesystem-root row.
+Ancestor rooms excluded by the current filter remain dim and labelled as inactive or outside
+the filter; `a` includes inactive rooms as selectable rooms.
+It starts in **Active**, with open rooms that have a live agent or console;
 press `a` for **All open**, including rooms with nobody in them. Rooms whose canonical
 folder is missing are labelled unavailable; their saved room can still be opened by ID.
-Use ↑↓ or Page Up/Down to select and Enter to open. `/` edits a case-insensitive substring
+Use ↑↓ or Page Up/Down to select, ←→ to collapse/expand, and Backspace to select a parent.
+Enter opens a room; on a pure branch it toggles expansion. A room that also has children
+still opens with Enter; use arrows for its children. Collapsed branches roll up hidden
+agents, consoles and unread counts. Up to 30 matching rooms are expanded initially;
+larger sets initially expand the current room's ancestor chain.
+`/` edits a case-insensitive substring
 filter over room names and full paths; shortcut letters are literal text while filtering.
-Arrows select a match and Enter opens it; Escape finishes filter editing. `s` cycles activity (latest event), name, path and
-member-count sorting. Agent and console counts are separate. Browsing never joins rooms
+Search prunes the same hierarchy and keeps the matching paths expanded. Arrows select a match
+and Enter opens it; Escape finishes filter editing. Siblings initially use folder-name order;
+`s` cycles name, path, activity (latest descendant event) and total member-count sorting.
+Agent and console counts are separate. Browsing never joins rooms
 or refreshes members' presence. Enter joins the chosen room as this human console.
 
-Tab switches between **Rooms** and **Folders**. In Folders, use → to expand or enter a child,
+Tab switches between **Rooms** and **Folders**. Folders shows the full filesystem browser;
+Rooms omits folders that do not lead to a matching room. In Folders, use → to expand or enter a child,
 ← to collapse or select the parent, and **Backspace** to raise the tree root one level.
 ← at a collapsed root also raises it. You can browse above the repository up to `/`, and
 enter other repositories. Enter opens the directory's resolved room; Escape closes and

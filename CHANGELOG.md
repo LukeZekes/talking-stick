@@ -32,6 +32,8 @@ changes will be called out under **Breaking changes**.
 
 ### Fixed
 
+- `/rooms` opens Folders first. Rooms also uses a folder hierarchy across the host,
+  starting in Active, with compressed shared paths and collapsed unread/member rollups (#171).
 - Earlier pinned messages share a continuous drawer background, including spacing, with one
   subtle “Earlier” label. Authored messages keep their normal formatting.
 - Inline chat in Herdr buffers incoming output while browsing native scrollback, preserving
