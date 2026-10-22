@@ -2266,7 +2266,7 @@ test.each([true, false])("room tree opens a directory and creates its room only 
   try {
     await until(() => out.includes("Room"));
     input.write("\u0014");
-    await until(() => out.includes("Rooms ·"));
+    await until(() => out.includes("Folders ·"));
     input.write("\u001b[Bn");
     await until(() => out.includes("Create a room boundary?"));
     expect(fs.existsSync(path.join(child, ".talking-stick", "room.toml"))).toBe(false);
