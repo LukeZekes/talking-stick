@@ -445,6 +445,7 @@ export class TalkingStickCommands {
     limit: number;
     event_types?: EventType[];
     before_event_seq?: number;
+    after_event_seq?: number;
   }): RoomEvent[] {
     return this.service.getRecentRoomEvents(input);
   }
@@ -474,6 +475,14 @@ export class TalkingStickCommands {
 
   getHumanAttention(input: { room_id: string; human_id: string }): { messages: RoomEvent[]; total: number; acknowledged: number[] } {
     return this.service.getHumanAttention(input);
+  }
+
+  getHumanChatClearCursor(input: { room_id: string; human_id: string }): number {
+    return this.service.getHumanChatClearCursor(input);
+  }
+
+  clearHumanChat(identity: DerivedIdentity, input: { room_id: string }): { event_seq: number } {
+    return this.service.clearHumanChat({ ...input, agent_id: identity.agent_id });
   }
 
   acknowledgeHumanMessage(identity: DerivedIdentity, input: { room_id: string; event_seq: number }): void {

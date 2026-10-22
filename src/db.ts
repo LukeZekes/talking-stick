@@ -440,6 +440,17 @@ const migrations: Migration[] = [
       theme TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );`
+  },
+  {
+    id: 27,
+    name: "human_chat_clear_cursors",
+    up: `CREATE TABLE human_chat_cursors (
+      room_id TEXT NOT NULL REFERENCES path_rooms(room_id) ON DELETE CASCADE,
+      human_id TEXT NOT NULL,
+      cleared_through_event_seq INTEGER NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (room_id, human_id)
+    );`
   }
 ];
 

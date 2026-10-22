@@ -458,6 +458,7 @@ it. Scrolling, selection, and copying stay with the terminal.
 | `/events` | Toggle turn and handoff events, hidden by default |
 | `/help`, `/help keys` | Show chat commands, or keyboard shortcuts |
 | `/older` | Print an earlier page of saved messages; in fullscreen, scroll into older history |
+| `/clear` | Clear the pane and remember a resume marker for this human in this room |
 | Ctrl+V, `/attach <file>` | Attach an image: Ctrl+V reads the clipboard (macOS `osascript`; Linux `wl-paste` or `xclip`), and a pasted or dragged-in image path does the same. The draft shows `[Image #N]`; delete the marker to drop the image. See [Images](#images) |
 | `/roles` | Edit roles: arrows select, Space toggles, Tab switches room assignments / harness defaults, Enter applies, Esc closes (confirms a draft). `e` edits a role, `n` adds one, `i` edits project instructions, `p` previews, `v` lists notifications, `?` shows all keys. `/roles set <agent|harness> <roles|none|clear>` and `/roles default <harness> <roles|none|clear>` work as text |
 | `/rooms`, Ctrl+T | Open the repository's directory tree with live members, unread counts, and rollups (see [Directory tree](#directory-tree)); without an interactive terminal, `/rooms` prints the room list. Chat joins listed rooms as an observer so agents there can address you; those messages show inline as `#room › agent → you: …` |
@@ -467,6 +468,13 @@ it. Scrolling, selection, and copying stay with the terminal.
 | Ctrl+C | Clear the draft without quitting |
 | Escape | Clear a nonempty draft, including an open suggestion list. On an empty draft, request a message-free interrupt of a local active Codex turn, or stop a local Claude session at its next tool call. A repeat within one second is ignored |
 | `//text` | Send a message beginning with `/` |
+
+`/clear` also clears native terminal scrollback. Reopening the room shows only messages
+after the saved marker; `/older` can still retrieve earlier messages. Earlier pins are hidden,
+without acknowledging them. The room archive, other users' views and agents' receive cursors
+are unchanged. It takes no arguments and does not reset any member harness's context.
+Native APIs and terminal fallbacks for future member `/clear` or `/compact` controls are
+tracked in the [harness control shim register](harness-control-shims.md).
 
 ### Delivery marks
 

@@ -73,6 +73,7 @@ into each harness keeps them in sync. The footer shows who holds the stick.
 | `/rooms` or Ctrl+T | The repository's rooms with live members; Enter opens one |
 | `/members` | Pick a member to message or remove (removal asks first) |
 | `/roles` | Assign roles, edit their definitions, and set harness defaults |
+| `/clear` | Clear your room view; reopening resumes here. Saved messages remain available with `/older` |
 | Cmd+V / Ctrl+V, a dragged-in image, or `/attach <file>` | Attach an image; agents get its path and read it |
 | Ctrl-click a pin in Herdr, or `/ack` | Dismiss messages pinned at the top; normal scrolling and selection keep working |
 | `/theme tide` | Save the palette: Lantern (warm default), Tide (teal), or Dusk (lavender) |

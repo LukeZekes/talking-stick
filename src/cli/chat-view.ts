@@ -40,6 +40,7 @@ export const CHAT_COMMANDS: ChatCommandInfo[] = [
   { name: "go", usage: "/go <room|dir>", description: "choose an open room with ↑↓ Enter; a directory opens its room" },
   { name: "attach", usage: "/attach <file>", description: "add an image to the draft (Ctrl+V pastes the clipboard's image)" },
   { name: "older", usage: "/older", description: "load an earlier page of saved messages" },
+  { name: "clear", usage: "/clear", description: "clear this room view and remember where to resume" },
   { name: "kick", usage: "/kick <agent>", description: "remove a member; --force for a live agent" },
   {
     name: "to",
@@ -351,6 +352,16 @@ export class ChatTranscript {
   private layoutCache: { key: string; layout: Layout } | null = null;
 
   constructor(private readonly maxBlocks = MAX_TRANSCRIPT_BLOCKS) {}
+
+  clear(): void {
+    this.blocks = [];
+    this.wrapCache.clear();
+    this.layoutCache = null;
+    this.anchor = { follow: true };
+    this.unreadCount = 0;
+    this.outputBuffered = false;
+    this.traversedHumanMessages.clear();
+  }
 
   setOutputBuffered(buffered: boolean): void {
     this.outputBuffered = buffered;
