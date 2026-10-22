@@ -17,7 +17,7 @@ export class RoomTree {
   notice: string | null = null;
   rooms: TreeRoom[];
 
-  constructor(readonly root: string, rooms: TreeRoom[], readonly current: string) {
+  constructor(public root: string, rooms: TreeRoom[], readonly current: string, private readonly crossRepositories = false) {
     this.rooms = rooms;
     this.selected = isWithinOrSame(current, root) ? current : root;
     this.expanded.add(root);
@@ -55,7 +55,7 @@ export class RoomTree {
       }
     }
     const children = candidates.filter(candidate => isWithinOrSame(candidate, this.root) &&
-      !insideNestedRepository(candidate, this.root) &&
+      (this.crossRepositories || !insideNestedRepository(candidate, this.root)) &&
       ((!ignored.has(candidate) && !path.basename(candidate).startsWith(".")) || known.includes(candidate) || fs.existsSync(path.join(candidate, ROOM_DECLARATION_FILE))))
       .sort((a, b) => path.basename(a).localeCompare(path.basename(b)));
     this.childrenCache.set(directory, children);
@@ -73,8 +73,19 @@ export class RoomTree {
   }
 
   ownRoom(directory: string): boolean {
-    return directory === this.root || this.rooms.some(room => room.path === directory) ||
+    return (!this.crossRepositories && directory === this.root) || this.rooms.some(room => room.path === directory) ||
       fs.existsSync(path.join(directory, ROOM_DECLARATION_FILE));
+  }
+
+  parent(): void {
+    const previous = this.root;
+    const parent = path.dirname(previous);
+    if (parent === previous) return;
+    this.root = parent;
+    this.childrenCache.clear();
+    this.expanded.clear();
+    this.expanded.add(parent);
+    this.selected = previous;
   }
 
   key(key: ChatModalKey): TreeAction {
@@ -95,6 +106,7 @@ export class RoomTree {
     if (key === "left") {
       if (this.expanded.has(this.selected)) this.expanded.delete(this.selected);
       else if (this.selected !== this.root) this.selected = path.dirname(this.selected);
+      else if (this.crossRepositories) this.parent();
     }
     if (key === "enter") return { kind: "go", path: this.selected };
     if (key === "no" && !this.ownRoom(this.selected)) this.confirm = this.selected;

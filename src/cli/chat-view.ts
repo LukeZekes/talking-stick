@@ -36,7 +36,7 @@ export const CHAT_COMMANDS: ChatCommandInfo[] = [
   { name: "members", usage: "/members", description: "choose a member to message or remove (right-click status with --fullscreen --mouse)" },
   { name: "who", usage: "/who", description: "members and who has the stick" },
   { name: "roles", usage: "/roles", description: "edit assignments and harness defaults (Tab switches scope; Enter applies)" },
-  { name: "rooms", usage: "/rooms", description: "browse directories and room members (Ctrl+T)" },
+  { name: "rooms", usage: "/rooms [room]", description: "browse host rooms or folders; / filter, Tab views (Ctrl+T)" },
   { name: "go", usage: "/go <room|dir>", description: "choose an open room with ↑↓ Enter; a directory opens its room" },
   { name: "attach", usage: "/attach <file>", description: "add an image to the draft (Ctrl+V pastes the clipboard's image)" },
   { name: "older", usage: "/older", description: "load an earlier page of saved messages" },

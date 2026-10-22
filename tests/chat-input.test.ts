@@ -84,6 +84,27 @@ describe("enhanced keyboard reports", () => {
 });
 
 describe("full-screen chat input", () => {
+  test("modal search consumes shortcut letters and Backspace without changing the composer", () => {
+    const { editor, input, submit } = setup();
+    const keys: string[] = [];
+    let searching = false;
+    let query = "";
+    try {
+      input.write("saved draft");
+      editor.setModal(key => { keys.push(key); if (key === "search") searching = true; if (key === "enter") searching = false; }, char => {
+        if (!searching) return false;
+        if (char === "\u007f") query = [...query].slice(0, -1).join("");
+        else if (char >= " ") query += char;
+        else return false;
+        return true;
+      });
+      input.write("/sjnqé\u007f\r\t\u007fs");
+      expect(query).toBe("sjnq");
+      expect(keys).toEqual(["search", "enter", "tab", "parent", "sort"]);
+      expect(editor.draft.line).toBe("saved draft");
+      expect(submit).not.toHaveBeenCalled();
+    } finally { editor.close(); }
+  });
   test("Ctrl+C clears and empty Escape interrupts once without quitting", async () => {
     let now = 0;
     const onEmptyEscape = vi.fn();

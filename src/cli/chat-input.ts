@@ -50,7 +50,7 @@ const PASTE_START = "\u001b[200~";
 const PASTE_END = "\u001b[201~";
 const MAX_PASTE_LENGTH = 65_536;
 
-export type ChatModalKey = "up" | "down" | "left" | "right" | "space" | "enter" | "escape" | "default" | "yes" | "no" | "tab" | "edit" | "instructions" | "preview" | "undo" | "reset" | "help" | "quit" | "page_up" | "page_down" | "notifications";
+export type ChatModalKey = "up" | "down" | "left" | "right" | "space" | "enter" | "escape" | "default" | "yes" | "no" | "tab" | "edit" | "instructions" | "preview" | "undo" | "reset" | "help" | "quit" | "page_up" | "page_down" | "notifications" | "parent" | "search" | "sort" | "all";
 
 // Readline edits a private buffer; it never writes to the physical terminal.
 // Terminal-only controls are consumed before readline's keypress decoder.
@@ -73,6 +73,7 @@ export class ChatInputController {
   // While set, keys drive a modal panel (the /roles editor) and never reach
   // readline: nothing typed in a modal can become chat text.
   private modal: ((key: ChatModalKey) => void) | null = null;
+  private modalText: ((text: string) => boolean) | null = null;
   // A terminal may deliver ESC and the rest of an arrow sequence separately.
   private modalPending = "";
   // Pasted text is never a modal command: swallow it until the paste ends.
@@ -162,8 +163,9 @@ export class ChatInputController {
   }
 
   /** Route keys to a modal panel until cleared with null. The draft is untouched. */
-  setModal(handler: ((key: ChatModalKey) => void) | null): void {
+  setModal(handler: ((key: ChatModalKey) => void) | null, text?: (text: string) => boolean): void {
     this.modal = handler;
+    this.modalText = handler && text ? text : null;
     this.pending = "";
     this.modalPending = "";
     if (this.modalEscapeTimer) clearTimeout(this.modalEscapeTimer);
@@ -200,7 +202,8 @@ export class ChatInputController {
       [" ", "space"], ["\r", "enter"], ["\n", "enter"], ["d", "default"], ["D", "default"], ["y", "yes"], ["Y", "yes"], ["n", "no"], ["N", "no"],
       ["\t", "tab"], ["e", "edit"], ["i", "instructions"], ["p", "preview"], ["v", "notifications"], ["u", "undo"], ["r", "reset"], ["?", "help"], ["q", "quit"],
       ["\u001b[5~", "page_up"], ["\u001b[6~", "page_down"],
-      ["k", "up"], ["j", "down"], ["h", "left"], ["l", "right"], ["\u0003", "escape"]
+      ["k", "up"], ["j", "down"], ["h", "left"], ["l", "right"], ["\u0003", "escape"],
+      ["\u007f", "parent"], ["\b", "parent"], ["/", "search"], ["s", "sort"], ["a", "all"]
     ];
     if (this.modalEscapeTimer) clearTimeout(this.modalEscapeTimer);
     this.modalEscapeTimer = null;
@@ -245,6 +248,11 @@ export class ChatInputController {
         : isShiftEnter(enhanced) ? "\r" : legacyKey(enhanced);
       if (enhanced !== undefined && legacy !== null) {
         rest = legacy + rest.slice(enhanced.length);
+        continue;
+      }
+      const char = [...rest][0];
+      if (char !== "\u001b" && this.modalText?.(char)) {
+        rest = rest.slice(char.length);
         continue;
       }
       const match = keys.find(([sequence]) => rest.startsWith(sequence));
