@@ -4,6 +4,11 @@ Last checked: 2026-10-21. Revisit this register when upgrading a harness or addi
 control. A documented API is a candidate until it works against the installed
 version and the exact target session in an isolated acceptance test.
 
+For opted-in operator sessions outside rooms, see the
+[desktop push design](plans/desktop-room-events.md), checked 2026-10-22. It distinguishes
+OpenAI MCP Events, Claude inbox/Channels and exact-thread Codex control from generic
+MCP notifications. None of the proposed observer bridge is implemented yet.
+
 ## Keep room views separate from agent context
 
 `tt chat`'s `/clear` clears the human's pane and saves a per-room view marker. It

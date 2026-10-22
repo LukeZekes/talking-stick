@@ -13,6 +13,10 @@ changes will be called out under **Breaking changes**.
 
 ### Added
 
+- Host-wide `/rooms` navigator: searchable rooms, activity/name/path/member sorting,
+  Active / All open views, and Tab for a lazy folder tree. Backspace raises the folder
+  root beyond the current repository. Explicit opening reanchors the local strip;
+  browsing does not join rooms or refresh presence (#168).
 - `/clear` clears the chat pane and saves a per-human, per-room resume marker. Reopening
   starts after it; `/older` still retrieves the archive. Earlier pins are hidden without
   acknowledging them or changing agents' receive cursors (#166).

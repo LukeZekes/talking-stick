@@ -27,7 +27,7 @@ import { editTextInTerminal, ExternalEditorError } from "./external-editor.js";
 import { resolveRoomSelector, roomShortName, selectedRoom } from "./room-selector.js";
 import { insideNestedRepository, isWithinOrSame, resolveContextPath } from "../path-resolution.js";
 import { createMemberMenu, memberMenuKey, renderMemberMenu, type MemberMenu } from "./member-menu.js";
-import { RoomTree, type TreeRoom } from "./room-tree.js";
+import { RoomNavigator, type NavigatorRoom } from "./room-navigator.js";
 import { createDeclaredRoom } from "./room-admin.js";
 import { resolveChatKick } from "./chat-kick.js";
 import {
@@ -313,7 +313,8 @@ export async function runChatSession(
   let themeSource = consoleState?.theme_source ?? options.theme_source ?? "session";
   consoleState?.visited.add(roomId);
   consoleState?.subscribed.delete(roomId);
-  // The repository of the first room this console opened bounds its strip.
+  // The active room's repository bounds its strip. Explicit host navigation
+  // reanchors it; browsing the navigator alone never changes memberships.
   // A room chosen with --in from another repository brings its own anchor; a
   // keyed path absent on disk falls back to the caller's repository.
   if (consoleState && !consoleState.anchor) {
@@ -394,7 +395,7 @@ export async function runChatSession(
     roomStrip = next;
     return changed;
   };
-  const openRoomAtPath = (target: string): PathRoom | null => {
+  const openRoomAtPath = (target: string, crossRepository = false): PathRoom | null => {
     if (!consoleState) return null;
     // Relative to the caller's checkout when it belongs to this console's
     // repository (a worktree keeps its branch's declarations), else the anchor.
@@ -403,28 +404,36 @@ export async function runChatSession(
     const directory = path.resolve(checkout, target);
     if (!fs.statSync(directory, { throwIfNoEntry: false })?.isDirectory()) return null;
     const resolved = resolveContextPath(directory);
-    if (!isWithinOrSame(resolved.room_path, consoleState.anchor) ||
-        (resolved.checkout_root !== null && resolved.workspace_root !== consoleState.anchor)) {
+    if (!crossRepository && (!isWithinOrSame(resolved.room_path, consoleState.anchor) ||
+        (resolved.checkout_root !== null && resolved.workspace_root !== consoleState.anchor))) {
       throw new Error(`${directory} belongs to another repository.`);
     }
     return runtime.commands.openRoom({ context_path: directory });
   };
-  let roomTree: RoomTree | null = null;
+  let roomTree: RoomNavigator | null = null;
   const treeResolvedCache = new Map<string, string>();
-  const treeRooms = (): TreeRoom[] => {
-    const anchor = consoleState?.anchor ?? joined.workspace_root;
-    const rooms = runtime.commands.listRooms({}).rooms.filter(room => room.state !== "closed" &&
-      isWithinOrSame(room.canonical_path, anchor) && !insideNestedRepository(room.canonical_path, anchor));
+  const treeRooms = (): NavigatorRoom[] => {
+    const rooms = runtime.commands.listRooms({}).rooms.filter(room => room.state !== "closed");
     const activity = new Map(runtime.commands.summarizeRoomActivity(selfId, rooms.map(room => ({
       room_id: room.room_id, after_event_seq: consoleState?.last_seen.get(room.room_id) ?? consoleState?.start_seq ?? 0
     }))).map(entry => [entry.room_id, entry]));
-    return rooms.map(room => ({ path: room.canonical_path, agents: activity.get(room.room_id)?.agent_members ?? 0,
-      unread: room.room_id === roomId ? 0 : activity.get(room.room_id)?.unread_messages ?? 0 }));
+    return rooms.map(room => {
+      // Agentless reads never join or refresh presence in another room.
+      const members = runtime.commands.getRoomState({ room_id: room.room_id }).members.filter(member =>
+        member.process_liveness !== "gone" && (member.status === "active" || member.process_liveness === "alive"));
+      const agents = members.filter(member => member.session_kind !== HUMAN_CHAT_SESSION_KIND).length;
+      const consoles = members.length - agents;
+      return { id: room.room_id, path: room.canonical_path, name: roomShortName(room), agents, consoles,
+        active: members.length > 0,
+        last_activity_at: runtime.commands.getRoomActivity({ room_id: room.room_id }).last_event_at ?? "",
+        unread: room.room_id === roomId ? 0 : activity.get(room.room_id)?.unread_messages ?? 0 };
+    });
   };
   const refreshTree = () => { if (roomTree) roomTree.rooms = treeRooms(); };
   const closeRoomTree = () => { roomTree = null; editor?.setModal(null); redraw(); };
   const resolvedTreeRoom = () => {
     if (!roomTree) return "";
+    if (roomTree.view === "rooms") return roomTree.selected;
     const cached = treeResolvedCache.get(roomTree.selected);
     if (cached) return cached;
     const resolved = resolveContextPath(roomTree.selected);
@@ -439,11 +448,13 @@ export async function runChatSession(
     try {
       const action = roomTree.key(key);
       if (action.kind === "close") closeRoomTree();
-      if (action.kind === "go" || action.kind === "create") {
-        const room = action.kind === "create" ? createDeclaredRoom(runtime, action.path).room : openRoomAtPath(action.path);
+      if (action.kind === "go" || action.kind === "create" || action.kind === "room") {
+        const room = action.kind === "room"
+          ? runtime.commands.listRooms({}).rooms.find(room => room.room_id === action.id && room.state !== "closed")
+          : action.kind === "create" ? createDeclaredRoom(runtime, action.path).room : openRoomAtPath(action.path, true);
         if (!room) throw new Error("Directory is no longer available.");
         closeRoomTree();
-        switchTo(room);
+        switchTo(room, true);
       }
     } catch (error) {
       if (roomTree) { roomTree.confirm = null; roomTree.notice = sanitizeChatText(error instanceof Error ? error.message : String(error)); }
@@ -454,8 +465,8 @@ export async function runChatSession(
     if (!consoleState || !editor) { print("Use /go <directory> to open a room."); return; }
     if (rolesPanel || memberMenu) { print("Close the current editor before opening rooms."); return; }
     treeResolvedCache.clear();
-    roomTree = new RoomTree(consoleState.anchor, treeRooms(), joined.canonical_path);
-    editor.setModal(onRoomTreeKey);
+    roomTree = new RoomNavigator(consoleState.anchor, treeRooms(), joined.canonical_path);
+    editor.setModal(onRoomTreeKey, text => roomTree?.text(text) ?? false);
     redraw();
   };
   let memberMenu: MemberMenu | null = null;
@@ -641,8 +652,9 @@ export async function runChatSession(
     updateRolePreview();
     redraw();
   };
-  const switchTo = (room: PathRoom) => {
+  const switchTo = (room: PathRoom, reanchor = false) => {
     if (room.room_id === roomId) { print(`Already in ${sanitizeChatText(room.canonical_path)}.`); return; }
+    if (reanchor && consoleState) consoleState.anchor = "";
     switchTarget = room;
     stop();
   };
@@ -1395,13 +1407,18 @@ export async function runChatSession(
         return;
       }
       case "rooms": {
+        if (args.trim()) {
+          try {
+            const room = resolveRoomSelector(runtime.commands.listRooms({}).rooms.filter(room => room.state !== "closed"), args.trim(), consoleState?.anchor ?? options.context_path);
+            switchTo(room, true);
+          } catch (error) { print(`! ${sanitizeChatText(error instanceof Error ? error.message : String(error))}`); }
+          return;
+        }
         if (editor) { openRoomTree(); return; }
         if (!consoleState) { print("This console shows one room."); return; }
-        refreshStrip();
-        const current = `* ${sanitizeChatText(joined.canonical_path)} (here)`;
-        print([current, ...stripOrder.map(room =>
-          `  #${sanitizeChatText(roomNames.get(room.room_id) ?? roomShortName(room))}  ${sanitizeChatText(room.canonical_path)}`),
-          stripOrder.length ? "Switch with /go <room> or Alt+←/→." : "No other rooms with agents in this repository."].join("\n"));
+        print(["Active rooms on this host:", ...treeRooms().filter(room => room.active).map(room =>
+          `${room.id === roomId ? "*" : " "} #${sanitizeChatText(room.name)}  ${sanitizeChatText(room.path)}  ${room.agents} agents · ${room.consoles} consoles · ${room.id}`),
+          "Open with /rooms <room-id>. /go stays within this repository."].join("\n"));
         return;
       }
       case "attach": {

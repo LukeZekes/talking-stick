@@ -461,7 +461,7 @@ it. Scrolling, selection, and copying stay with the terminal.
 | `/clear` | Clear the pane and remember a resume marker for this human in this room |
 | Ctrl+V, `/attach <file>` | Attach an image: Ctrl+V reads the clipboard (macOS `osascript`; Linux `wl-paste` or `xclip`), and a pasted or dragged-in image path does the same. The draft shows `[Image #N]`; delete the marker to drop the image. See [Images](#images) |
 | `/roles` | Edit roles: arrows select, Space toggles, Tab switches room assignments / harness defaults, Enter applies, Esc closes (confirms a draft). `e` edits a role, `n` adds one, `i` edits project instructions, `p` previews, `v` lists notifications, `?` shows all keys. `/roles set <agent|harness> <roles|none|clear>` and `/roles default <harness> <roles|none|clear>` work as text |
-| `/rooms`, Ctrl+T | Open the repository's directory tree with live members, unread counts, and rollups (see [Directory tree](#directory-tree)); without an interactive terminal, `/rooms` prints the room list. Chat joins listed rooms as an observer so agents there can address you; those messages show inline as `#room › agent → you: …` |
+| `/rooms [room]`, Ctrl+T | Browse rooms across this host, or open an exact room ID/name/path. `/` filters, `s` sorts, `a` toggles Active / All open, Tab switches to folders. See [Room navigator](#room-navigator). Without a terminal, prints active host rooms |
 | `/go` (↑↓ choose, Enter open; Tab fills) or Alt+←/→ | Switch to another open room, including one with no agents; Ctrl+PgUp/PgDn is a fallback when the terminal captures Alt+Arrow. Drafts and memberships are kept until chat exits. `/go <dir>` (relative to the active repository's checkout) opens a directory's room even if nobody has joined it yet, e.g. a committed declaration; `#name` never falls back to a directory |
 | `/bottom` or Ctrl+End | Fullscreen: return to latest messages. Default mode: use the terminal's scroll-to-bottom shortcut |
 | `/quit`, `/exit`, or Ctrl+D on an empty draft | Exit and remove this console's membership |
@@ -904,10 +904,30 @@ Run `tt chat --fullscreen --mouse` to right-click a visible member in the bottom
 
 In Herdr, choose **Send right-clicks to pane** from its pane menu, or run `herdr pane input --current --right-click pane` in the chat pane before starting chat. Right-click the pane frame to reach Herdr's menu. Alternatively configure `ui.right_click_passthrough_modifier = "ctrl"` and use Ctrl-right-click. Mouse capture remains opt-in; inline mode retains native selection.
 
-### Directory tree
+### Room navigator
 
-`/rooms` or **Ctrl+T** opens the repository's directory tree. Use ↑↓ to select, → to expand or enter a child, ← to collapse or return to the parent, and Enter to open that directory's resolved room. Escape closes the tree and keeps your draft. `/go` and Alt+←/→ still work.
+`/rooms` or **Ctrl+T** opens a list from the shared host room database, without scanning
+the filesystem. The default **Active** view includes open rooms with a live agent or console;
+press `a` for **All open**, including rooms with nobody in them. Rooms whose canonical
+folder is missing are labelled unavailable; their saved room can still be opened by ID.
+Use ↑↓ or Page Up/Down to select and Enter to open. `/` edits a case-insensitive substring
+filter over room names and full paths; shortcut letters are literal text while filtering.
+Arrows select a match and Enter opens it; Escape finishes filter editing. `s` cycles activity (latest event), name, path and
+member-count sorting. Agent and console counts are separate. Browsing never joins rooms
+or refreshes members' presence. Enter joins the chosen room as this human console.
+
+Tab switches between **Rooms** and **Folders**. In Folders, use → to expand or enter a child,
+← to collapse or select the parent, and **Backspace** to raise the tree root one level.
+← at a collapsed root also raises it. You can browse above the repository up to `/`, and
+enter other repositories. Enter opens the directory's resolved room; Escape closes and
+keeps your draft. Explicit host navigation reanchors the strip to the chosen repository;
+`/go` and Alt+←/→ keep their repository-scoped behavior. Visited memberships, drafts and
+per-room clear markers survive switching; exiting chat leaves its visited/subscribed rooms.
 
 A room row shows `● N` agents, unread messages, and `*` for the current room. Collapsed folders show the total agents below them. The footer identifies the room a plain folder resolves to. Press `n` on a folder without its own room, then `y` to declare and open one (`n` or Escape cancels). This writes `.talking-stick/room.toml`, the same as `tt room create`.
 
-Folders load lazily and are cached while the tree is open. Empty and untracked folders are included; hidden or Git-ignored folders are omitted unless they have a known room or a room declaration. Nested Git repositories are excluded. Room counts refresh while the tree stays open.
+Folders load one level at a time and are cached while the tree is open. Empty and untracked
+folders are included; hidden or Git-ignored folders are omitted unless they contain a known
+room or have a room declaration. Nested repositories are navigable. Counts refresh while
+the panel stays open. Outside an interactive terminal, `/rooms` lists active host rooms;
+`/rooms <room-id>` opens one explicitly.
