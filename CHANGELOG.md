@@ -13,6 +13,8 @@ changes will be called out under **Breaking changes**.
 
 ### Added
 
+- Releases include a Windows x64 standalone archive (`tt.exe`). `npm run build` and
+  `scripts/build-standalone.mjs` now run on Windows, which has no `chmod`.
 - Host-wide `/rooms` navigator: searchable rooms, activity/name/path/member sorting,
   Active / All open views, and Tab for a lazy folder tree. Backspace raises the folder
   root beyond the current repository. Explicit opening reanchors the local strip;
