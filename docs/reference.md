@@ -461,7 +461,7 @@ it. Scrolling, selection, and copying stay with the terminal.
 | `/clear` | Clear the pane and remember a resume marker for this human in this room |
 | Ctrl+V, `/attach <file>` | Attach an image: Ctrl+V reads the clipboard (macOS `osascript`; Linux `wl-paste` or `xclip`), and a pasted or dragged-in image path does the same. The draft shows `[Image #N]`; delete the marker to drop the image. See [Images](#images) |
 | `/roles` | Edit roles: arrows select, Space toggles, Tab switches room assignments / harness defaults, Enter applies, Esc closes (confirms a draft). `e` edits a role, `n` adds one, `i` edits project instructions, `p` previews, `v` lists notifications, `?` shows all keys. `/roles set <agent|harness> <roles|none|clear>` and `/roles default <harness> <roles|none|clear>` work as text |
-| `/rooms [room]`, Ctrl+T | Browse rooms across this host, or open an exact room ID/name/path. `/` filters, `s` sorts, `a` toggles Active / All open, Tab switches to folders. See [Room navigator](#room-navigator). Without a terminal, prints active host rooms |
+| `/rooms [room]`, Ctrl+T | Open Folders, or open an exact room ID/name/path. Tab switches to active host rooms: `/` filters, `s` sorts, `a` toggles Active / All open. See [Room navigator](#room-navigator). Without a terminal, prints active host rooms |
 | `/go` (↑↓ choose, Enter open; Tab fills) or Alt+←/→ | Switch to another open room, including one with no agents; Ctrl+PgUp/PgDn is a fallback when the terminal captures Alt+Arrow. Drafts and memberships are kept until chat exits. `/go <dir>` (relative to the active repository's checkout) opens a directory's room even if nobody has joined it yet, e.g. a committed declaration; `#name` never falls back to a directory |
 | `/bottom` or Ctrl+End | Fullscreen: return to latest messages. Default mode: use the terminal's scroll-to-bottom shortcut |
 | `/quit`, `/exit`, or Ctrl+D on an empty draft | Exit and remove this console's membership |
@@ -906,8 +906,8 @@ In Herdr, choose **Send right-clicks to pane** from its pane menu, or run `herdr
 
 ### Room navigator
 
-`/rooms` or **Ctrl+T** opens a list from the shared host room database, without scanning
-the filesystem. The default **Active** view includes open rooms with a live agent or console;
+`/rooms` or **Ctrl+T** opens **Folders**. Press Tab for the room list from the shared host
+database, without scanning the filesystem. It starts in **Active**, with open rooms that have a live agent or console;
 press `a` for **All open**, including rooms with nobody in them. Rooms whose canonical
 folder is missing are labelled unavailable; their saved room can still be opened by ID.
 Use ↑↓ or Page Up/Down to select and Enter to open. `/` edits a case-insensitive substring

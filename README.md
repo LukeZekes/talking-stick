@@ -70,7 +70,7 @@ into each harness keeps them in sync. The footer shows who holds the stick.
 | `ship it when tests pass` | Goes to the whole room |
 | `@codex rebase onto master` | Goes to Codex; `@everyone` addresses every agent in the room |
 | `!@claude stop, wrong file` | Steers Claude mid-task, at its next tool step |
-| `/rooms` or Ctrl+T | Rooms across this computer: `/` filters, `s` sorts, Tab switches to folders, Backspace moves up |
+| `/rooms` or Ctrl+T | Folders first; Backspace moves up. Tab opens active host rooms, with `/` to filter and `s` to sort |
 | `/members` | Pick a member to message or remove (removal asks first) |
 | `/roles` | Assign roles, edit their definitions, and set harness defaults |
 | `/clear` | Clear your room view; reopening resumes here. Saved messages remain available with `/older` |

@@ -32,6 +32,7 @@ changes will be called out under **Breaking changes**.
 
 ### Fixed
 
+- `/rooms` opens Folders first; switching to the host room list starts in Active.
 - Earlier pinned messages share a continuous drawer background, including spacing, with one
   subtle “Earlier” label. Authored messages keep their normal formatting.
 - Inline chat in Herdr buffers incoming output while browsing native scrollback, preserving

@@ -19,6 +19,9 @@ function fixture() {
 }
 test("active host list sorts, filters and keeps selection stable on refresh", () => {
   const { nav, rooms } = fixture();
+  expect(nav.view).toBe("folders");
+  nav.key("tab");
+  expect(nav.render(10, "", false)[0]).toContain("Rooms · Active");
   expect(nav.list().map(room => room.id)).toEqual(["b", "a"]);
   nav.key("all");
   expect(nav.list().map(room => room.id)).toEqual(["c", "b", "a"]);
@@ -38,7 +41,6 @@ test("active host list sorts, filters and keeps selection stable on refresh", ()
 });
 test("folder parent navigation crosses repositories lazily and opens the exact selected path", () => {
   const { nav, root, rooms } = fixture();
-  nav.key("tab");
   nav.key("parent");
   expect(nav.tree.root).toBe(root);
   expect(nav.tree.children(root)).toContain(rooms[1].path);
@@ -49,6 +51,7 @@ test("folder parent navigation crosses repositories lazily and opens the exact s
 });
 test("arrows and Enter work while filtering; activity ties have deterministic path order", () => {
   const { nav, rooms } = fixture();
+  nav.key("tab");
   nav.rooms = rooms.map(room => ({ ...room, last_activity_at: "2026-10-23" }));
   expect(nav.list().map(room => room.id)).toEqual(["a", "b"]);
   nav.key("search");
@@ -58,6 +61,7 @@ test("arrows and Enter work while filtering; activity ties have deterministic pa
 });
 test("search consumes shortcut letters, empty results are bounded, unavailable live rooms remain visible", () => {
   const { nav, rooms } = fixture();
+  nav.key("tab");
   nav.rooms = [...rooms, { ...rooms[2], active: true, agents: 1 }];
   nav.key("search");
   for (const char of "gone") nav.text(char);

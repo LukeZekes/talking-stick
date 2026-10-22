@@ -17,7 +17,7 @@ const SORTS = ["activity", "name", "path", "members"] as const;
 
 export class RoomNavigator {
   tree: RoomTree;
-  view: "rooms" | "folders" = "rooms";
+  view: "rooms" | "folders" = "folders";
   query = "";
   searching = false;
   allOpen = false;
