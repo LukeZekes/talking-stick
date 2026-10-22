@@ -300,6 +300,8 @@ export async function runChatSession(
     room_id: options.room_id
   });
   const roomId = joined.room_id;
+  let clearedThrough = selfId.startsWith("human:")
+    ? runtime.commands.getHumanChatClearCursor({ room_id: roomId, human_id: selfId }) : 0;
   let attention: HumanAttention = selfId.startsWith("human:")
     ? runtime.commands.getHumanAttention({ room_id: roomId, human_id: selfId }) : { messages: [], total: 0 };
   let humanAcknowledged = new Set(attention.acknowledged ?? []);
@@ -1295,6 +1297,38 @@ export async function runChatSession(
       case "q":
         stop();
         return;
+      case "clear": {
+        if (args.trim()) { print("Use /clear to clear this room view; harness controls are separate."); return; }
+        // Persist first: a failed write must leave the current view intact.
+        clearedThrough = runtime.commands.clearHumanChat(identity, { room_id: roomId }).event_seq;
+        transcript.clear();
+        inlinePinHistory.reset();
+        nativeScrollLedger.reset();
+        inlineHistoryInitialized = false;
+        inlineNeedsRebuild = false;
+        nativeAway = false;
+        inlineFrame = null;
+        previousFrame = null;
+        inlineOutputRows = inlineVisibleFloor = inlinePanelRows = 0;
+        inlineHumanRows.clear();
+        inlineReceiptRows.clear();
+        visibleAttention.clear();
+        awaitingReceipt.clear();
+        trackedEvents.clear();
+        deliveryStates.clear();
+        historyCursor = clearedThrough + 1;
+        historyExhausted = false;
+        historyBefore = undefined;
+        previousConversationEvent = undefined;
+        printedSection = undefined;
+        lastPrinted = "info";
+        attention = runtime.commands.getHumanAttention({ room_id: roomId, human_id: selfId });
+        humanAcknowledged = new Set(attention.acknowledged ?? []);
+        hint = "Chat cleared · /older for saved messages";
+        if (terminal) output.write("\u001b[3J\u001b[H\u001b[2J");
+        if (inline) onResize(); else redraw();
+        return;
+      }
       case "bottom":
         if (inline) {
           print("Use your terminal's scroll-to-bottom shortcut to return to live messages.");
@@ -1477,6 +1511,7 @@ export async function runChatSession(
   // lines stay compact underneath the message they follow.
   let lastPrinted: "message" | "system" | "info" = "info";
   const printEvent = (event: RoomEvent, historical = false) => {
+    if (event.event_seq <= clearedThrough) return;
     if (!historical && event.event_type === "message_sent" && event.from_agent_id?.startsWith("human:")) {
       // Named recipients are known from the event itself; a room message's
       // recipients come from this console's own send result instead.
@@ -1851,6 +1886,8 @@ export async function runChatSession(
             .getRecentRoomEvents({
               room_id: roomId,
               limit: HISTORY_SCAN_EVENTS,
+              after_event_seq: clearedThrough,
+              before_event_seq: head + 1,
               event_types: showTurnEvents ? undefined : CONVERSATION_EVENTS
             })
             .filter(

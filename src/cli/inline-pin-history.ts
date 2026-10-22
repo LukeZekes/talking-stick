@@ -9,6 +9,8 @@ const compare = (a: Position, b: Position) => a.block_id - b.block_id || a.line 
 export class InlinePinHistory {
   private frontier?: Position;
 
+  reset(): void { this.frontier = undefined; }
+
   observe(rows: TranscriptRow[], top: number): void {
     const last = rows[top - 1];
     if (last && (!this.frontier || compare(last, this.frontier) > 0)) {

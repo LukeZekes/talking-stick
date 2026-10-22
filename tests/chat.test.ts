@@ -2795,3 +2795,88 @@ test.each(["live", "away", "away-acked", "away-input", "away-disconnect", "away-
     server.close(); fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("clearing a human room view persists a floor without deleting history or acknowledging messages", () => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:clear", context_path: root });
+  const first = "human:op:chat:aaaaaaaa";
+  const later = "human:op:chat:bbbbbbbb";
+  const other = "human:other:chat:cccccccc";
+  for (const id of [first, other]) service.joinPath({ agent_id: id, context_path: root,
+    process_metadata: { session_kind: "human_chat" } });
+  const pending = service.sendMessage({ agent_id: "codex:clear", room_id: joined.room_id, to_agent_id: first, body: "Before clear" });
+  const before = service.getRoomEvents({ room_id: joined.room_id, include_all: true });
+  expect(() => service.clearHumanChat({ room_id: joined.room_id, agent_id: "codex:clear" })).toThrow(/human console/);
+  expect(() => service.clearHumanChat({ room_id: joined.room_id, agent_id: later })).toThrow(/human console/);
+  const cleared = service.clearHumanChat({ room_id: joined.room_id, agent_id: first });
+  expect(cleared.event_seq).toBe(before.at(-1)!.event_seq);
+  expect(service.getHumanChatClearCursor({ room_id: joined.room_id, human_id: later })).toBe(cleared.event_seq);
+  expect(service.getHumanChatClearCursor({ room_id: joined.room_id, human_id: other })).toBe(0);
+  const nested = path.join(root, "nested");
+  fs.mkdirSync(path.join(nested, ".talking-stick"), { recursive: true });
+  fs.writeFileSync(path.join(nested, ".talking-stick", "room.toml"), "");
+  const nestedRoom = service.joinPath({ agent_id: "claude:nested", context_path: nested });
+  expect(nestedRoom.room_id).not.toBe(joined.room_id);
+  expect(service.getHumanChatClearCursor({ room_id: nestedRoom.room_id, human_id: later })).toBe(0);
+  expect(service.getRoomEvents({ room_id: joined.room_id, include_all: true })).toEqual(before);
+  expect(service.getHumanAttention({ room_id: joined.room_id, human_id: later })).toMatchObject({ total: 0, acknowledged: [] });
+  expect(before.some(row => row.event_seq === pending.event_seq)).toBe(true);
+  const fresh = service.sendMessage({ agent_id: "codex:clear", room_id: joined.room_id, to_agent_id: first, body: "After clear" });
+  expect(service.getHumanAttention({ room_id: joined.room_id, human_id: later }).messages.map(row => row.event_seq)).toEqual([fresh.event_seq]);
+  expect(service.getRecentRoomEvents({ room_id: joined.room_id, limit: 1, after_event_seq: cleared.event_seq }).map(row => row.event_seq)).toEqual([fresh.event_seq]);
+  expect(service.getRecentRoomEvents({ room_id: joined.room_id, limit: 1, after_event_seq: cleared.event_seq,
+    before_event_seq: fresh.event_seq })).toEqual([]);
+});
+
+test.each([true, false])("/clear erases the pane and a reopened console resumes after its marker (inline=%s)", async inline => {
+  const { root, service } = setupService();
+  const joined = service.joinPath({ agent_id: "codex:clear", context_path: root });
+  for (let i = 0; i < 40; i++) service.sendMessage({ agent_id: "codex:clear", room_id: joined.room_id, body: `before-clear-${i}` });
+  const open = (commands: TalkingStickCommands, agentId: string) => {
+    const input = Object.assign(new PassThrough(), { setRawMode() {} });
+    const output = Object.assign(new PassThrough(), { columns: 100, rows: 28 });
+    const vt = new Terminal({ cols: 100, rows: 28, allowProposedApi: true });
+    vt.onData(data => input.write(data));
+    let bytes = "";
+    output.on("data", chunk => { bytes += chunk.toString(); vt.write(chunk.toString()); });
+    const session = runChatSession({ runtime: { commands, close() {} },
+      identity: deriveHumanCliIdentity({ agentId, displayName: "op", sessionKind: "human_chat" }),
+      context_path: root, input, output, terminal: true, inline, color: true,
+      history: 100, show_turn_events: false, poll_ms: 5 });
+    return { input, vt, session, bytes: () => bytes,
+      flush: () => new Promise<void>(resolve => vt.write("\u001b[0m", resolve)),
+      buffer: () => Array.from({ length: vt.buffer.active.length }, (_, i) => vt.buffer.active.getLine(i)?.translateToString(true) ?? "").join("\n") };
+  };
+  const firstId = "human:op:chat:aaaaaaaa";
+  const first = open(new TalkingStickCommands(service), firstId);
+  try {
+    await until(() => first.bytes().includes("before-clear-39"));
+    const oldPin = service.sendMessage({ agent_id: "codex:clear", room_id: joined.room_id, to_agent_id: firstId, body: "Old directed message" });
+    await until(() => first.bytes().includes("Old directed message"));
+    first.input.write("/clear\r");
+    await until(() => service.getHumanChatClearCursor({ room_id: joined.room_id, human_id: firstId }) >= oldPin.event_seq);
+    await new Promise(resolve => setTimeout(resolve, 30)); await first.flush();
+    expect(first.bytes()).toContain("\u001b[3J");
+    expect(first.buffer()).not.toContain("before-clear-");
+    expect(first.buffer()).not.toContain("Old directed message");
+    expect(service.getHumanAttention({ room_id: joined.room_id, human_id: firstId })).toMatchObject({ total: 0, acknowledged: [] });
+    service.sendMessage({ agent_id: "codex:clear", room_id: joined.room_id, body: "After-clear message" });
+    await until(() => first.bytes().includes("After-clear message"));
+    await first.flush();
+    expect(first.buffer()).toContain("After-clear message");
+    expect(first.buffer()).not.toContain("before-clear-");
+  } finally { first.input.end(); await first.session; first.vt.dispose(); }
+
+  // A separate service connection and a fresh console id must recover the marker.
+  const restarted = new TalkingStickService({ dbPath: path.join(root, ".state", "rooms.sqlite"), policy: { waitForEventsPollMs: 1 } });
+  const second = open(new TalkingStickCommands(restarted), "human:op:chat:bbbbbbbb");
+  try {
+    await until(() => second.bytes().includes("After-clear message"));
+    await second.flush();
+    expect(second.buffer()).not.toContain("before-clear-");
+    expect(second.buffer()).not.toContain("Old directed message");
+    second.input.write("/older\r");
+    await until(() => second.bytes().includes("before-clear-"));
+    expect(service.getRoomEvents({ room_id: joined.room_id, include_all: true }).some(row => row.payload?.body === "before-clear-0")).toBe(true);
+  } finally { second.input.end(); await second.session; second.vt.dispose(); restarted.close(); }
+});

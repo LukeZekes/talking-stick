@@ -13,6 +13,11 @@ changes will be called out under **Breaking changes**.
 
 ### Added
 
+- `/clear` clears the chat pane and saves a per-human, per-room resume marker. Reopening
+  starts after it; `/older` still retrieves the archive. Earlier pins are hidden without
+  acknowledging them or changing agents' receive cursors (#166).
+- A [harness control shim register](docs/harness-control-shims.md) tracks native API
+  candidates and temporary terminal/hook fallbacks. Member context controls remain proposed.
 - `tt install herdr` links a Herdr plugin and `tt chat-link` handler so a Ctrl-click on a pinned
   chat message acknowledges it without mouse capture (#160).
 - Pending operator messages remain in their original timeline position while visible and pin

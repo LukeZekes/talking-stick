@@ -1873,6 +1873,7 @@ export class TalkingStickService {
     limit: number;
     event_types?: EventType[];
     before_event_seq?: number;
+    after_event_seq?: number;
   }): RoomEvent[] {
     assertNonEmpty(input.room_id, "room_id");
     this.requireRoom(input.room_id);
@@ -1891,12 +1892,13 @@ export class TalkingStickService {
         `
         SELECT *
         FROM room_events
-        WHERE room_id = ?${typeClause}${input.before_event_seq === undefined ? "" : " AND event_seq < ?"}
+        WHERE room_id = ?${typeClause}${input.before_event_seq === undefined ? "" : " AND event_seq < ?"}${input.after_event_seq === undefined ? "" : " AND event_seq > ?"}
         ORDER BY event_seq DESC
         LIMIT ?
       `
       )
-      .all(input.room_id, ...eventTypes, ...(input.before_event_seq === undefined ? [] : [input.before_event_seq]), limit)
+      .all(input.room_id, ...eventTypes, ...(input.before_event_seq === undefined ? [] : [input.before_event_seq]),
+        ...(input.after_event_seq === undefined ? [] : [input.after_event_seq]), limit)
       .reverse()
       .map((row) => this.mapEvent(row));
   }
@@ -6066,6 +6068,30 @@ export class TalkingStickService {
     });
   }
 
+  getHumanChatClearCursor(input: { room_id: string; human_id: string }): number {
+    return this.db.prepare<[string, string], { cleared_through_event_seq: number }>(
+      "SELECT cleared_through_event_seq FROM human_chat_cursors WHERE room_id = ? AND human_id = ?")
+      .get(input.room_id, humanAttentionIdentity(input.human_id))?.cleared_through_event_seq ?? 0;
+  }
+
+  clearHumanChat(input: { room_id: string; agent_id: string }): { event_seq: number } {
+    return withImmediateTransaction(this.db, () => {
+      const member = this.getMember(input.room_id, input.agent_id);
+      if (!input.agent_id.startsWith("human:") || member?.session_kind !== HUMAN_CHAT_SESSION_KIND) {
+        throw new Error("Only a joined human console can clear its room view.");
+      }
+      const now = this.now().toISOString();
+      this.touchMember(input.room_id, input.agent_id, now);
+      const event_seq = Math.max(this.getLatestEventSeq({ room_id: input.room_id }),
+        this.getHumanChatClearCursor({ room_id: input.room_id, human_id: input.agent_id }));
+      this.db.prepare(`INSERT INTO human_chat_cursors (room_id, human_id, cleared_through_event_seq, updated_at)
+        VALUES (?, ?, ?, ?) ON CONFLICT(room_id, human_id) DO UPDATE SET
+        cleared_through_event_seq = MAX(human_chat_cursors.cleared_through_event_seq, excluded.cleared_through_event_seq),
+        updated_at = excluded.updated_at`).run(input.room_id, humanAttentionIdentity(input.agent_id), event_seq, now);
+      return { event_seq };
+    });
+  }
+
   getHumanAttention(input: { room_id: string; human_id: string }): { messages: RoomEvent[]; total: number; acknowledged: number[] } {
     const human = humanAttentionIdentity(input.human_id);
     if (!human.startsWith("human:")) throw new Error("Human attention requires a human identity.");
@@ -6075,6 +6101,7 @@ export class TalkingStickService {
       THEN substr(${column}, 1, length(${column}) - 14) ELSE ${column} END)`;
     const where = `e.room_id = ? AND e.event_type = 'message_sent'
       AND e.event_seq > (SELECT event_seq FROM human_attention_start WHERE id = 1)
+      AND e.event_seq > ?
       AND COALESCE(${stable("e.from_agent_id")}, '') != ?
       AND (${stable("e.to_agent_id")} = ?
         OR (e.to_agent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(
@@ -6082,7 +6109,7 @@ export class TalkingStickService {
           WHERE ${stable("r.value")} = ?)))
       AND NOT EXISTS (SELECT 1 FROM human_message_acknowledgements a
         WHERE a.room_id = e.room_id AND a.human_id = ? AND a.event_seq = e.event_seq)`;
-    const values = [input.room_id, human, human, human, human];
+    const values = [input.room_id, this.getHumanChatClearCursor(input), human, human, human, human];
     const total = this.db.prepare<unknown[], { count: number }>(`SELECT COUNT(*) AS count FROM room_events e WHERE ${where}`).get(...values)?.count ?? 0;
     const messages = this.db.prepare<unknown[], RoomEventRow>(`SELECT e.* FROM room_events e WHERE ${where} ORDER BY e.event_seq LIMIT 200`)
       .all(...values).map(row => this.mapEvent(row));
