@@ -6317,7 +6317,7 @@ export function createDefaultProcessLivenessChecker(
   // A deeper move to out-of-transaction liveness refresh is possible later, but
   // for the MVP we keep the lock boundary simple and the probe shared/cached.
   const inspector =
-    injectedInspector ?? createSystemProcessInspector({ cacheTtlMs: 1_000 });
+    injectedInspector ?? createSystemProcessInspector({ cacheTtlMs: process.platform === "win32" ? 5_000 : 1_000 });
 
   return (metadata) => {
     if (
@@ -6331,10 +6331,6 @@ export function createDefaultProcessLivenessChecker(
     }
 
     if (metadata.host_id && metadata.host_id !== currentHostId) {
-      return "unknown";
-    }
-
-    if (process.platform === "win32") {
       return "unknown";
     }
 
@@ -6363,7 +6359,7 @@ function createExactProcessLivenessChecker(
   injectedInspector?: ProcessInspector
 ): ProcessLivenessChecker {
   const inspector =
-    injectedInspector ?? createSystemProcessInspector({ cacheTtlMs: 1_000 });
+    injectedInspector ?? createSystemProcessInspector({ cacheTtlMs: process.platform === "win32" ? 5_000 : 1_000 });
 
   return (metadata) => {
     if (
@@ -6376,9 +6372,6 @@ function createExactProcessLivenessChecker(
       return "unknown";
     }
     if (metadata.host_id && metadata.host_id !== currentHostId) {
-      return "unknown";
-    }
-    if (process.platform === "win32") {
       return "unknown";
     }
     const inspection = inspector.inspect(metadata.pid!);
